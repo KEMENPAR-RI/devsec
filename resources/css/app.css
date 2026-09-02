@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+/* Class-based dark mode: toggled by adding/removing `.dark` on <html>, see resources/js/theme.js */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* Single product accent: cobalt blue. Used identically across every surface. */
+    --color-accent-50: #eef3fd;
+    --color-accent-100: #dde6fb;
+    --color-accent-200: #bccdf6;
+    --color-accent-300: #8caaf0;
+    --color-accent-400: #5c86ea;
+    --color-accent-500: #3568e3;
+    --color-accent-600: #2557d6;
+    --color-accent-700: #1e46ad;
+    --color-accent-800: #1a3a8c;
+    --color-accent-900: #182f6e;
+    --color-accent-950: #101d43;
+}
+
+@layer base {
+    body {
+        @apply antialiased;
+    }
+
+    [x-cloak] {
+        display: none !important;
+    }
+}
+
+@layer utilities {
+    @media (prefers-reduced-motion: no-preference) {
+        .enter {
+            animation: enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .enter {
+            animation: none;
+        }
+    }
+}
+
+@keyframes enter {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
