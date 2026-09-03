@@ -49,6 +49,21 @@ class JudolScanner
      */
     protected const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
+    /** Image formats the Messages API can read - see looksLikeSupportedImage(). */
+    protected const SUPPORTED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+    /** Suffixes where the registered name is the THIRD label - see registrableDomain(). */
+    protected const TWO_LABEL_SUFFIXES = [
+        'co.id', 'go.id', 'ac.id', 'or.id', 'net.id', 'web.id', 'sch.id', 'my.id', 'biz.id', 'desa.id', 'mil.id',
+        'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'com.sg', 'com.my', 'co.jp', 'com.br',
+    ];
+
+    /** Characters of page text kept per detection - enough to quote, not a mirror. */
+    protected const SNAPSHOT_LIMIT = 40000;
+
+    /** Added/removed passages reported per change, so a rewritten page stays readable. */
+    protected const MAX_DIFF_CHUNKS = 8;
+
     /**
      * Common leetspeak substitutions used to dodge keyword filters (e.g. "sl0t
      * gac0r", "t0gel"). Applied as a second haystack alongside the raw text -
@@ -57,15 +72,6 @@ class JudolScanner
      * the word (s1tus vs s1ot), so a single substitution would corrupt as many
      * words as it fixes.
      */
-    /** Image formats the Messages API can read - see looksLikeSupportedImage(). */
-    protected const SUPPORTED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-
-    /** Characters of page text kept per detection - enough to quote, not a mirror. */
-    protected const SNAPSHOT_LIMIT = 40000;
-
-    /** Added/removed passages reported per change, so a rewritten page stays readable. */
-    protected const MAX_DIFF_CHUNKS = 8;
-
     protected const LEETSPEAK_MAP = [
         '0' => 'o', '3' => 'e', '4' => 'a', '5' => 's', '7' => 't', '@' => 'a', '$' => 's',
     ];
@@ -387,6 +393,127 @@ class JudolScanner
     }
 
     /**
+     * The distinct external domains a page links out to, for JudolLinkClassifier
+     * to judge.
+     *
+     * The counterpart to extractLinks(), which keeps only same-host URLs to crawl:
+     * here we want exactly the ones it throws away. An injected backlink leaves the
+     * visible page untouched and only adds an <a href> pointing somewhere else, so
+     * the destination host is the entire evidence.
+     *
+     * Reduced to registrable domains rather than full URLs: an attacker who plants
+     * forty deep links into one gambling site should cost one verdict, not forty,
+     * and the cached verdict then covers every page that links there.
+     *
+     * Each domain is paired with its anchor text, because the domain alone is
+     * often not enough. A real example from this app's own scan list: a hacked
+     * ministry page linked to "wicc2024.com" - a name that reads like a
+     * conference - under the anchor text "Live Draw Macau". The destination gives
+     * nothing away; what the page invites you to click does.
+     *
+     * @return array<string, string> registrable domain => anchor text
+     */
+    protected function extractOutboundLinks(string $html, string $baseUrl, ?string $host): array
+    {
+        $dom = $this->parseHtml($html);
+
+        if (! $dom) {
+            return [];
+        }
+
+        $ignored = array_map(Str::lower(...), (array) config('judol.ignored_link_hosts', []));
+        $limit = max(1, (int) config('judol.ai.links.max_domains', 40));
+        $links = [];
+
+        foreach ($dom->getElementsByTagName('a') as $anchor) {
+            $href = trim($anchor->getAttribute('href'));
+
+            if ($href === '' || str_starts_with($href, '#') || Str::startsWith($href, ['mailto:', 'tel:', 'javascript:'])) {
+                continue;
+            }
+
+            $absolute = $this->resolveUrl($href, $baseUrl);
+            $linkHost = $absolute ? Str::lower((string) parse_url($absolute, PHP_URL_HOST)) : '';
+
+            // Same-host links are the site's own pages - they are crawled instead,
+            // and each is judged on its own content.
+            if ($linkHost === '' || ($host && strcasecmp($linkHost, $host) === 0)) {
+                continue;
+            }
+
+            $domain = $this->registrableDomain($linkHost);
+
+            if (in_array($domain, $ignored, true)) {
+                continue;
+            }
+
+            $text = $this->anchorText($anchor);
+
+            // Several links to the same site: keep the first anchor text that says
+            // something, since an injected block usually repeats one pitch and the
+            // empty ones are image or "read more" links.
+            if (isset($links[$domain])) {
+                $links[$domain] = $links[$domain] ?: $text;
+
+                continue;
+            }
+
+            if (count($links) >= $limit) {
+                break;
+            }
+
+            $links[$domain] = $text;
+        }
+
+        return $links;
+    }
+
+    /** The words a visitor would click on, falling back to what a screen reader would read. */
+    protected function anchorText(\DOMElement $anchor): string
+    {
+        $text = Str::squish($anchor->textContent);
+
+        if ($text === '') {
+            $text = trim($anchor->getAttribute('title'));
+        }
+
+        if ($text === '') {
+            foreach ($anchor->getElementsByTagName('img') as $img) {
+                $text = trim($img->getAttribute('alt'));
+
+                break;
+            }
+        }
+
+        return Str::limit($text, 80, '');
+    }
+
+    /**
+     * A host reduced to the domain someone actually registered, so "www.x.com",
+     * "cdn.x.com" and "x.com" are one thing to judge and one thing to cache.
+     *
+     * Uses an explicit list of two-label suffixes rather than the full public
+     * suffix list: the app's traffic is Indonesian government and news sites, so
+     * .go.id / .co.id / .ac.id and a handful of foreign equivalents cover it, and
+     * guessing from label length instead would mangle a legitimate three-letter
+     * domain like bbc.com. Getting one wrong only costs a duplicate verdict for a
+     * subdomain, never a missed detection.
+     */
+    protected function registrableDomain(string $host): string
+    {
+        $labels = explode('.', trim($host, '.'));
+
+        if (count($labels) <= 2) {
+            return $host;
+        }
+
+        $suffix = $labels[count($labels) - 2].'.'.$labels[count($labels) - 1];
+        $take = in_array($suffix, self::TWO_LABEL_SUFFIXES, true) ? 3 : 2;
+
+        return implode('.', array_slice($labels, -min($take, count($labels))));
+    }
+
+    /**
      * Extracts up to JudolAiSettings::maxImages() absolute <img src> URLs from a
      * page, for the AI classifier to read (promo banners often carry their pitch
      * as an image, not HTML text). Inline data: URIs are skipped - not fetchable
@@ -532,8 +659,16 @@ class JudolScanner
                 || Str::contains($normalizedHaystack, Str::lower($keyword)))
             ->values();
 
-        if ($matched->count() < $threshold) {
-            $this->clearStaleDetection($existing, $url, 'kata kunci tidak lagi cocok');
+        $keywordsMatched = $matched->count() >= $threshold;
+
+        // Runs whether or not a keyword matched - that is the entire point. Backlink
+        // injection leaves the visible page exactly as it was and only adds hidden
+        // <a href> tags to a gambling site, so on this page the keyword filter has
+        // nothing to find and the destination host is the only evidence there is.
+        $linkedDomains = $this->gamblingLinkedDomains($html, $url, parse_url($website->url, PHP_URL_HOST));
+
+        if (! $keywordsMatched && $linkedDomains === []) {
+            $this->clearStaleDetection($existing, $url, 'kata kunci tidak lagi cocok dan tidak ada tautan ke situs judi');
 
             return null;
         }
@@ -549,7 +684,11 @@ class JudolScanner
         // was never reviewed rather than pretending to a verdict.
         $ai = null;
 
-        if ($aiSettings->enabled()) {
+        // The page classifier only ever vets a KEYWORD match, so it is asked only
+        // when there is one. On a link-only finding its answer would be worse than
+        // useless: the visible article really is a clean article, so it would deny
+        // the finding and delete a genuine backlink injection.
+        if ($aiSettings->enabled() && $keywordsMatched) {
             $verdict = app(JudolAiClassifier::class)->classify(
                 $url,
                 $text,
@@ -560,7 +699,11 @@ class JudolScanner
             $aiConfidentlyDenies = $verdict['is_judol'] === false
                 && $verdict['confidence'] >= $aiSettings->confidenceThreshold();
 
-            if ($aiConfidentlyDenies) {
+            // A denial of the page's TEXT says nothing about where the page links to,
+            // and the two checks read different evidence - so a confident "this is
+            // just a news article" cannot clear a page that is also pointing at a
+            // gambling domain.
+            if ($aiConfidentlyDenies && $linkedDomains === []) {
                 Log::info("JudolScanner: {$url} dibantah AI (confidence {$verdict['confidence']}): {$verdict['reasoning']}");
                 $this->clearStaleDetection($existing, $url, 'dibantah AI');
 
@@ -580,9 +723,16 @@ class JudolScanner
             ];
         }
 
-        $snippetPosition = Str::position($text, Str::lower($matched->first())) ?: 0;
+        if ($linkedDomains !== []) {
+            $ai = $this->withLinkFinding($ai, $linkedDomains);
+        }
+
+        // Anchored on the first matched keyword when there is one; a link-only
+        // finding has no keyword to anchor to, so the page simply opens from the top.
+        $snippetPosition = $keywordsMatched ? (Str::position($text, Str::lower($matched->first())) ?: 0) : 0;
         $snippet = trim(substr($text, max(0, $snippetPosition - 60), 200));
-        $description = "Halaman {$url} mengandung kata kunci judi online: ".$matched->implode(', ');
+        $matchedKeywords = $keywordsMatched ? $matched->all() : [];
+        $description = $this->describeFinding($url, $matchedKeywords, $linkedDomains);
 
         if ($existing) {
             $incident = $existing->incident ?: Incident::create([
@@ -596,7 +746,7 @@ class JudolScanner
 
             $incident->update([
                 'description' => $description,
-                'meta' => ['url' => $url, 'matched_keywords' => $matched->all()],
+                'meta' => ['url' => $url, 'matched_keywords' => $matchedKeywords, 'linked_domains' => $linkedDomains],
                 'status' => 'open',
                 'resolved_at' => null,
                 'detected_at' => now(),
@@ -606,7 +756,8 @@ class JudolScanner
 
             $existing->update([
                 'incident_id' => $incident->id,
-                'matched_keywords' => $matched->all(),
+                'matched_keywords' => $matchedKeywords,
+                'linked_domains' => $linkedDomains,
                 'snippet' => $snippet,
                 'content_snapshot' => $snapshot,
                 'content_hash' => sha1($snapshot),
@@ -628,7 +779,7 @@ class JudolScanner
             'severity' => 'critical',
             'title' => "Konten judi online terdeteksi di {$website->name}",
             'description' => $description,
-            'meta' => ['url' => $url, 'matched_keywords' => $matched->all()],
+            'meta' => ['url' => $url, 'matched_keywords' => $matchedKeywords, 'linked_domains' => $linkedDomains],
             'status' => 'open',
             'detected_at' => now(),
         ]);
@@ -639,7 +790,8 @@ class JudolScanner
             'website_id' => $website->id,
             'incident_id' => $incident->id,
             'url' => $url,
-            'matched_keywords' => $matched->all(),
+            'matched_keywords' => $matchedKeywords,
+            'linked_domains' => $linkedDomains,
             'snippet' => $snippet,
             'content_snapshot' => $snapshot,
             'content_hash' => sha1($snapshot),
@@ -648,6 +800,93 @@ class JudolScanner
             'status' => 'new',
             'detected_at' => now(),
         ]);
+    }
+
+    /**
+     * The gambling sites this page links out to, as judged by the AI.
+     *
+     * Empty whenever the check is switched off, no key is configured, or the AI
+     * could not be reached - this check only ever ADDS a finding, so an outage
+     * costs a detection rather than inventing one.
+     *
+     * @return array<int, string>
+     */
+    protected function gamblingLinkedDomains(string $html, string $url, ?string $host): array
+    {
+        $settings = app(JudolAiSettings::class);
+
+        if (! $settings->enabled() || ! config('judol.ai.links.enabled', true)) {
+            return [];
+        }
+
+        $links = $this->extractOutboundLinks($html, $url, $host);
+
+        if ($links === []) {
+            return [];
+        }
+
+        $flagged = app(JudolLinkClassifier::class)->gamblingDomains($links);
+
+        if ($flagged !== []) {
+            Log::info("JudolScanner: {$url} menaut ke situs judi: ".implode(', ', $flagged));
+        }
+
+        return $flagged;
+    }
+
+    /**
+     * Folds the outbound-link finding into the AI columns.
+     *
+     * A link-only finding still came from the AI, so it must not be filed under
+     * "Keyword saja" - but the link classifier answers yes/no, not a probability,
+     * so ai_confidence stays null rather than being given an invented number.
+     *
+     * @param  array<string, mixed>|null  $ai  the page classifier's verdict, when it ran
+     * @param  array<int, string>  $domains
+     * @return array<string, mixed>
+     */
+    protected function withLinkFinding(?array $ai, array $domains): array
+    {
+        $summary = app(JudolLinkClassifier::class)->summarize($domains);
+
+        if ($ai === null) {
+            return [
+                'ai_verdict' => 'confirmed',
+                'ai_confidence' => null,
+                'ai_reasoning' => $summary,
+                'ai_checked_at' => now(),
+            ];
+        }
+
+        // Both checks fired: the page's own content AND where it points. Keep the
+        // page verdict's confidence and append what the links add to it.
+        return [
+            ...$ai,
+            'ai_verdict' => 'confirmed',
+            'ai_reasoning' => trim($ai['ai_reasoning'] ?? '')."\n\n".$summary,
+        ];
+    }
+
+    /**
+     * What the incident says happened, phrased for whichever evidence was found -
+     * keywords in the content, links pointing out to gambling sites, or both.
+     *
+     * @param  array<int, string>  $keywords
+     * @param  array<int, string>  $domains
+     */
+    protected function describeFinding(string $url, array $keywords, array $domains): string
+    {
+        $parts = [];
+
+        if ($keywords !== []) {
+            $parts[] = 'mengandung kata kunci judi online: '.implode(', ', $keywords);
+        }
+
+        if ($domains !== []) {
+            $parts[] = 'memasang tautan ke situs judi online: '.implode(', ', $domains);
+        }
+
+        return "Halaman {$url} ".implode(', dan ', $parts);
     }
 
     /**
@@ -750,6 +989,12 @@ class JudolScanner
         JudolDetection::whereNotNull('matched_keywords')
             ->chunkById(50, function ($detections) use ($activeKeywords, $threshold, &$cleared) {
                 foreach ($detections as $detection) {
+                    // A finding that rests on outbound gambling links has no keywords
+                    // to go stale - editing the keyword list must not silently delete it.
+                    if (filled($detection->linked_domains)) {
+                        continue;
+                    }
+
                     $stillActive = collect($detection->matched_keywords)
                         ->filter(fn (string $keyword) => in_array(Str::lower($keyword), $activeKeywords, true))
                         ->count();

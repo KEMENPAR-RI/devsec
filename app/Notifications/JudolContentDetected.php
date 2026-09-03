@@ -38,6 +38,19 @@ class JudolContentDetected extends Notification
             ->unique()
             ->take(6);
 
+        // A page flagged purely for the gambling sites it links to has no keywords
+        // to report, so the evidence line would read "Kata kunci: ." - name the
+        // domains instead, which is also the more actionable thing to go look for.
+        $domains = $this->detections
+            ->flatMap(fn (JudolDetection $detection) => $detection->linked_domains ?? [])
+            ->unique()
+            ->take(6);
+
+        $evidence = collect([
+            $keywords->isNotEmpty() ? 'Kata kunci: '.$keywords->implode(', ') : null,
+            $domains->isNotEmpty() ? 'Tautan ke situs judi: '.$domains->implode(', ') : null,
+        ])->filter()->implode('. ');
+
         $urls = $this->detections->pluck('url');
         $earliest = $this->detections->min('detected_at') ?? now();
 
@@ -48,8 +61,8 @@ class JudolContentDetected extends Notification
                 ? "{$count} halaman judol baru di {$this->website->name}"
                 : "Konten judi online di {$this->website->name}",
             'message' => $count > 1
-                ? "{$count} halaman terindikasi konten judi online. Kata kunci: {$keywords->implode(', ')}."
-                : 'Kata kunci: '.$keywords->implode(', ').'.',
+                ? "{$count} halaman terindikasi konten judi online. {$evidence}."
+                : $evidence.'.',
             'website_id' => $this->website->id,
             'incident_id' => $this->detections->first()?->incident_id,
             'count' => $count,

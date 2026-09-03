@@ -32,18 +32,20 @@
     >
         <x-slot:toolbar>
             <x-search-input model="search" placeholder="Cari nama atau email..." class="sm:max-w-xs" />
-            <select wire:model.live="roleFilter" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                <option value="">Semua Role</option>
-                @foreach ($roles as $role)
-                    <option value="{{ $role->uuid }}">{{ $role->name }}</option>
-                @endforeach
-                <option value="none">Tanpa Role</option>
-            </select>
-            <select wire:model.live="statusFilter" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                <option value="">Semua Status</option>
-                <option value="active">Aktif</option>
-                <option value="banned">Diblokir</option>
-            </select>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <select wire:model.live="roleFilter" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                    <option value="">Semua Role</option>
+                    @foreach ($roles as $role)
+                        <option value="{{ $role->uuid }}">{{ $role->name }}</option>
+                    @endforeach
+                    <option value="none">Tanpa Role</option>
+                </select>
+                <select wire:model.live="statusFilter" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                    <option value="">Semua Status</option>
+                    <option value="active">Aktif</option>
+                    <option value="banned">Diblokir</option>
+                </select>
+            </div>
         </x-slot:toolbar>
 
         <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="previousPage,nextPage,gotoPage,search,roleFilter">

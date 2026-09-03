@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\PwaController;
 use App\Livewire\Auth\ForgotPassword;
 use App\Livewire\Auth\Login;
 use App\Livewire\Auth\ResetPassword;
@@ -16,6 +17,14 @@ use App\Livewire\Websites\Show as WebsiteShow;
 use App\Services\Backup\DatabaseBackup;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
+
+// Installable-app plumbing. Public on purpose: the browser fetches a manifest
+// anonymously (an auth redirect there kills installability), and the install
+// prompt has to be able to appear on the login screen. Neither route exposes
+// anything beyond the branding that is already on every page.
+Route::get('/manifest.webmanifest', [PwaController::class, 'manifest'])->name('pwa.manifest');
+Route::get('/pwa/icon-{size}-maskable.png', [PwaController::class, 'maskableIcon'])->whereNumber('size')->name('pwa.icon.maskable');
+Route::get('/pwa/icon-{size}.png', [PwaController::class, 'icon'])->whereNumber('size')->name('pwa.icon');
 
 Route::get('/', function () {
     if (! Auth::check()) {

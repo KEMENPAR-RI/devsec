@@ -22,6 +22,7 @@ class JudolDetection extends Model
         'incident_id',
         'url',
         'matched_keywords',
+        'linked_domains',
         'snippet',
         'content_snapshot',
         'content_hash',
@@ -39,6 +40,7 @@ class JudolDetection extends Model
     {
         return [
             'matched_keywords' => 'array',
+            'linked_domains' => 'array',
             'content_changes' => 'array',
             'ai_confidence' => 'float',
             'ai_checked_at' => 'datetime',
@@ -68,8 +70,10 @@ class JudolDetection extends Model
      */
     public function aiBadge(): array
     {
+        // "keyakinan 95%", not "confidence 0.95": this is a tooltip the operator
+        // reads, and it sits beside the panel that already phrases it that way.
         $detail = $this->ai_reasoning
-            ? trim($this->ai_reasoning).' (confidence '.number_format((float) $this->ai_confidence, 2).')'
+            ? trim($this->ai_reasoning).' (keyakinan '.number_format((float) $this->ai_confidence * 100).'%)'
             : null;
 
         return match ($this->ai_verdict) {

@@ -15,6 +15,8 @@
         <link rel="icon" href="{{ $appFaviconUrl }}">
     @endif
 
+    <x-pwa-meta />
+
     <x-theme-script />
 
     {{-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.3.1/css/all.min.css" integrity="sha512-QeR2VH+lsBE5LSAe1Q5EnTBbe7XTBubt8dG93Y7gidSgdMCr8nVqKcfKAMyN96SV8KDbZVTDXChatu5G2KQGzg==" crossorigin="anonymous" referrerpolicy="no-referrer" /> --}}
@@ -235,9 +237,15 @@
                 </div>
             </header>
 
-            <main class="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
-                {{ $slot }}
-            </main>
+            {{-- The footer scrolls with the content, so main and footer share one
+            scroll container and the footer is pushed to the bottom on short pages. --}}
+            <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                <main class="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+                    {{ $slot }}
+                </main>
+
+                <x-app-footer />
+            </div>
         </div>
     </div>
     @livewireScripts

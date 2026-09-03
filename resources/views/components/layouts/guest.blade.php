@@ -15,6 +15,8 @@
         <link rel="icon" href="{{ $appFaviconUrl }}">
     @endif
 
+    <x-pwa-meta />
+
     <x-theme-script />
 
     {{-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.3.1/css/all.min.css" integrity="sha512-QeR2VH+lsBE5LSAe1Q5EnTBbe7XTBubt8dG93Y7gidSgdMCr8nVqKcfKAMyN96SV8KDbZVTDXChatu5G2KQGzg==" crossorigin="anonymous" referrerpolicy="no-referrer" /> --}}
@@ -79,6 +81,15 @@
                 </div>
 
                 {{ $slot }}
+
+                {{-- The login screen is the first page most people see, and on a
+                phone it is usually the only one they see before deciding to keep
+                the app - so the install offer lives here too, not just in the
+                dashboard footer that a signed-out visitor never reaches. Hidden
+                until the browser actually offers an install. --}}
+                <div class="mt-8 flex justify-center text-xs">
+                    <x-pwa-install />
+                </div>
             </div>
         </div>
     </div>

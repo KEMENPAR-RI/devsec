@@ -221,10 +221,11 @@
                                         $changes = $detection->content_changes;
                                         $badge = $detection->aiBadge();
                                         $hasAiFinding = filled($detection->ai_reasoning);
+                                        $linkedDomains = $detection->linked_domains ?? [];
                                     @endphp
 
                                     {{-- What the gambling content on this page actually says --}}
-                                    @if ($excerpts || $changes || $hasAiFinding)
+                                    @if ($excerpts || $changes || $hasAiFinding || $linkedDomains)
                                         <div x-data="{ open: false }" class="mt-2">
                                             <button type="button" @click="open = !open" class="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
                                                 <x-phosphor-file-text class="h-3.5 w-3.5" />
@@ -263,6 +264,26 @@
                                                                 <p class="mt-1 whitespace-pre-line text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{{ $detection->ai_reasoning }}</p>
                                                             </div>
                                                         </div>
+                                                    </div>
+                                                @endif
+
+                                                @if ($linkedDomains)
+                                                    <div>
+                                                        <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                                                            Tautan keluar ke situs judi
+                                                        </p>
+                                                        {{-- The domains, not the full URLs: the same site is usually
+                                                        linked from several paths, and the domain is what has to be
+                                                        searched for in the source and stripped out. --}}
+                                                        <div class="mt-1 flex flex-wrap gap-1.5">
+                                                            @foreach ($linkedDomains as $domain)
+                                                                <span class="rounded-md bg-red-50 px-2 py-1 font-mono text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $domain }}</span>
+                                                            @endforeach
+                                                        </div>
+                                                        <p class="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                                                            Cari domain di atas pada sumber halaman ini - biasanya berupa
+                                                            tag &lt;a&gt; tersembunyi yang disisipkan ke template atau isi artikel.
+                                                        </p>
                                                     </div>
                                                 @endif
 
@@ -317,9 +338,17 @@
                                             @endif
                                             {{ $badge['label'] }}
                                         </span>
-                                        @foreach ($detection->matched_keywords as $keyword)
+                                        @foreach ($detection->matched_keywords ?? [] as $keyword)
                                             <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ $keyword }}</span>
                                         @endforeach
+
+                                        {{-- A backlink injection matches no keyword at all, so without this the
+                                        row would show a bare AI badge and nothing saying what was found. --}}
+                                        @if ($count = count($detection->linked_domains ?? []))
+                                            <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
+                                                {{ $count }} tautan ke situs judi
+                                            </span>
+                                        @endif
                                     </p>
                                     @if ($error = ($recheckErrors[$detection->id] ?? null))
                                         <p class="mt-1.5 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">

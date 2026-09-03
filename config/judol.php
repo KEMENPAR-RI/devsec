@@ -175,6 +175,58 @@ return [
         // Maksimum gambar per halaman yang dikirim ke Claude untuk dibaca (biaya naik
         // seiring jumlah gambar; kebanyakan halaman spam cukup terwakili oleh 1-3 gambar).
         'max_images' => 3,
+
+        /*
+        | Pemeriksaan tautan keluar (JudolLinkClassifier).
+        |
+        | Menangkap pola yang secara struktural TIDAK BISA dilihat keyword filter:
+        | penyisipan backlink, di mana isi halaman dibiarkan utuh dan penyerang
+        | hanya menanam <a href> tersembunyi ke situs judi miliknya. Tidak ada
+        | satu pun kata kunci yang muncul, jadi halaman itu lolos sebagai bersih.
+        |
+        | Yang dinilai AI hanya nama domainnya, dan hasilnya di-cache per domain
+        | selama 30 hari - jadi tautan footer yang berulang di 60 halaman cuma
+        | ditanya sekali, dan pemindaian berikutnya biasanya nol panggilan API.
+        */
+        'links' => [
+            'enabled' => env('JUDOL_AI_LINKS_ENABLED', true),
+
+            // Maksimum domain unik per halaman yang dinilai. Halaman yang menaut ke
+            // ratusan domain luar hampir selalu agregator/direktori, bukan korban
+            // penyisipan - dan tidak sepadan untuk dinilai seluruhnya.
+            'max_domains' => 40,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Host yang Tidak Perlu Dinilai
+    |--------------------------------------------------------------------------
+    |
+    | Tujuan tautan yang praktis pasti sah, dicocokkan pada domain maupun
+    | subdomainnya. Bukan daftar putih keamanan - hanya penghemat token, supaya
+    | AI tidak ditanyai soal tombol berbagi Facebook di setiap halaman.
+    |
+    | Sengaja pendek: mustahil mendaftar seluruh web yang baik, dan AI memang
+    | sudah diminta menjawab "bukan judi" saat ragu.
+    |
+    */
+    'ignored_link_hosts' => [
+        // Media sosial & tombol berbagi
+        'facebook.com', 'fb.com', 'twitter.com', 'x.com', 'instagram.com',
+        'youtube.com', 'youtu.be', 'linkedin.com', 'tiktok.com', 'telegram.me',
+        't.me', 'whatsapp.com', 'wa.me', 'pinterest.com', 'threads.net',
+
+        // Layanan Google & CDN/aset
+        'google.com', 'google.co.id', 'goo.gl', 'gstatic.com', 'googleapis.com',
+        'googletagmanager.com', 'google-analytics.com', 'doubleclick.net',
+        'cloudflare.com', 'jsdelivr.net', 'unpkg.com', 'cdnjs.com', 'bootstrapcdn.com',
+        'jquery.com', 'fontawesome.com', 'gravatar.com',
+
+        // Platform & standar
+        'wordpress.org', 'wordpress.com', 'wp.com', 'w3.org', 'schema.org',
+        'mozilla.org', 'github.com', 'adobe.com', 'apple.com', 'microsoft.com',
+        'whatsapp.net', 'openstreetmap.org', 'maps.app.goo.gl',
     ],
 
 ];
