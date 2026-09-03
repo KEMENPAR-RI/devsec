@@ -57,7 +57,10 @@
             <div class="flex h-full w-64 shrink-0 flex-col">
                 <div class="flex h-16 items-center gap-2.5 border-b border-zinc-200 px-5 dark:border-zinc-800">
                     <x-brand-mark size="sm" :image_url="$appLogoUrl" class="object-contain" />
-                    <span class="font-semibold tracking-tight">{{ config('app.name') }}</span>
+                    <div class="flex flex-col">
+                        <span class="font-semibold tracking-tight">{{ config('app.name') }}</span>
+                        <small class="block text-xs text-zinc-500 dark:text-zinc-400">Kementerian Pariwisata Republik Indonesia</small>
+                    </div>
                 </div>
 
                 {{-- Every entry is gated by the same "{page}.view" permission that

@@ -15,18 +15,36 @@
         'Segoe UI Symbol', 'Noto Color Emoji';
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-    /* Single product accent: cobalt blue. Used identically across every surface. */
-    --color-accent-50: #eef3fd;
-    --color-accent-100: #dde6fb;
-    --color-accent-200: #bccdf6;
-    --color-accent-300: #8caaf0;
-    --color-accent-400: #5c86ea;
-    --color-accent-500: #3568e3;
-    --color-accent-600: #2557d6;
-    --color-accent-700: #1e46ad;
-    --color-accent-800: #1a3a8c;
-    --color-accent-900: #182f6e;
-    --color-accent-950: #101d43;
+    /* Single product accent: deep navy (#132B50). Anchored at step 600 - the
+        solid-button and link color - with the ramp built along the same hue so
+        dark mode still has legible steps (400 for text, 500 for buttons). */
+    --color-accent-50: #f3f7fc;
+    --color-accent-100: #e3ecf8;
+    --color-accent-200: #c3d5ee;
+    --color-accent-300: #91b0de;
+    --color-accent-400: #6e96d4;
+    --color-accent-500: #3063b0;
+    --color-accent-600: #132b50;
+    --color-accent-700: #0d203d;
+    --color-accent-800: #0a182f;
+    --color-accent-900: #071224;
+    --color-accent-950: #040b18;
+
+    /* Secondary accent: warm gold (#EAC170). Anchored at step 300 - its natural
+       lightness - so it reads as a highlight/surface color with dark text on it,
+       not as a white-text button. Use 300/400 on dark surfaces, 600/700 for text
+       on light ones. */
+    --color-secondary-50: #fdf8ed;
+    --color-secondary-100: #f9efd7;
+    --color-secondary-200: #f3dcaa;
+    --color-secondary-300: #eac170;
+    --color-secondary-400: #d8a64b;
+    --color-secondary-500: #bc862f;
+    --color-secondary-600: #996824;
+    --color-secondary-700: #784f1c;
+    --color-secondary-800: #5d3d19;
+    --color-secondary-900: #432d14;
+    --color-secondary-950: #281a0b;
 }
 
 @layer base {

@@ -43,15 +43,22 @@
 
             <div class="relative flex items-center gap-3">
                 <x-brand-mark size="md" :image_url="$appLogoUrl" class="object-contain" />
-                <span class="text-lg font-semibold tracking-tight text-white">{{ config('app.name') }}</span>
+                <div class="flex flex-col">
+                    <span class="text-lg font-semibold tracking-tight text-white">
+                        {{ config('app.name') }}
+                    </span>
+                    <small class="text-sm text-accent-200">
+                        Kementerian Pariwisata Republik Indonesia
+                    </small>
+                </div>
             </div>
 
             <div class="relative max-w-sm">
                 <p class="text-2xl font-medium leading-snug tracking-tight text-white">
-                    Satu dashboard untuk memantau tim, data, dan pekerjaan Anda.
+                    Security App Monitoring
                 </p>
                 <p class="mt-4 text-sm text-accent-200">
-                    Template siap pakai untuk membangun panel admin yang rapi dan responsif.
+                    Monitor and manage your security applications with ease.
                 </p>
             </div>
         </div>
