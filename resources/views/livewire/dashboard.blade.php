@@ -157,7 +157,7 @@
             time + response time + status. All in Alpine (no chart library) - the point
             data is embedded once as JSON, mousemove just picks the closest one. --}}
             <div
-                class="relative mt-4"
+                class="relative mt-4 overflow-hidden"
                 x-data="{
                     points: @js($points->map(fn ($p) => [
                         'x' => $p['x'],
@@ -234,10 +234,15 @@
                 </svg>
 
                 {{-- Floating tooltip, positioned over the hovered point --}}
+                {{-- Clamped to 12%-88%: centred on the point via -translate-x-1/2, so
+                without a clamp a hover near either end leaves half the tooltip
+                hanging outside the chart. That overflow is what let the dashboard
+                be dragged sideways on a phone, and it left the page offset after
+                the tooltip disappeared. --}}
                 <div
                     x-show="hovered" x-cloak
                     class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow-lg dark:bg-zinc-700"
-                    :style="`left: ${hovered ? (hovered.x / chartWidth) * 100 : 0}%; top: ${hovered ? (hovered.y / chartHeight) * 100 : 0}%; margin-top: -8px;`"
+                    :style="`left: ${hovered ? Math.min(88, Math.max(12, (hovered.x / chartWidth) * 100)) : 0}%; top: ${hovered ? (hovered.y / chartHeight) * 100 : 0}%; margin-top: -8px;`"
                 >
                     <p class="font-medium" x-text="hovered?.time"></p>
                     <p class="text-zinc-300 dark:text-zinc-400">

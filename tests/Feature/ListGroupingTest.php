@@ -54,11 +54,18 @@ class ListGroupingTest extends TestCase
 
         // 12 groups (one site each) of 3 incidents - 36 rows, but only 12 groups,
         // so page one holds the default 10 groups and page two the remaining 2.
+        //
+        // Anchored to midday rather than `now()`: the timestamps span about two
+        // hours, so a run started just after midnight pushed the earliest incidents
+        // into the previous day and produced 13 groups instead of 12. Grouping by
+        // day is what is under test here, not what time the suite happens to run.
+        $noon = now()->startOfDay()->addHours(12);
+
         for ($i = 0; $i < 12; $i++) {
             $website = Website::factory()->create();
 
             for ($j = 0; $j < 3; $j++) {
-                $this->incident($website, now()->subMinutes($i * 10 + $j));
+                $this->incident($website, $noon->copy()->subMinutes($i * 10 + $j));
             }
         }
 

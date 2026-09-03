@@ -8,6 +8,7 @@ use App\Models\Setting;
 use App\Models\Website;
 use App\Services\Monitoring\JudolScanner;
 use App\Support\DailyGroups;
+use App\Support\QueueHealth;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -301,6 +302,12 @@ class Index extends Component
             'detectionsByGroup' => $rows,
             'websites' => Website::whereIn('id', $groups->pluck('site_key'))->get()->keyBy('id'),
             'keywords' => JudolKeyword::orderBy('keyword')->get(),
+            // The automatic crawl runs as a queued job, so with no worker on the
+            // server it never happens - while manual checks, which run inside the
+            // request, keep working. Surfaced here because this is the page where
+            // someone notices results have stopped arriving.
+            'queueStalled' => app(QueueHealth::class)->isStalled(),
+            'queuePending' => app(QueueHealth::class)->pending(),
         ]);
     }
 }

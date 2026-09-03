@@ -10,15 +10,18 @@
 
     {{-- Header --}}
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex items-start gap-3">
+        {{-- min-w-0 all the way down: without it a flex item refuses to shrink below
+        its content, so one long URL widens the page and the whole layout can be
+        dragged sideways on a phone. --}}
+        <div class="flex min-w-0 items-start gap-3">
             <x-status-dot :status="$website->statusKey($isOffline)" class="mt-1.5" />
-            <div>
+            <div class="min-w-0">
                 <div class="flex items-center gap-2">
                     <a href="{{ route('situs') }}" wire:navigate class="text-sm text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">Situs</a>
                     <x-phosphor-caret-right class="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600" />
                 </div>
-                <div class="flex items-center gap-2">
-                    <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">{{ $website->name }}</h1>
+                <div class="flex min-w-0 items-center gap-2">
+                    <h1 class="min-w-0 truncate text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">{{ $website->name }}</h1>
                     @if ($website->is_internal_only)
                         <span title="Kemungkinan hanya bisa diakses dari jaringan internal/instansi - status down dari sini ditampilkan kuning, bukan merah." class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
                             <x-phosphor-network class="h-3 w-3" />
@@ -26,7 +29,9 @@
                         </span>
                     @endif
                 </div>
-                <a href="{{ $website->url }}" target="_blank" rel="noopener" class="text-sm text-zinc-500 hover:text-accent-600 dark:text-zinc-400 dark:hover:text-accent-400">
+                {{-- Truncated, not wrapped: the full URL is one tap away on the link
+                itself, and a wrapped three-line URL pushes the whole header around. --}}
+                <a href="{{ $website->url }}" target="_blank" rel="noopener" title="{{ $website->url }}" class="block truncate text-sm text-zinc-500 hover:text-accent-600 dark:text-zinc-400 dark:hover:text-accent-400">
                     {{ $website->url }}
                 </a>
             </div>
@@ -196,11 +201,12 @@
             @else
                 <div class="space-y-1 px-3 pb-3">
                     @foreach ($judolDetections as $detection)
-                        <div class="rounded-xl px-2.5 py-2.5">
-                            <a href="{{ $detection->url }}" target="_blank" rel="noopener" class="truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
+                        <div class="min-w-0 rounded-xl px-2.5 py-2.5">
+                            {{-- `block`, because truncate cannot clip an inline element. --}}
+                            <a href="{{ $detection->url }}" target="_blank" rel="noopener" title="{{ $detection->url }}" class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
                                 {{ $detection->url }}
                             </a>
-                            <p class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">{{ implode(', ', $detection->matched_keywords) }}</p>
+                            <p class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">{{ implode(', ', $detection->matched_keywords ?? []) }}</p>
                         </div>
                     @endforeach
                 </div>

@@ -28,6 +28,11 @@
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- Pinned so the suite does not depend on whatever a developer happens to
+             have in their own .env: RECAPTCHA_ENABLED=false there is a normal local
+             convenience, and it silently failed nine reCAPTCHA tests that are about
+             the settings-driven behaviour, not the kill switch. -->
+        <env name="RECAPTCHA_ENABLED" value="true"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

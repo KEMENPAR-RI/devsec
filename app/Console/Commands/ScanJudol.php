@@ -8,7 +8,9 @@ use Illuminate\Console\Command;
 
 class ScanJudol extends Command
 {
-    protected $signature = 'websites:scan-judol {--now : Scan every active website immediately, ignoring its interval}';
+    protected $signature = 'websites:scan-judol
+        {--now : Scan every active website immediately, ignoring its interval}
+        {--sync : Run each crawl in this process instead of queueing it}';
 
     protected $description = 'Crawl every active website that is due for a scan, for online-gambling (judol) spam content';
 
@@ -30,7 +32,29 @@ class ScanJudol extends Command
             // as due on every tick in between and queue a duplicate scan for it
             // while the first one is still in flight.
             $website->update(['judol_scanned_at' => now()]);
-            ScanWebsiteForJudolJob::dispatch($website);
+
+            $job = new ScanWebsiteForJudolJob($website);
+
+            // --sync exists for a deployment with cron but no queue worker, which is
+            // the normal shape of a shared-hosting or single-cron-line install. There,
+            // a dispatched job is written to the jobs table and never picked up, so
+            // the automatic crawl silently never happens while manual "Cek URL"
+            // (which runs inside the web request) keeps working - a failure that
+            // looks like the crawler being broken rather than absent.
+            if ($this->option('sync')) {
+                $this->line("Memindai {$website->name}...");
+                dispatch_sync($job);
+
+                continue;
+            }
+
+            dispatch($job);
+        }
+
+        if ($this->option('sync')) {
+            $this->info("Selesai memindai {$due->count()} website.");
+
+            return self::SUCCESS;
         }
 
         $this->info("Mengirim {$due->count()} pemindaian judol ke antrean.");

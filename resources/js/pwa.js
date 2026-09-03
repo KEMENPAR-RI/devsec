@@ -32,11 +32,28 @@ function syncInstallButtons() {
     });
 }
 
+/**
+ * Whether the browser will consider installing at all. Both the service worker
+ * and beforeinstallprompt are refused outright off a secure origin, silently -
+ * so on a plain-http deployment the install button would simply never appear,
+ * which looks like a missing build rather than a missing certificate.
+ */
+const isSecure = () => window.isSecureContext;
+
 /** The iOS instructions replace the button on the one platform that has no prompt. */
 function syncIosHints() {
-    const show = isIos() && !isInstalled() && installPrompt === null;
+    const show = isIos() && isSecure() && !isInstalled() && installPrompt === null;
 
     document.querySelectorAll('[data-pwa-ios]').forEach((element) => {
+        element.hidden = !show;
+    });
+}
+
+/** Says why there is no install button, rather than leaving a blank space. */
+function syncInsecureNotices() {
+    const show = !isSecure() && !isInstalled();
+
+    document.querySelectorAll('[data-pwa-insecure]').forEach((element) => {
         element.hidden = !show;
     });
 }
@@ -50,6 +67,7 @@ function syncOfflineBadges() {
 function sync() {
     syncInstallButtons();
     syncIosHints();
+    syncInsecureNotices();
     syncOfflineBadges();
 }
 

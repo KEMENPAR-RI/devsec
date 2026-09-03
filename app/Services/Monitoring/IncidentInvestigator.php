@@ -64,11 +64,18 @@ class IncidentInvestigator
         try {
             $message = $this->settings->client()->messages->create(
                 model: $this->settings->model(),
-                maxTokens: 500,
+                // Room for the whole diagnosis. The three sections asked for below -
+                // cause, pattern, concrete next steps - ran past 500 tokens often
+                // enough that the answer arrived cut off mid-sentence, and it is the
+                // step list that got cut: the part someone actually acts on. The cap
+                // is a safety ceiling now, not a budget the reply is shaped to fit.
+                maxTokens: 2000,
                 system: <<<'SYS'
                 Kamu asisten diagnostik infrastruktur web. Diberikan detail satu insiden
                 monitoring website beserta riwayat pengecekan terakhirnya, jelaskan dalam
-                Bahasa Indonesia yang jelas dan ringkas (maksimal sekitar 150 kata):
+                Bahasa Indonesia yang jelas. Utamakan kelengkapan daripada singkat -
+                diagnosis ini dipakai untuk menindaklanjuti insiden, jadi jangan
+                dipotong. Jawab tiga bagian ini:
 
                 1. Kemungkinan penyebab utama insiden ini
                 2. Pola yang terlihat dari riwayat pengecekan (mis. gradual vs tiba-tiba,
@@ -89,9 +96,19 @@ class IncidentInvestigator
             throw new RuntimeException($this->describeApiError($e), previous: $e);
         }
 
+        // A reply that hit the ceiling anyway would end mid-sentence, and stored
+        // silently it reads as a finished diagnosis. Say so instead of pretending.
+        $truncated = $message->stopReason === 'max_tokens';
+
         foreach ($message->content as $block) {
             if ($block->type === 'text' && trim($block->text) !== '') {
-                return static::cleanAnalysisText($block->text);
+                $analysis = static::cleanAnalysisText($block->text);
+
+                return $truncated
+                    ? $analysis.'
+
+(Analisis terpotong karena mencapai batas panjang - jalankan "Selidiki Ulang" untuk hasil lengkap.)'
+                    : $analysis;
             }
         }
 

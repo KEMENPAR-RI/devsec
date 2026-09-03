@@ -92,6 +92,47 @@ class PwaInstallTest extends TestCase
         $response->assertSee('data-pwa-install', false);
     }
 
+    /**
+     * iOS never fires beforeinstallprompt and offers no install API, so the install
+     * control there can only be instructions. It used to be a bare <span>, which on
+     * a phone reads as a button that does nothing when tapped - the whole platform's
+     * install path looked broken.
+     */
+    public function test_ios_gets_a_real_tappable_control_not_a_dead_label(): void
+    {
+        $body = $this->get(route('login'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-pwa-ios', $body);
+        $this->assertMatchesRegularExpression(
+            '/data-pwa-ios.{0,400}<button/s',
+            $body,
+            'the iOS affordance must contain a button, not just text'
+        );
+        $this->assertStringContainsString('Tambah ke Layar Utama', $body, 'the actual steps are spelled out');
+    }
+
+    /**
+     * A browser refuses both the service worker and the install prompt off a secure
+     * origin, and says nothing about it - so on a plain-http deployment the button
+     * simply never appears, which looks like the build having been done wrong
+     * rather than a certificate being missing.
+     */
+    public function test_an_insecure_origin_is_explained_instead_of_showing_nothing(): void
+    {
+        $body = $this->get(route('login'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-pwa-insecure', $body);
+        $this->assertStringContainsString('Instalasi butuh HTTPS', $body);
+    }
+
+    public function test_the_client_script_gates_installability_on_a_secure_context(): void
+    {
+        $script = file_get_contents(resource_path('js/pwa.js'));
+
+        $this->assertStringContainsString('window.isSecureContext', $script);
+        $this->assertStringContainsString('data-pwa-insecure', $script);
+    }
+
     public function test_the_service_worker_and_its_offline_page_are_served_from_the_web_root(): void
     {
         // Registered with scope '/', which the browser only allows when the script

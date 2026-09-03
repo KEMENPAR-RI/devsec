@@ -33,6 +33,26 @@
         </div>
     </div>
 
+    @if ($queueStalled)
+        {{-- Not a scan result - a deployment problem that would otherwise be
+        invisible: queued crawls piling up with nothing to run them. --}}
+        <div class="enter flex flex-col gap-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <p class="flex items-center gap-2 font-medium">
+                <x-phosphor-warning class="h-4 w-4 shrink-0" />
+                Pemindaian otomatis tidak berjalan
+            </p>
+            <p class="text-xs leading-relaxed">
+                Ada {{ $queuePending }} pekerjaan menunggu di antrean dan tidak ada yang mengerjakannya, jadi crawl
+                otomatis tidak pernah jalan - meski "Cek Judol" dan "Cek URL Tertentu" tetap berfungsi karena
+                keduanya jalan langsung saat diklik. Jalankan worker antrean di server
+                (<code class="rounded bg-amber-100 px-1 dark:bg-amber-500/20">php artisan queue:work</code> lewat
+                supervisor/systemd), atau pakai
+                <code class="rounded bg-amber-100 px-1 dark:bg-amber-500/20">php artisan websites:scan-judol --sync</code>
+                di cron kalau server tidak bisa menjalankan worker.
+            </p>
+        </div>
+    @endif
+
     {{-- Kelola kata kunci & ambang batas --}}
     <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900" x-data="{ open: false }">
         <button type="button" @click="open = !open" class="flex w-full items-center justify-between gap-2 px-5 py-4 text-left">
