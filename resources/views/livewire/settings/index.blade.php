@@ -797,8 +797,8 @@
             </button>
         </div>
         <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">
-            Menulis dump .sql lengkap, dikompresi jadi satu berkas <span class="font-mono">.tar.gz</span>, ke penyimpanan server (di luar folder publik - berkasnya berisi hash kata sandi setiap akun).
-            Untuk memulihkan: <span class="font-mono">tar -xzf berkas.tar.gz</span> lalu impor <span class="font-mono">.sql</span> di dalamnya.
+            Menulis dump .sql lengkap dalam bentuk terkompresi <span class="font-mono">.sql.gz</span> ke penyimpanan server (di luar folder publik - berkasnya berisi hash kata sandi setiap akun).
+            Berkasnya bisa langsung diimpor lewat phpMyAdmin, atau dari terminal: <span class="font-mono">gunzip -c berkas.sql.gz | mysql -u user -p nama_db</span>.
             @if ($backupLastRunAt)
                 Terakhir: <span class="font-medium text-zinc-600 dark:text-zinc-300">{{ app_datetime($backupLastRunAt) }}</span>.
             @else

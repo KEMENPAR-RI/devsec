@@ -16,7 +16,7 @@ class BackupDatabaseCommand extends Command
 {
     protected $signature = 'db:backup';
 
-    protected $description = 'Menulis dump database terkompresi (.tar.gz) ke storage/app/private/backups';
+    protected $description = 'Menulis dump database terkompresi (.sql.gz) ke storage/app/private/backups';
 
     public function handle(DatabaseBackup $backup): int
     {

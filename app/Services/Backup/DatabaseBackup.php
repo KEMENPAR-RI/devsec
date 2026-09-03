@@ -15,8 +15,12 @@ use Throwable;
 
 /**
  * Writes a restorable .sql dump of the application database, stored gzipped as a
- * .tar.gz - the dump is plain text and compresses by roughly 90%, which is the
+ * .sql.gz - the dump is plain text and compresses by roughly 90%, which is the
  * difference between keeping five of them on a small VPS and not.
+ *
+ * Plain gzip rather than a tar: a single-file archive gains nothing from a tar
+ * container, and .sql.gz is the form both phpMyAdmin and the mysql client import
+ * without unpacking it first.
  *
  * Deliberately pure PHP over PDO rather than shelling out to mysqldump: this app
  * runs on Windows during development and on shared government hosting in
@@ -28,7 +32,8 @@ use Throwable;
  * every stored credential. They are downloaded through an authorized route, never
  * served as a static file.
  *
- * Restore: `tar -xzf backup-....tar.gz` then `mysql -u user -p db < backup-....sql`.
+ * Restore: `gunzip -c backup-....sql.gz | mysql -u user -p db`, or hand the file
+ * to phpMyAdmin's import, which unpacks .sql.gz itself.
  */
 class DatabaseBackup
 {
@@ -36,14 +41,15 @@ class DatabaseBackup
 
     public const DIRECTORY = 'backups';
 
-    public const EXTENSION = '.tar.gz';
+    public const EXTENSION = '.sql.gz';
 
     /**
-     * Extensions listed by all(): the current one, plus the plain .sql this app
-     * wrote before compression existed. Old dumps stay downloadable and, just as
-     * importantly, stay prunable - otherwise they would sit on disk forever.
+     * Extensions listed by all(): the current one, plus the shapes earlier releases
+     * wrote - uncompressed .sql, and briefly .tar.gz. Old dumps stay downloadable
+     * and, just as importantly, stay prunable: a file this list forgets is a file
+     * that sits on the disk forever.
      */
-    protected const LISTED_EXTENSIONS = [self::EXTENSION, '.sql'];
+    protected const LISTED_EXTENSIONS = [self::EXTENSION, '.sql', '.tar.gz'];
 
     /**
      * Hard ceiling on stored dumps. Backups are big and grow with the data; keeping
@@ -60,18 +66,22 @@ class DatabaseBackup
      */
     public function create(): string
     {
-        $base = 'backup-'.config('database.connections.'.config('database.default').'.database', 'db')
-            .'-'.Carbon::now()->format('Y-m-d_His');
+        // The database name comes from config and lands in a filename, so anything
+        // a path could choke on (a colon, a slash) is flattened first.
+        $database = preg_replace('/[^A-Za-z0-9_.-]+/', '-',
+            (string) config('database.connections.'.config('database.default').'.database', 'db'));
+
+        $base = 'backup-'.trim($database, '-').'-'.Carbon::now()->format('Y-m-d_His');
 
         $filename = $base.self::EXTENSION;
 
         $sql = $this->dump();
-        $archive = $this->archive($base.'.sql', $sql);
-        // Released before gzipping: the dump, the tar and the gzip output would
-        // otherwise all be held at once, and the dump is the big one.
+        $gzipped = gzencode($sql, 6);
+        // Released before the write: the plain dump is the big one, and nothing
+        // downstream needs it any more.
         unset($sql);
 
-        Storage::disk(self::DISK)->put(self::DIRECTORY.'/'.$filename, gzencode($archive, 6));
+        Storage::disk(self::DISK)->put(self::DIRECTORY.'/'.$filename, $gzipped);
 
         $this->prune();
 
@@ -257,46 +267,6 @@ class DatabaseBackup
         });
 
         return $sql === '' ? '' : $sql."\n";
-    }
-
-    /**
-     * Wraps the dump in a single-entry USTAR archive, ready to be gzipped.
-     *
-     * Written by hand rather than through PharData for the same reason the dump
-     * itself avoids mysqldump: ext-phar is not guaranteed on shared hosting, and a
-     * tar header is 512 bytes of a format that has not changed since 1988.
-     */
-    protected function archive(string $name, string $contents): string
-    {
-        $header = pack(
-            'a100a8a8a8a12a12a8a1a100a6a2a32a32a8a8a155a12',
-            $name,
-            "0000644\0",                              // mode
-            "0000000\0",                              // uid
-            "0000000\0",                              // gid
-            sprintf('%011o', strlen($contents))."\0",  // size, octal
-            sprintf('%011o', Carbon::now()->timestamp)."\0",
-            '        ',                                // checksum, blanked while summing
-            '0',                                       // type: regular file
-            '',                                        // linkname
-            "ustar\0",
-            '00',
-            '', '', '', '', '', ''
-        );
-
-        $checksum = 0;
-
-        for ($i = 0; $i < 512; $i++) {
-            $checksum += ord($header[$i]);
-        }
-
-        $header = substr_replace($header, sprintf('%06o', $checksum)."\0 ", 148, 8);
-
-        // Entries are padded to a 512-byte boundary, and the archive ends with two
-        // empty blocks - tar treats anything else as truncated.
-        $padding = str_repeat("\0", (512 - strlen($contents) % 512) % 512);
-
-        return $header.$contents.$padding.str_repeat("\0", 1024);
     }
 
     /** Strips any path from a user-supplied filename - no traversal out of the folder. */

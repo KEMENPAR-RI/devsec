@@ -26,7 +26,6 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
-use ReflectionMethod;
 use Tests\TestCase;
 
 class ListsAndToolingTest extends TestCase
@@ -339,25 +338,33 @@ class ListsAndToolingTest extends TestCase
         $this->assertSame(DatabaseBackup::MAX_KEEP, $backup->all()->count());
     }
 
-    public function test_a_backup_archive_is_a_valid_gzipped_tar(): void
+    public function test_a_backup_is_written_as_an_importable_sql_gz(): void
     {
-        // create() itself needs MySQL; the packaging is what changed, so that is
-        // what is pinned here - a corrupt tar header would only ever show up on
-        // the day someone actually needs to restore.
-        $backup = app(DatabaseBackup::class);
-        $method = new ReflectionMethod($backup, 'archive');
-        $method->setAccessible(true);
+        // dump() needs MySQL, so it is stubbed here; what is being pinned is the
+        // packaging around it - a file mysql or phpMyAdmin would refuse to import
+        // only shows up on the day someone actually needs to restore.
+        Storage::fake(DatabaseBackup::DISK);
 
         $sql = "-- dump\n".str_repeat("INSERT INTO `t` (`a`) VALUES ('x');\n", 200);
-        $tar = gzdecode(gzencode($method->invoke($backup, 'backup-uji.sql', $sql), 6));
 
-        // USTAR: 100-byte name, 12-byte octal size at 124, magic at 257, payload
-        // at 512, everything padded to a 512-byte boundary.
-        $this->assertSame('backup-uji.sql', rtrim(substr($tar, 0, 100), "\0"));
-        $this->assertSame('ustar', rtrim(substr($tar, 257, 6), "\0"));
-        $this->assertSame(strlen($sql), (int) octdec(trim(substr($tar, 124, 12), "\0 ")));
-        $this->assertSame($sql, substr($tar, 512, strlen($sql)));
-        $this->assertSame(0, strlen($tar) % 512);
+        $backup = new class($sql) extends DatabaseBackup
+        {
+            public function __construct(protected string $stub) {}
+
+            protected function dump(): string
+            {
+                return $this->stub;
+            }
+        };
+
+        $filename = $backup->create();
+        $stored = Storage::disk(DatabaseBackup::DISK)->get(DatabaseBackup::DIRECTORY.'/'.$filename);
+
+        $this->assertStringEndsWith('.sql.gz', $filename);
+        // The gzip magic number: what gunzip, mysql and phpMyAdmin sniff for.
+        $this->assertSame("\x1f\x8b", substr($stored, 0, 2));
+        $this->assertSame($sql, gzdecode($stored));
+        $this->assertLessThan(strlen($sql), strlen($stored));
     }
 
     public function test_dumps_written_before_compression_are_still_listed(): void
@@ -365,16 +372,16 @@ class ListsAndToolingTest extends TestCase
         Storage::fake(DatabaseBackup::DISK);
         $disk = Storage::disk(DatabaseBackup::DISK);
 
+        $disk->put(DatabaseBackup::DIRECTORY.'/backup-baru.sql.gz', 'x');
         $disk->put(DatabaseBackup::DIRECTORY.'/backup-lama.sql', '-- lama');
-        $disk->put(DatabaseBackup::DIRECTORY.'/backup-baru.tar.gz', 'x');
+        $disk->put(DatabaseBackup::DIRECTORY.'/backup-sebentar.tar.gz', 'x');
         // Not a backup at all - must not be offered for download or deletion.
         $disk->put(DatabaseBackup::DIRECTORY.'/catatan.txt', 'abaikan');
 
         $names = app(DatabaseBackup::class)->all()->pluck('name');
 
-        $this->assertCount(2, $names);
-        $this->assertTrue($names->contains('backup-lama.sql'));
-        $this->assertTrue($names->contains('backup-baru.tar.gz'));
+        $this->assertCount(3, $names);
+        $this->assertFalse($names->contains('catatan.txt'));
     }
 
     public function test_the_retention_setting_cannot_be_pushed_past_the_ceiling(): void
