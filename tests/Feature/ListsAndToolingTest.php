@@ -26,6 +26,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
+use ReflectionMethod;
 use Tests\TestCase;
 
 class ListsAndToolingTest extends TestCase
@@ -336,6 +337,44 @@ class ListsAndToolingTest extends TestCase
         $backup->prune();
 
         $this->assertSame(DatabaseBackup::MAX_KEEP, $backup->all()->count());
+    }
+
+    public function test_a_backup_archive_is_a_valid_gzipped_tar(): void
+    {
+        // create() itself needs MySQL; the packaging is what changed, so that is
+        // what is pinned here - a corrupt tar header would only ever show up on
+        // the day someone actually needs to restore.
+        $backup = app(DatabaseBackup::class);
+        $method = new ReflectionMethod($backup, 'archive');
+        $method->setAccessible(true);
+
+        $sql = "-- dump\n".str_repeat("INSERT INTO `t` (`a`) VALUES ('x');\n", 200);
+        $tar = gzdecode(gzencode($method->invoke($backup, 'backup-uji.sql', $sql), 6));
+
+        // USTAR: 100-byte name, 12-byte octal size at 124, magic at 257, payload
+        // at 512, everything padded to a 512-byte boundary.
+        $this->assertSame('backup-uji.sql', rtrim(substr($tar, 0, 100), "\0"));
+        $this->assertSame('ustar', rtrim(substr($tar, 257, 6), "\0"));
+        $this->assertSame(strlen($sql), (int) octdec(trim(substr($tar, 124, 12), "\0 ")));
+        $this->assertSame($sql, substr($tar, 512, strlen($sql)));
+        $this->assertSame(0, strlen($tar) % 512);
+    }
+
+    public function test_dumps_written_before_compression_are_still_listed(): void
+    {
+        Storage::fake(DatabaseBackup::DISK);
+        $disk = Storage::disk(DatabaseBackup::DISK);
+
+        $disk->put(DatabaseBackup::DIRECTORY.'/backup-lama.sql', '-- lama');
+        $disk->put(DatabaseBackup::DIRECTORY.'/backup-baru.tar.gz', 'x');
+        // Not a backup at all - must not be offered for download or deletion.
+        $disk->put(DatabaseBackup::DIRECTORY.'/catatan.txt', 'abaikan');
+
+        $names = app(DatabaseBackup::class)->all()->pluck('name');
+
+        $this->assertCount(2, $names);
+        $this->assertTrue($names->contains('backup-lama.sql'));
+        $this->assertTrue($names->contains('backup-baru.tar.gz'));
     }
 
     public function test_the_retention_setting_cannot_be_pushed_past_the_ceiling(): void

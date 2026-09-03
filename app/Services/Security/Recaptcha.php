@@ -18,6 +18,8 @@ use Throwable;
  *
  * Configured from Pengaturan > Konfigurasi Aplikasi; off until someone puts a key
  * pair in, so a fresh install and the test suite behave as though it isn't there.
+ *
+ * RECAPTCHA_ENABLED=false in .env overrides all of that - see allowedByEnv().
  */
 class Recaptcha
 {
@@ -32,9 +34,24 @@ class Recaptcha
      */
     public function enabled(): bool
     {
-        return Setting::get('recaptcha_enabled') === '1'
+        return $this->allowedByEnv()
+            && Setting::get('recaptcha_enabled') === '1'
             && filled($this->siteKey())
             && filled($this->secretKey());
+    }
+
+    /**
+     * The escape hatch: RECAPTCHA_ENABLED=false in .env forces reCAPTCHA off no
+     * matter what the settings table says.
+     *
+     * A mistyped key pair rejects every login, and the toggle that would undo it
+     * lives behind that login - so the recovery switch has to sit somewhere
+     * reachable over SSH alone. Defaults to true, so an .env without the line
+     * behaves exactly as before.
+     */
+    public function allowedByEnv(): bool
+    {
+        return (bool) config('services.recaptcha.enabled', true);
     }
 
     /** Public by design - it ships to the browser in the script tag. */

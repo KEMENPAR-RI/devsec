@@ -495,6 +495,8 @@ class Index extends Component
             'faviconUrl' => app(AppSettings::class)->faviconUrl(),
             'backups' => $backup->all(),
             'backupLastRunAt' => $backup->lastRunAt(),
+            // So the toggle below can explain itself when .env is overruling it.
+            'recaptchaLockedByEnv' => ! app(Recaptcha::class)->allowedByEnv(),
         ]);
     }
 }

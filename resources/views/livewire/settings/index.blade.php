@@ -694,6 +694,18 @@
             Ambil pasangan kunci di <a href="https://www.google.com/recaptcha/admin" target="_blank" rel="noopener" class="font-medium text-accent-600 hover:underline dark:text-accent-400">google.com/recaptcha/admin</a>, pilih tipe <span class="font-medium">reCAPTCHA v3</span>, lalu daftarkan domain aplikasi ini.
         </p>
 
+        {{-- Without this, an admin whose .env says false would flip the toggle and
+             wonder why nothing happens. --}}
+        @if ($recaptchaLockedByEnv)
+            <div class="-mt-4 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                <x-phosphor-warning class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                    Dimatikan paksa dari server lewat <span class="font-mono font-medium">RECAPTCHA_ENABLED=false</span> di berkas <span class="font-mono font-medium">.env</span>.
+                    Pengaturan di bawah tetap tersimpan, tetapi reCAPTCHA belum berjalan sampai nilai itu dikembalikan ke <span class="font-mono font-medium">true</span> lalu <span class="font-mono font-medium">php artisan config:clear</span> dijalankan.
+                </span>
+            </div>
+        @endif
+
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div class="flex flex-col gap-2">
                 <label for="recaptchaSiteKey" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Site Key</label>
@@ -785,7 +797,8 @@
             </button>
         </div>
         <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">
-            Menulis dump .sql lengkap ke penyimpanan server (di luar folder publik - berkasnya berisi hash kata sandi setiap akun).
+            Menulis dump .sql lengkap, dikompresi jadi satu berkas <span class="font-mono">.tar.gz</span>, ke penyimpanan server (di luar folder publik - berkasnya berisi hash kata sandi setiap akun).
+            Untuk memulihkan: <span class="font-mono">tar -xzf berkas.tar.gz</span> lalu impor <span class="font-mono">.sql</span> di dalamnya.
             @if ($backupLastRunAt)
                 Terakhir: <span class="font-medium text-zinc-600 dark:text-zinc-300">{{ app_datetime($backupLastRunAt) }}</span>.
             @else

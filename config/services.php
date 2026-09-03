@@ -35,6 +35,16 @@ return [
         ],
     ],
 
+    /*
+     * Master switch for reCAPTCHA, deliberately in .env and not in the settings
+     * table: a wrong key pair makes the login form refuse everyone, and the
+     * setting that would switch it off again sits behind that same login. Setting
+     * RECAPTCHA_ENABLED=false is the way back in without database access.
+     */
+    'recaptcha' => [
+        'enabled' => env('RECAPTCHA_ENABLED', true),
+    ],
+
     'anthropic' => [
         'key' => env('ANTHROPIC_API_KEY'),
         // Only needed for an "identity-linked" API key (see JudolAiSettings::workspaceId).

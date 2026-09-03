@@ -68,6 +68,33 @@ class RecaptchaTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_the_env_switch_forces_recaptcha_off_whatever_the_settings_say(): void
+    {
+        // The lockout this exists for: keys are saved, the toggle is on, and they
+        // are wrong - so every login is refused and the page that would fix it is
+        // behind that login. RECAPTCHA_ENABLED=false is the way back in.
+        Http::fake();
+        $this->configure();
+        $this->assertTrue(app(Recaptcha::class)->enabled());
+
+        config()->set('services.recaptcha.enabled', false);
+
+        $this->assertFalse(app(Recaptcha::class)->enabled());
+        $this->get(route('login'))->assertOk()->assertDontSee('recaptcha/api.js');
+
+        User::factory()->create(['email' => 'ada@example.com', 'password' => 'kata-sandi-benar']);
+
+        Livewire::test(Login::class)
+            ->set('email', 'ada@example.com')
+            ->set('password', 'kata-sandi-benar')
+            ->call('login')
+            ->assertHasNoErrors();
+
+        $this->assertAuthenticated();
+        // Google is never even asked while the switch is off.
+        Http::assertNothingSent();
+    }
+
     public function test_a_good_score_lets_the_login_through(): void
     {
         $this->configure();
