@@ -8,6 +8,7 @@ use App\Models\Setting;
 use App\Models\Website;
 use App\Services\Monitoring\JudolScanner;
 use App\Support\DailyGroups;
+use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -27,6 +28,23 @@ class Index extends Component
     public string $verification = '';
 
     public string $newKeyword = '';
+
+    public bool $showBulkKeywordModal = false;
+
+    public string $bulkKeywords = '';
+
+    /** @var array{added: int, duplicate: array<int, string>, invalid: array<int, string>}|null */
+    public ?array $bulkKeywordResult = null;
+
+    /** Matches the single-add form's rule, so both doors accept the same phrases. */
+    protected const MAX_KEYWORD_LENGTH = 100;
+
+    /**
+     * Entries read from one paste. A real keyword list runs to a few dozen; this is
+     * only here so a stray paste of an entire page cannot turn into thousands of
+     * inserts, each of which the scanner then checks against every crawled page.
+     */
+    protected const MAX_BULK_KEYWORDS = 500;
 
     public int $threshold = 1;
 
@@ -101,6 +119,92 @@ class Index extends Component
 
         $this->newKeyword = '';
         session()->flash('keyword-status', 'Kata kunci ditambahkan.');
+    }
+
+    public function openBulkKeywords(): void
+    {
+        $this->authorize('deteksi-judol.update');
+
+        $this->reset(['bulkKeywords', 'bulkKeywordResult']);
+        $this->showBulkKeywordModal = true;
+    }
+
+    /**
+     * Adds many keywords at once.
+     *
+     * Split on newlines AND commas, because a new spam wave never arrives one
+     * phrase at a time - it arrives as a list someone pasted out of a report, a
+     * spreadsheet column, or straight out of config/judol.php with its quotes and
+     * trailing commas still attached. Every keyword is a phrase without commas of
+     * its own, so a comma can only ever be a separator here.
+     */
+    public function bulkAddKeywords(): void
+    {
+        $this->authorize('deteksi-judol.update');
+
+        $this->validate(
+            ['bulkKeywords' => ['required', 'string']],
+            [],
+            ['bulkKeywords' => 'daftar kata kunci']
+        );
+
+        // Compared in lower case, so a paste that differs only in capitalisation
+        // from a keyword already on the list is recognised as the same one -
+        // matching is case-insensitive anyway (see JudolScanner::evaluateAndStore).
+        $existing = JudolKeyword::pluck('keyword')
+            ->mapWithKeys(fn (string $keyword) => [Str::lower($keyword) => true])
+            ->all();
+
+        $added = 0;
+        $duplicate = [];
+        $invalid = [];
+
+        foreach ($this->splitKeywords($this->bulkKeywords) as $keyword) {
+            if ($keyword === '' || mb_strlen($keyword) > self::MAX_KEYWORD_LENGTH) {
+                $invalid[] = Str::limit($keyword, 40);
+
+                continue;
+            }
+
+            $key = Str::lower($keyword);
+
+            if (isset($existing[$key])) {
+                $duplicate[] = $keyword;
+
+                continue;
+            }
+
+            // Marks it seen before the insert, so a list that repeats a phrase
+            // reports the repeat rather than failing on the unique index.
+            $existing[$key] = true;
+
+            JudolKeyword::create(['keyword' => $keyword, 'is_active' => true]);
+            $added++;
+        }
+
+        $this->bulkKeywords = '';
+        $this->bulkKeywordResult = ['added' => $added, 'duplicate' => $duplicate, 'invalid' => $invalid];
+    }
+
+    /**
+     * One trimmed keyword per entry, from a paste in whatever shape it arrived.
+     *
+     * Strips the punctuation a copied config line carries - surrounding quotes,
+     * a leading list bullet - and squishes inner whitespace, so "  'slot  gacor',"
+     * and "- Slot Gacor" both land as the phrase itself.
+     *
+     * @return array<int, string>
+     */
+    protected function splitKeywords(string $input): array
+    {
+        return collect(preg_split('/[\r\n,]+/', $input))
+            ->map(fn (string $line) => Str::squish($line))
+            ->map(fn (string $line) => trim($line, " \t\"'`[]();-•*"))
+            ->map(fn (string $line) => Str::squish($line))
+            ->filter()
+            ->take(self::MAX_BULK_KEYWORDS)
+            ->values()
+            ->all();
     }
 
     public function toggleKeyword(JudolKeyword $keyword): void

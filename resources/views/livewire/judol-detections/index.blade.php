@@ -107,6 +107,16 @@
                         <span wire:loading.remove wire:target="addKeyword">Tambah</span>
                         <span wire:loading wire:target="addKeyword">Menambahkan...</span>
                     </button>
+                    {{-- A new spam wave arrives as a list, not as one phrase at a time. --}}
+                    <button
+                        type="button"
+                        wire:click="openBulkKeywords"
+                        class="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        title="Tempel banyak kata kunci sekaligus"
+                    >
+                        <x-phosphor-list-plus class="h-3.5 w-3.5" />
+                        Massal
+                    </button>
                 </form>
             @endcan
 
@@ -434,4 +444,79 @@
             {{ $groups->links() }}
         </x-slot:footer>
     </x-list-card>
+
+    @can('deteksi-judol.update')
+        {{-- Impor kata kunci massal --}}
+        <div
+            x-show="$wire.showBulkKeywordModal"
+            x-cloak
+            class="fixed inset-0 z-[100] flex items-center justify-center p-4"
+            @keydown.escape.window="$wire.showBulkKeywordModal = false"
+            role="dialog"
+            aria-modal="true"
+        >
+            <div x-show="$wire.showBulkKeywordModal" x-transition.opacity wire:click="$set('showBulkKeywordModal', false)" class="absolute inset-0 bg-zinc-900/50"></div>
+
+            <div
+                x-show="$wire.showBulkKeywordModal"
+                x-transition:enter="transition ease-out duration-150"
+                x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100"
+                class="relative w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl shadow-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-900"
+            >
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Tambah Kata Kunci Massal</h2>
+                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Pisahkan dengan baris baru atau koma. Tanda kutip, tanda hubung, dan koma di ujung baris
+                    diabaikan - jadi tempelan langsung dari laporan, kolom spreadsheet, atau dari
+                    <code class="rounded bg-zinc-100 px-1 py-0.5 dark:bg-zinc-800">config/judol.php</code> bisa masuk apa adanya.
+                    Semua kata kunci baru langsung aktif.
+                </p>
+
+                <form wire:submit="bulkAddKeywords" class="mt-4 flex flex-col gap-3">
+                    <textarea
+                        wire:model="bulkKeywords"
+                        rows="8"
+                        placeholder="slot gacor hari ini&#10;'link alternatif toto', 'rtp live'&#10;- bandar togel terpercaya"
+                        class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                    ></textarea>
+                    @error('bulkKeywords') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+
+                    @if ($bulkKeywordResult)
+                        <div class="flex flex-col gap-1.5 rounded-lg bg-zinc-50 p-3 text-xs dark:bg-zinc-800/60">
+                            <p class="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
+                                <x-phosphor-check-circle class="h-3.5 w-3.5 shrink-0" />
+                                {{ $bulkKeywordResult['added'] }} kata kunci ditambahkan
+                            </p>
+                            @if (count($bulkKeywordResult['duplicate']))
+                                <p class="text-zinc-500 dark:text-zinc-400">
+                                    {{ count($bulkKeywordResult['duplicate']) }} dilewati (sudah ada): {{ implode(', ', $bulkKeywordResult['duplicate']) }}
+                                </p>
+                            @endif
+                            @if (count($bulkKeywordResult['invalid']))
+                                <p class="text-red-600 dark:text-red-400">
+                                    {{ count($bulkKeywordResult['invalid']) }} tidak valid (lebih dari 100 karakter): {{ implode(' | ', $bulkKeywordResult['invalid']) }}
+                                </p>
+                            @endif
+                        </div>
+                    @endif
+
+                    <div class="mt-1 flex justify-end gap-2">
+                        <button type="button" wire:click="$set('showBulkKeywordModal', false)" class="rounded-lg px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-300 dark:hover:bg-zinc-800">
+                            Tutup
+                        </button>
+                        <button
+                            type="submit"
+                            wire:loading.attr="disabled"
+                            wire:target="bulkAddKeywords"
+                            class="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                            <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="bulkAddKeywords" />
+                            <span wire:loading.remove wire:target="bulkAddKeywords">Tambahkan</span>
+                            <span wire:loading wire:target="bulkAddKeywords">Memproses...</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    @endcan
 </div>
