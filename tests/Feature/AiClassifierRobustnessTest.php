@@ -134,6 +134,77 @@ class AiClassifierRobustnessTest extends TestCase
     }
 
     /**
+     * The panel is a list of what was actually spotted - keyword hits in the text,
+     * wording read off a banner - not a paragraph reasoning about the page. The
+     * narrative belongs to the incident analysis, which the operator opens on
+     * purpose; this panel answers "what is on the page" at a glance.
+     */
+    public function test_findings_are_listed_one_per_line(): void
+    {
+        $listing = $this->classifier()->findingsFor([
+            'is_judol' => true,
+            'findings' => [
+                'Teks: nama merek DEWA89 muncul 6 kali',
+                'Gambar: banner bertuliskan "RTP LIVE HARI INI"',
+            ],
+        ]);
+
+        $this->assertSame(
+            "• Teks: nama merek DEWA89 muncul 6 kali\n"
+            .'• Gambar: banner bertuliskan "RTP LIVE HARI INI"',
+            $listing
+        );
+    }
+
+    public function test_a_finding_the_model_already_bulleted_is_not_bulleted_twice(): void
+    {
+        $listing = $this->classifier()->findingsFor([
+            'is_judol' => true,
+            'findings' => ['- Teks: ajakan "daftar slot gacor"', '', '  '],
+        ]);
+
+        $this->assertSame('• Teks: ajakan "daftar slot gacor"', $listing, 'blank items are dropped too');
+    }
+
+    /**
+     * A multi-line item would otherwise be bulleted once and then read as several
+     * findings, because the panel renders every newline as a new line.
+     */
+    public function test_a_finding_that_arrives_with_line_breaks_stays_one_line(): void
+    {
+        $listing = $this->classifier()->findingsFor([
+            'is_judol' => true,
+            'findings' => ["Teks: nama merek\nDEWA89 di footer"],
+        ]);
+
+        $this->assertSame('• Teks: nama merek DEWA89 di footer', $listing);
+    }
+
+    /**
+     * Models slip back to the old shape; the panel must show what they said rather
+     * than going blank because the key was not the one we asked for.
+     */
+    public function test_a_reply_that_sends_prose_instead_of_findings_is_still_shown(): void
+    {
+        $listing = $this->classifier()->findingsFor([
+            'is_judol' => true,
+            'reasoning' => '**Jelas** promosi slot.',
+        ]);
+
+        $this->assertSame('Jelas promosi slot.', $listing, 'markdown stripped, text kept');
+    }
+
+    public function test_the_findings_list_is_capped(): void
+    {
+        $listing = $this->classifier()->findingsFor([
+            'is_judol' => true,
+            'findings' => array_map(fn (int $i) => "Teks: merek ke-{$i}", range(1, 20)),
+        ]);
+
+        $this->assertCount(8, explode("\n", $listing));
+    }
+
+    /**
      * @return array{is_judol: ?bool, confidence: float, reasoning: string}
      */
     protected function decode(string $reply): array
@@ -169,6 +240,12 @@ class AiClassifierRobustnessTest extends TestCase
             public function failureNotice(\Throwable $e): string
             {
                 return $this->unavailable('http://example.test/page', $e)['reasoning'];
+            }
+
+            /** @param array<string, mixed> $decoded */
+            public function findingsFor(array $decoded): string
+            {
+                return $this->formatFindings($decoded);
             }
         };
     }

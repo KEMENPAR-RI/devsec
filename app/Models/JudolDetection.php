@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasUuid;
+use App\Support\AiText;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
@@ -72,8 +73,12 @@ class JudolDetection extends Model
     {
         // "keyakinan 95%", not "confidence 0.95": this is a tooltip the operator
         // reads, and it sits beside the panel that already phrases it that way.
-        $detail = $this->ai_reasoning
-            ? trim($this->ai_reasoning).' (keyakinan '.number_format((float) $this->ai_confidence * 100).'%)'
+        //
+        // Flattened to one line because ai_reasoning is now a bulleted findings
+        // list, and a title="" attribute renders its newlines inconsistently across
+        // browsers - the panel below is where that list is meant to be read.
+        $detail = filled($this->ai_reasoning)
+            ? AiText::inline($this->ai_reasoning).' (keyakinan '.number_format((float) $this->ai_confidence * 100).'%)'
             : null;
 
         return match ($this->ai_verdict) {

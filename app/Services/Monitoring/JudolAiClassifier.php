@@ -30,6 +30,9 @@ class JudolAiClassifier
      */
     protected const MAX_IMAGE_BYTES = 3500000;
 
+    /** Findings kept from one verdict - the prompt asks for at most this many. */
+    protected const MAX_FINDINGS = 8;
+
     /** The same browser UA the scanner uses - hotlink/WAF rules block plain bots. */
     protected const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
@@ -38,10 +41,12 @@ class JudolAiClassifier
     /**
      * @param  array<int, string>  $matchedKeywords
      * @param  array<int, string>  $imageUrls  absolute URLs of images found on the page
-     * @return array{is_judol: ?bool, confidence: float, reasoning: string} is_judol is null
-     *                                                                      when the AI couldn't be reached or its answer couldn't be parsed - the caller
-     *                                                                      must treat that as "unknown", NOT as a denial, and fall back to the keyword
-     *                                                                      match result instead of silently dropping the detection.
+     * @return array{is_judol: ?bool, confidence: float, reasoning: string} 'reasoning' is
+     *                                                                      the findings list - one line per thing actually spotted in the text or in an
+     *                                                                      image, not an essay about it. is_judol is null when the AI couldn't be reached
+     *                                                                      or its answer couldn't be parsed - the caller must treat that as "unknown", NOT
+     *                                                                      as a denial, and fall back to the keyword match result instead of silently
+     *                                                                      dropping the detection.
      */
     public function classify(string $url, string $text, array $matchedKeywords, array $imageUrls = []): array
     {
@@ -80,9 +85,7 @@ class JudolAiClassifier
                 return [
                     'is_judol' => (bool) $decoded['is_judol'],
                     'confidence' => (float) ($decoded['confidence'] ?? 0),
-                    // Cleaned like the incident analysis: the reasoning is shown
-                    // verbatim in the UI, so Markdown must not leak into it.
-                    'reasoning' => AiText::clean((string) ($decoded['reasoning'] ?? '')),
+                    'reasoning' => $this->formatFindings($decoded),
                 ];
             }
         }
@@ -92,9 +95,51 @@ class JudolAiClassifier
         return [
             'is_judol' => null,
             'confidence' => 0.0,
-            'reasoning' => 'AI menjawab, tetapi jawabannya tidak mengikuti format yang diminta '
-                .'sehingga tidak bisa dibaca. Temuan ini masih bersandar pada kecocokan kata kunci saja.',
+            // Kept as a plain line, not a "- " item: this is the panel explaining
+            // why it has no findings to list, not a finding.
+            'reasoning' => 'AI menjawab dengan format yang tidak bisa dibaca, jadi tidak ada '
+                .'temuan yang bisa disebutkan. Deteksi ini bersandar pada kecocokan kata kunci saja.',
         ];
+    }
+
+    /**
+     * The verdict's findings, as the lines shown in the "Temuan AI" panel.
+     *
+     * The model is asked for a list of what it actually spotted - "Teks: ...",
+     * "Gambar: ..." - rather than a paragraph reasoning about the page, because
+     * that panel sits next to the page's own excerpts and the operator reads it to
+     * learn WHAT is on the page, not to be walked through an analysis. The
+     * narrative belongs to the incident investigation, which is a separate,
+     * deliberate click.
+     *
+     * Rendered as one "- item" per line so the panel's whitespace-pre-line style
+     * lays them out as a list. A model that ignores the schema and sends a plain
+     * "reasoning" string is still accepted verbatim, so a format slip degrades to
+     * the old wording instead of blanking the panel.
+     *
+     * @param  array<string, mixed>  $decoded
+     */
+    protected function formatFindings(array $decoded): string
+    {
+        $findings = $decoded['findings'] ?? null;
+
+        if (! is_array($findings)) {
+            // Cleaned like the incident analysis: the text is shown verbatim in
+            // the UI, so Markdown must not leak into it.
+            return AiText::clean((string) ($decoded['reasoning'] ?? $findings ?? ''));
+        }
+
+        return collect($findings)
+            ->filter(fn ($finding) => is_string($finding) || is_numeric($finding))
+            // Squished, not just cleaned: an item that arrives with line breaks in
+            // it would otherwise read as several findings once bulleted.
+            ->map(fn ($finding) => AiText::inline((string) $finding))
+            ->filter()
+            // The model occasionally bullets the items itself; one marker is enough,
+            // and it is the same "•" AiText gives every other list in the app.
+            ->map(fn (string $finding) => '• '.ltrim($finding, "-*• \t"))
+            ->take(self::MAX_FINDINGS)
+            ->implode("\n");
     }
 
     /**
@@ -106,16 +151,29 @@ class JudolAiClassifier
             model: $this->settings->model(),
             maxTokens: 300,
             system: <<<'SYS'
-            Kamu pengklasifikasi konten. Tentukan apakah halaman web ini benar-benar
-            SPAM SEO judi online ("judol") - biasanya hasil peretasan yang menyisipkan
-            promosi slot/togel/casino ke situs yang tidak terkait - atau BUKAN (mis.
-            berita yang membahas judi online, halaman kebijakan yang menyebut kata itu
-            sekilas). Kalau ada gambar disertakan, baca juga teks di dalamnya (banner
-            promosi sering menaruh teksnya di gambar, bukan di HTML) dan nilai apakah
-            gambar itu memang promosi judi.
+            Kamu pemindai konten judi online ("judol") - spam SEO hasil peretasan yang
+            menyisipkan promosi slot/togel/casino ke situs yang tidak terkait. Periksa
+            DUA sumber: teks halaman, dan gambar yang disertakan (banner promosi sering
+            menaruh teksnya di gambar, bukan di HTML - baca teks di dalam gambar itu).
+
+            Tentukan apakah halaman ini memang judol, atau BUKAN (mis. berita yang
+            membahas judi online, halaman kebijakan yang menyebut kata itu sekilas).
+
+            Untuk "findings": SEBUTKAN SAJA APA YANG DITEMUKAN, jangan mendeskripsikan,
+            menganalisis, menyimpulkan, atau menyarankan tindakan. Satu temuan = satu
+            item singkat (maksimal 12 kata), diawali sumbernya:
+            - "Teks: ..." untuk yang ditemukan di teks halaman - kutip nama merek,
+              ajakan, atau frasa judinya apa adanya.
+            - "Gambar: ..." untuk yang terbaca di dalam gambar - sebutkan tulisan pada
+              banner itu.
+            Contoh: ["Teks: nama merek DEWA89 muncul 6 kali",
+            "Teks: ajakan \"daftar slot gacor maxwin\" di footer",
+            "Gambar: banner bertuliskan \"RTP LIVE HARI INI\""]
+            Maksimal 8 item. Kalau bukan judol, findings berisi alasan singkat kenapa
+            bukan (satu item saja).
 
             Balas HANYA JSON valid, tanpa teks lain, skema persis:
-            {"is_judol": boolean, "confidence": number 0-1, "reasoning": string singkat}
+            {"is_judol": boolean, "confidence": number 0-1, "findings": array of string}
             SYS,
             messages: [['role' => 'user', 'content' => $content]],
         );
@@ -248,9 +306,9 @@ class JudolAiClassifier
             // apa adanya di panel "Temuan AI", di tempat yang sama dengan jawaban
             // model - jadi kalimat berbahasa Inggris di sini terbaca seolah AI yang
             // menjawab begitu, padahal AI justru tidak pernah menjawab.
-            'reasoning' => 'AI tidak bisa dihubungi saat halaman ini dipindai, jadi temuan ini '
-                .'masih bersandar pada kecocokan kata kunci saja. Penyebab teknis: '
-                .$this->technicalCause($e),
+            'reasoning' => 'AI tidak bisa dihubungi saat halaman ini dipindai, jadi tidak ada '
+                .'temuan yang bisa disebutkan. Deteksi ini bersandar pada kecocokan kata kunci saja. '
+                .'Penyebab teknis: '.$this->technicalCause($e),
         ];
     }
 

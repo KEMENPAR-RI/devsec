@@ -185,7 +185,9 @@
                                         <span class="text-zinc-400">&middot; keyakinan {{ number_format((float) $ai['confidence'] * 100) }}%</span>
                                     @endif
                                     @if ($ai['reasoning'])
-                                        <br>{{ $ai['reasoning'] }}
+                                        {{-- The findings arrive as one bullet per line, so they have to
+                                        keep their line breaks here the same way the detections list does. --}}
+                                        <span class="mt-1 block whitespace-pre-line">{{ $ai['reasoning'] }}</span>
                                     @endif
                                 </p>
                             </div>

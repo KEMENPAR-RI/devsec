@@ -859,11 +859,13 @@ class JudolScanner
         }
 
         // Both checks fired: the page's own content AND where it points. Keep the
-        // page verdict's confidence and append what the links add to it.
+        // page verdict's confidence and append what the links add to it. Joined by a
+        // single newline, not a blank line: both sides are now findings lists, so
+        // the link lines belong in the same list rather than in a second paragraph.
         return [
             ...$ai,
             'ai_verdict' => 'confirmed',
-            'ai_reasoning' => trim($ai['ai_reasoning'] ?? '')."\n\n".$summary,
+            'ai_reasoning' => trim($ai['ai_reasoning'] ?? '')."\n".$summary,
         ];
     }
 

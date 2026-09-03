@@ -95,19 +95,21 @@ class JudolLinkClassifier
     }
 
     /**
-     * A short sentence naming what the flagged domains are, for the detection's
-     * AI reasoning field. Written here so the wording lives next to the check that
-     * produced it.
+     * The flagged domains as findings lines, for the detection's AI reasoning
+     * field. Written here so the wording lives next to the check that produced it.
+     *
+     * Phrased as a bare listing - one flagged domain per line - to sit in the
+     * same panel, and read the same way, as the page classifier's text/image
+     * findings: what was found, named, and nothing more. Why it matters and what
+     * to do about it is the incident analysis's job.
      *
      * @param  array<int, string>  $domains
      */
     public function summarize(array $domains): string
     {
-        $count = count($domains);
-
-        return "Halaman ini memasang {$count} tautan keluar ke situs judi online yang dikenali AI: "
-            .implode(', ', $domains).'. Pola ini khas penyisipan backlink pada situs yang diretas - '
-            .'isi halaman dibiarkan normal supaya tidak mencurigakan, dan hanya tautannya yang ditanam.';
+        return collect($domains)
+            ->map(fn (string $domain) => "• Tautan judi: {$domain}")
+            ->implode("\n");
     }
 
     /**
