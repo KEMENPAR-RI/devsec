@@ -261,10 +261,13 @@
     </div>
 
     {{-- Incidents + uptime/website list --}}
-    <div class="grid items-start gap-6 lg:grid-cols-3">
+    <div class="grid gap-6 lg:grid-cols-3">
 
         {{-- Recent incidents --}}
-        <div class="enter rounded-2xl border border-zinc-200 bg-white lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900">
+        {{-- min-w-0: a grid item defaults to min-width:auto, so without this the card
+        refuses to shrink below its longest incident title and the whole card overflows
+        the screen on mobile - the title's own "truncate" never gets to apply. --}}
+        <div class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900">
             <div class="flex items-center justify-between px-5 py-4">
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Insiden Terbaru</h2>
                 @can('insiden.view')
@@ -280,12 +283,12 @@
                     <p class="text-sm text-zinc-500 dark:text-zinc-400">Belum ada insiden. Semua situs aman terkendali.</p>
                 </div>
             @else
-                <div class="space-y-1 px-3 pb-3 max-h-[700px] overflow-y-auto">
+                <div class="space-y-1 px-3 pb-3 overflow-y-auto">
                     @foreach ($recentIncidents as $incident)
                         @php $incidentHref = auth()->user()?->hasPermission('insiden.view') ? route('insiden') : null; @endphp
                         <a
                             @if ($incidentHref) href="{{ $incidentHref }}" wire:navigate @endif
-                            class="flex items-center gap-3 rounded-xl px-2.5 py-2.5 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                            class="flex items-center gap-2.5 rounded-xl px-2.5 py-2.5 transition hover:bg-zinc-50 sm:gap-3 dark:hover:bg-zinc-800/60"
                         >
                             <span @class([
                                 'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
@@ -321,11 +324,13 @@
             @endif
         </div>
 
-        <div class="flex flex-col gap-6">
+        {{-- min-w-0 for the same reason as the incidents card: the site list below
+        truncates long names and URLs, which only works if this column can shrink. --}}
+        <div class="flex min-w-0 flex-col gap-6">
             {{-- 7-day uptime chart: plain CSS bars --}}
             <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Uptime 7 Hari Terakhir</h2>
-                <div class="mt-6 flex h-32 items-end gap-2.5">
+                <div class="mt-6 flex h-35 items-end gap-2.5">
                     @foreach ($weeklyUptime as $day)
                         <div class="flex flex-1 flex-col items-center gap-2">
                             <div class="flex h-24 w-full items-end">
@@ -351,7 +356,7 @@
                         </a>
                     @endcan
                 </div>
-                <div class="mt-4 space-y-3.5 max-h-[300px] overflow-y-auto">
+                <div class="mt-4 space-y-3.5 overflow-y-auto h-35">
                     @forelse ($websiteStatuses as $website)
                         @php $siteHref = auth()->user()?->hasPermission('situs.view') ? route('situs.show', $website) : null; @endphp
                         <a @if ($siteHref) href="{{ $siteHref }}" wire:navigate @endif class="flex items-center gap-3">

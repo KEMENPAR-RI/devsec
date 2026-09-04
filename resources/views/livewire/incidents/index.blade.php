@@ -126,7 +126,7 @@
 
                                 <div x-show="open" x-cloak x-transition class="px-5 pb-4 sm:pl-[5.75rem]">
                                     @if ($incident->description)
-                                        <p class="text-sm text-zinc-600 dark:text-zinc-300">{{ $incident->description }}</p>
+                                        <p class="mt-1 break-words text-sm text-zinc-600 dark:text-zinc-300">{{ $incident->description }}</p>
                                     @endif
 
                                     @if (! empty($lines))
@@ -134,7 +134,7 @@
                                             @foreach ($lines as $label => $value)
                                                 <div class="flex items-baseline justify-between gap-3 sm:justify-start">
                                                     <dt class="shrink-0 text-zinc-400">{{ $label }}</dt>
-                                                    <dd class="truncate font-mono text-zinc-700 dark:text-zinc-300">{{ $value }}</dd>
+                                                    <dd class="flex-wrap font-mono text-zinc-700 dark:text-zinc-300">{{ $value }}</dd>
                                                 </div>
                                             @endforeach
                                         </dl>

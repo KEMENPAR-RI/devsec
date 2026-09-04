@@ -291,7 +291,7 @@
                                                                         &middot; {{ app_datetime($detection->ai_checked_at) }}
                                                                     @endif
                                                                 </p>
-                                                                <p class="mt-1 whitespace-pre-line text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{{ $detection->ai_reasoning }}</p>
+                                                                <p class="mt-1 whitespace-pre-line break-words text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{{ $detection->ai_reasoning }}</p>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -322,7 +322,7 @@
                                                         <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Kutipan konten judi di halaman ini</p>
                                                         <div class="mt-1 space-y-1.5">
                                                             @foreach ($excerpts as $excerpt)
-                                                                <p class="rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">{{ $excerpt }}</p>
+                                                                <p class="break-words rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">{{ $excerpt }}</p>
                                                             @endforeach
                                                         </div>
                                                     </div>
@@ -336,12 +336,12 @@
                                                         </p>
                                                         <div class="mt-1 space-y-1">
                                                             @foreach ($changes['added'] ?? [] as $line)
-                                                                <p class="rounded-lg bg-emerald-50/70 px-3 py-1.5 text-xs text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                                                <p class="break-words rounded-lg bg-emerald-50/70 px-3 py-1.5 text-xs text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
                                                                     <span class="font-mono text-emerald-600 dark:text-emerald-400">+</span> {{ $line }}
                                                                 </p>
                                                             @endforeach
                                                             @foreach ($changes['removed'] ?? [] as $line)
-                                                                <p class="rounded-lg bg-red-50/70 px-3 py-1.5 text-xs text-red-800 line-through dark:bg-red-500/10 dark:text-red-300">
+                                                                <p class="break-words rounded-lg bg-red-50/70 px-3 py-1.5 text-xs text-red-800 line-through dark:bg-red-500/10 dark:text-red-300">
                                                                     <span class="font-mono text-red-600 no-underline dark:text-red-400">-</span> {{ $line }}
                                                                 </p>
                                                             @endforeach

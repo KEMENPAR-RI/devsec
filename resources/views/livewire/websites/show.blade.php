@@ -104,16 +104,19 @@
         @endif
     </div>
 
+    {{-- min-w-0 on both cards: a grid item defaults to min-width:auto, so without it
+    a card refuses to shrink below its widest line - one long incident URL or keyword
+    list then widens the card past the screen instead of being clipped inside it. --}}
     <div class="grid gap-6 lg:grid-cols-2">
         {{-- Incidents --}}
-        <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
             <div class="px-5 py-4">
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Insiden</h2>
             </div>
             @if ($incidents->isEmpty())
                 <p class="px-5 pb-5 text-sm text-zinc-500 dark:text-zinc-400">Belum ada insiden untuk situs ini.</p>
             @else
-                <div class="space-y-1 px-3 pb-3">
+                <div class="space-y-1 px-3 pb-3 max-h-[300px] overflow-y-auto">
                     @foreach ($incidents as $incident)
                         <div class="rounded-xl px-2.5 py-2.5">
                             <div class="flex items-center gap-3">
@@ -129,12 +132,15 @@
                                     {{ $incident->status === 'open' ? 'Terbuka' : 'Selesai' }}
                                 </span>
                             </div>
+                            {{-- break-words, not flex-wrap (a no-op outside a flex container):
+                            these lines carry full page URLs and comma-joined keyword lists with
+                            no spaces to wrap at, which is exactly what pushes the card wide. --}}
                             @if ($incident->description)
-                                <p class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->description }}</p>
+                                <p class="mt-1.5 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->description }}</p>
                             @endif
                             @if ($lines = $incident->detailLines())
-                                <p class="mt-1 truncate font-mono text-[11px] text-zinc-400">
-                                    {{ collect($lines)->map(fn ($v, $k) => "{$k}: {$v}")->implode(' · ') }}
+                                <p class="mt-1 break-words font-mono text-[11px] text-zinc-400">
+                                    {!! collect($lines)->map(fn ($v, $k) => "{$k}: {$v}")->implode('<br>') !!}
                                 </p>
                             @endif
                         </div>
@@ -144,7 +150,7 @@
         </div>
 
         {{-- Judol detections --}}
-        <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
             <div class="px-5 py-4">
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Deteksi Judol</h2>
             </div>
@@ -175,11 +181,11 @@
                 <div class="mx-5 mb-4 rounded-lg px-4 py-3 text-sm {{ $manualScanResult['matched'] ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' }}">
                     @if ($manualScanResult['matched'])
                         <p class="font-medium">Terdeteksi konten judi online di halaman ini.</p>
-                        <p class="mt-1 text-xs">Kata kunci: {{ implode(', ', $manualScanResult['matched']) }}</p>
+                        <p class="mt-1 break-words text-xs">Kata kunci: {{ implode(', ', $manualScanResult['matched']) }}</p>
                         @if ($ai = $manualScanResult['ai'] ?? null)
                             <div class="mt-2 flex items-start gap-2 rounded-lg bg-white/60 px-3 py-2 dark:bg-zinc-900/40">
                                 <x-phosphor-sparkle class="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-500" />
-                                <p class="min-w-0 flex-1 text-xs text-zinc-700 dark:text-zinc-300">
+                                <p class="min-w-0 flex-1 break-words text-xs text-zinc-700 dark:text-zinc-300">
                                     <span class="font-medium">{{ $ai['label'] }}</span>
                                     @if ($ai['confidence'] !== null)
                                         <span class="text-zinc-400">&middot; keyakinan {{ number_format((float) $ai['confidence'] * 100) }}%</span>
@@ -201,14 +207,14 @@
             @if ($judolDetections->isEmpty())
                 <p class="px-5 pb-5 text-sm text-zinc-500 dark:text-zinc-400">Belum ada konten judi online terdeteksi.</p>
             @else
-                <div class="space-y-1 px-3 pb-3">
+                <div class="space-y-1 px-3 pb-3 max-h-[300px] overflow-y-auto">
                     @foreach ($judolDetections as $detection)
                         <div class="min-w-0 rounded-xl px-2.5 py-2.5">
                             {{-- `block`, because truncate cannot clip an inline element. --}}
                             <a href="{{ $detection->url }}" target="_blank" rel="noopener" title="{{ $detection->url }}" class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
                                 {{ $detection->url }}
                             </a>
-                            <p class="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">{{ implode(', ', $detection->matched_keywords ?? []) }}</p>
+                            <p class="mt-1 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ implode(', ', $detection->matched_keywords ?? []) }}</p>
                         </div>
                     @endforeach
                 </div>
