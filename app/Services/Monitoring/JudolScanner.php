@@ -137,6 +137,15 @@ class JudolScanner
         $maxDepth = max(0, (int) config('judol.max_depth', 3));
         $host = parse_url($website->url, PHP_URL_HOST);
 
+        // A page budget alone does not bound a crawl's *duration*, and duration is
+        // what the queue enforces: on a slow host 60 pages runs well past the job's
+        // 300s timeout, which queue:work applies by SIGKILLing the worker mid-fetch.
+        // The worker dies, systemd restarts it, it picks the same site up again and
+        // dies the same way - the status=9/KILL restart loop. Stopping on our own
+        // terms keeps whatever was already scanned and hands the rest to the next
+        // scheduled run.
+        $deadline = microtime(true) + max(30, (int) config('judol.max_seconds', 240));
+
         $visited = [];
 
         // Probe the homepage before anything else, including the sitemap fetch.
@@ -174,6 +183,16 @@ class JudolScanner
         }
 
         while ($queue && count($visited) < $maxPages) {
+            if (microtime(true) >= $deadline) {
+                Log::info(sprintf(
+                    'JudolScanner: crawl %s dihentikan pada batas waktu setelah %d halaman; sisanya dilanjutkan pada pemindaian berikutnya.',
+                    $website->url,
+                    count($visited)
+                ));
+
+                return;
+            }
+
             [$url, $depth] = array_shift($queue);
             $url = $this->normalizeUrl($url);
 

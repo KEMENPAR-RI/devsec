@@ -149,6 +149,22 @@ return [
     'max_depth' => 3,
 
     /*
+    | Anggaran waktu satu crawl, dalam detik.
+    |
+    | max_pages membatasi JUMLAH halaman, bukan LAMANYA - dan yang ditegakkan
+    | oleh queue adalah waktu. Situs lambat (~16 detik per halaman pada hosting
+    | bersama) menembus $timeout job jauh sebelum halaman ke-60, lalu dibunuh
+    | queue:work dengan SIGKILL: worker ikut mati, systemd me-restart, job yang
+    | sama diambil lagi - dan gagal lagi, selamanya.
+    |
+    | Dengan batas ini crawl berhenti sendiri secara rapi: halaman yang sudah
+    | dipindai tetap tersimpan dan dilaporkan, sisanya menunggu putaran
+    | berikutnya. Harus lebih kecil dari ScanWebsiteForJudolJob::$timeout (300)
+    | dengan margin untuk satu fetch terakhir yang sedang berjalan.
+    */
+    'max_seconds' => 240,
+
+    /*
     |--------------------------------------------------------------------------
     | Klasifikasi AI (opsional)
     |--------------------------------------------------------------------------

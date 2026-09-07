@@ -147,6 +147,36 @@ class AutomaticCrawlTest extends TestCase
         );
     }
 
+    public function test_a_crawl_stops_at_its_time_budget_instead_of_being_killed(): void
+    {
+        // Regression: max_pages bounds the page count, not the duration, and the
+        // queue enforces duration. On a slow host 60 pages ran past the job's 300s
+        // timeout, queue:work SIGKILLed the worker mid-fetch, systemd restarted it
+        // onto the same site, and it died the same way - the status=9/KILL loop.
+        $website = Website::factory()->create(['is_active' => true, 'last_status' => 'up']);
+
+        config(['judol.max_seconds' => 1, 'judol.max_pages' => 60]);
+
+        // Every page links onward, so the queue never empties on its own: only the
+        // deadline can end this crawl.
+        Http::fake(function () {
+            usleep(120000);
+
+            return Http::response(
+                '<html><body><a href="/'.uniqid().'">next</a></body></html>',
+                200
+            );
+        });
+
+        $started = microtime(true);
+        app(JudolScanner::class)->scan($website);
+        $elapsed = microtime(true) - $started;
+
+        // Generous ceiling: what matters is that it returns on its own well before
+        // the job timeout, not the exact moment it does.
+        $this->assertLessThan(30, $elapsed, 'the crawl ignored its time budget');
+    }
+
     public function test_an_idle_queue_is_not_reported_as_stalled(): void
     {
         config(['queue.default' => 'database']);
