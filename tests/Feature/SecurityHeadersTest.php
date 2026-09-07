@@ -80,6 +80,70 @@ class SecurityHeadersTest extends TestCase
         $this->get('/login')->assertHeaderMissing('X-XSS-Protection');
     }
 
+    public function test_the_vite_dev_server_is_allowed_while_it_is_running(): void
+    {
+        // Regression: the policy allowed only 'self', so with `npm run dev` up the
+        // browser blocked every asset @vite pointed at the dev server's port. The
+        // app rendered as unstyled HTML with nothing logged anywhere - the failure
+        // looks like a broken build, not a blocked request.
+        $hot = public_path('hot');
+        $existed = is_file($hot);
+        $previous = $existed ? file_get_contents($hot) : null;
+
+        file_put_contents($hot, 'http://127.0.0.1:5173');
+
+        try {
+            $csp = $this->get('/login')->headers->get('Content-Security-Policy');
+
+            $this->assertStringContainsString('http://127.0.0.1:5173', $csp, 'dev assets would be blocked');
+            $this->assertStringContainsString('ws://127.0.0.1:5173', $csp, 'hot reload would be blocked');
+        } finally {
+            $existed ? file_put_contents($hot, $previous) : @unlink($hot);
+        }
+    }
+
+    public function test_an_ipv6_dev_origin_is_not_emitted(): void
+    {
+        // CSP cannot express a bracketed IPv6 literal: a browser drops the whole
+        // source entry and says so only in the console, leaving a header that looks
+        // permissive while enforcing something stricter. Emitting nothing is the
+        // honest outcome - vite.config.js pins the dev server to 127.0.0.1 so this
+        // should not happen, but a stale public/hot from before that change would.
+        $hot = public_path('hot');
+        $existed = is_file($hot);
+        $previous = $existed ? file_get_contents($hot) : null;
+
+        file_put_contents($hot, 'http://[::1]:5173');
+
+        try {
+            $csp = $this->get('/login')->headers->get('Content-Security-Policy');
+
+            $this->assertStringNotContainsString('[::1]', $csp);
+        } finally {
+            $existed ? file_put_contents($hot, $previous) : @unlink($hot);
+        }
+    }
+
+    public function test_no_dev_origin_leaks_into_the_policy_in_production(): void
+    {
+        $hot = public_path('hot');
+        $existed = is_file($hot);
+        $previous = $existed ? file_get_contents($hot) : null;
+
+        // No hot file is what a built deployment looks like: assets come from
+        // public/build, which is already 'self'.
+        $existed and @unlink($hot);
+
+        try {
+            $csp = $this->get('/login')->headers->get('Content-Security-Policy');
+
+            $this->assertStringNotContainsString('5173', $csp);
+            $this->assertStringNotContainsString('ws://', $csp);
+        } finally {
+            $existed and file_put_contents($hot, $previous);
+        }
+    }
+
     public function test_headers_reach_routes_outside_the_web_middleware_group(): void
     {
         // The PWA manifest is served by its own route with its own headers - the

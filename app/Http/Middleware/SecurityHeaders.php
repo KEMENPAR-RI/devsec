@@ -110,17 +110,28 @@ class SecurityHeaders
      */
     protected function applyContentSecurityPolicy(Response $response): void
     {
+        // While `npm run dev` is running, @vite serves the stylesheet, the JS and
+        // the hot-reload socket from the dev server's own origin (a different port,
+        // so not 'self'). Without this the browser blocks all of it silently and
+        // the app renders as unstyled HTML - which reads like a broken build rather
+        // than a blocked request, because nothing in the terminal says a word.
+        //
+        // Empty in production: `npm run build` writes into public/build, which is
+        // this origin, so the policy stays as tight as it looks.
+        $vite = $this->viteDevOrigins();
+        $viteSocket = $this->viteDevOrigins(withSocket: true);
+
         $policy = [
             "default-src 'self'",
 
             // 'unsafe-eval' + 'unsafe-inline': required by Alpine/Livewire, see above.
             // www.google.com + www.gstatic.com: reCAPTCHA v3, loaded on the login and
             // password-reset forms when a site key is configured.
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.google.com https://www.gstatic.com",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.google.com https://www.gstatic.com{$vite}",
 
             // 'unsafe-inline' for style: Alpine's :class bindings and the inline
             // style attributes in the dashboard charts both need it.
-            "style-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'{$vite}",
 
             // data: covers inline SVG icons and the PWA icons the manifest points at.
             // The uploaded logo and favicon are served from this origin via
@@ -130,8 +141,9 @@ class SecurityHeaders
             "font-src 'self' data:",
 
             // Livewire posts back to this origin only. reCAPTCHA's own script talks
-            // to google.com, so that origin has to be reachable here too.
-            "connect-src 'self' https://www.google.com",
+            // to google.com, so that origin has to be reachable here too. In dev the
+            // Vite client also opens a websocket back to the dev server for HMR.
+            "connect-src 'self' https://www.google.com{$viteSocket}",
 
             // reCAPTCHA v3 renders in an invisible iframe served by google.com.
             "frame-src https://www.google.com",
@@ -158,5 +170,48 @@ class SecurityHeaders
         ];
 
         $response->headers->set('Content-Security-Policy', implode('; ', $policy));
+    }
+
+    /**
+     * The Vite dev server's origins as a CSP fragment (leading space included), or
+     * an empty string when no dev server is running.
+     *
+     * public/hot is written by `npm run dev` and deleted when it stops, so its
+     * presence - not APP_ENV or APP_DEBUG - is what actually decides whether @vite
+     * points at the dev server. Reading the origin out of it rather than hardcoding
+     * a port keeps this correct when Vite picks a different one because 5173 was
+     * taken.
+     *
+     * A bracketed IPv6 origin (http://[::1]:5173, which is what Vite writes when it
+     * is left to pick a host) is rejected rather than passed through: CSP has no
+     * syntax for an IPv6 literal, so a browser discards the entire source entry -
+     * and because it discards it silently, the policy that ends up enforced is not
+     * the one the header appears to describe. vite.config.js pins the dev server to
+     * 127.0.0.1 so this case should not arise; the guard is here because when it
+     * does, an empty fragment fails loudly (assets blocked, one obvious cause)
+     * instead of looking allowed while being ignored.
+     *
+     * @param  bool  $withSocket  also allow the ws:// form - only connect-src needs
+     *                              it, since stylesheets and scripts are fetched
+     *                              over HTTP and never over the socket
+     */
+    protected function viteDevOrigins(bool $withSocket = false): string
+    {
+        $hotFile = public_path('hot');
+
+        if (! is_file($hotFile)) {
+            return '';
+        }
+
+        $origin = trim((string) @file_get_contents($hotFile));
+
+        // A truncated or half-written hot file must not corrupt the whole policy.
+        if (! preg_match('#^https?://[A-Za-z0-9.:_-]+$#', $origin)) {
+            return '';
+        }
+
+        return $withSocket
+            ? ' '.$origin.' '.preg_replace('#^http#', 'ws', $origin)
+            : ' '.$origin;
     }
 }
