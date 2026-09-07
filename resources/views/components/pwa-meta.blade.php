@@ -13,11 +13,11 @@
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
 
-<meta name="application-name" content="{{ config('app.name') }}">
+<meta name="application-name" content="{{ app_name() }}">
 <meta name="mobile-web-app-capable" content="yes">
 
 {{-- iOS ignores the manifest, so the same three facts are repeated for Safari. --}}
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="{{ config('app.name') }}">
+<meta name="apple-mobile-web-app-title" content="{{ app_name() }}">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="apple-touch-icon" href="{{ route('pwa.icon', 180) }}">

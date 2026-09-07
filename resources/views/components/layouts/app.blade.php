@@ -1,15 +1,12 @@
 @props(['title' => null])
-@php
-    $appSettings = app(\App\Services\AppSettings::class);
-    $appLogoUrl = $appSettings->logoUrl();
-    $appFaviconUrl = $appSettings->faviconUrl();
-@endphp
+
+{{-- $appName, $appLogoUrl and $appFaviconUrl come from App\View\Composers\BrandingComposer. --}}
 <!DOCTYPE html>
 <html lang="id" class="h-full">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ $title ? $title . ' - ' . config('app.name') : config('app.name') }}</title>
+    <title>{{ $title ? $title.' - '.$appName : $appName }}</title>
     
     @if ($appFaviconUrl)
         <link rel="icon" href="{{ $appFaviconUrl }}">
@@ -60,7 +57,7 @@
                 <div class="flex h-16 items-center gap-2.5 border-b border-zinc-200 px-5 dark:border-zinc-800">
                     <x-brand-mark size="sm" :image_url="$appLogoUrl" class="object-contain" />
                     <div class="flex flex-col">
-                        <span class="font-semibold tracking-tight">{{ config('app.name') }}</span>
+                        <span class="font-semibold tracking-tight">{{ $appName }}</span>
                         <small class="block text-xs text-zinc-500 dark:text-zinc-400">Kementerian Pariwisata Republik Indonesia</small>
                     </div>
                 </div>

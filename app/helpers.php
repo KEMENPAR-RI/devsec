@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\AppSettings;
 use App\Support\Dates;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -82,5 +83,19 @@ if (! function_exists('app_timezone_label')) {
     function app_timezone_label(): string
     {
         return Dates::abbreviation();
+    }
+}
+
+if (! function_exists('app_name')) {
+    /**
+     * The application name as saved in Pengaturan.
+     *
+     * Prefer this over config('app.name') in anything user-facing: the config
+     * value is frozen when the container boots, so a name saved during this
+     * request would keep rendering the old one until the next.
+     */
+    function app_name(): string
+    {
+        return app(AppSettings::class)->name();
     }
 }

@@ -4,19 +4,47 @@ namespace App\Providers;
 
 use App\Models\User;
 use App\Services\AppSettings;
+use App\Services\Backup\DatabaseBackup;
+use App\Services\Monitoring\JudolAiSettings;
+use App\Services\Notifications\MailSettings;
+use App\Services\Security\Recaptcha;
 use App\Support\Permissions;
+use App\View\Composers\BrandingComposer;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
 use Throwable;
 
 class AppServiceProvider extends ServiceProvider
 {
     /**
+     * The settings-backed services, resolved once per request.
+     *
+     * Every one of these reads the same settings table and holds no per-call
+     * state, so a fresh instance per use bought nothing - and they are asked
+     * constantly: AppSettings on every rendered timestamp, MailSettings on every
+     * notification, JudolAiSettings on every scanned page. Registering them as
+     * singletons means one instance per request instead of dozens, and lets each
+     * safely memoize what it resolves (see AppSettings).
+     *
+     * @var array<int, class-string>
+     */
+    protected const SETTINGS_SERVICES = [
+        AppSettings::class,
+        JudolAiSettings::class,
+        MailSettings::class,
+        Recaptcha::class,
+        DatabaseBackup::class,
+    ];
+
+    /**
      * Register any application services.
      */
     public function register(): void
     {
-        //
+        foreach (self::SETTINGS_SERVICES as $service) {
+            $this->app->singleton($service);
+        }
     }
 
     /**
@@ -25,6 +53,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->applyRuntimeAppSettings();
+        $this->composeViews();
 
         // Every permission in the registry becomes a Gate of the same name, so one
         // list drives @can() in Blade, the `can:` route middleware, and
@@ -33,6 +62,34 @@ class AppServiceProvider extends ServiceProvider
         foreach (Permissions::all() as $permission) {
             Gate::define($permission, fn (User $user) => $user->hasPermission($permission));
         }
+    }
+
+    /**
+     * Binds the data a view needs to the view itself, so Blade files stay markup
+     * and stop resolving services out of the container mid-render.
+     */
+    protected function composeViews(): void
+    {
+        View::composer(
+            ['components.layouts.app', 'components.layouts.guest'],
+            BrandingComposer::class
+        );
+
+        // The reCAPTCHA widget is one <script> whose whole behaviour depends on
+        // whether it is configured; the component asked the container itself.
+        View::composer('components.recaptcha', function ($view) {
+            $recaptcha = $this->app->make(Recaptcha::class);
+
+            $view->with([
+                'recaptchaEnabled' => $recaptcha->enabled(),
+                'recaptchaSiteKey' => $recaptcha->enabled() ? $recaptcha->siteKey() : null,
+            ]);
+        });
+
+        // Mail template placeholders, for the help text under the template editor.
+        View::composer('livewire.settings.index', function ($view) {
+            $view->with('mailPlaceholders', $this->app->make(MailSettings::class)->placeholders());
+        });
     }
 
     /**
@@ -46,7 +103,7 @@ class AppServiceProvider extends ServiceProvider
     protected function applyRuntimeAppSettings(): void
     {
         try {
-            $settings = app(AppSettings::class);
+            $settings = $this->app->make(AppSettings::class);
             $timezone = $settings->timezone();
 
             config(['app.name' => $settings->name(), 'app.timezone' => $timezone]);

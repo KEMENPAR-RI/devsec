@@ -5,10 +5,10 @@ namespace App\Services\Monitoring;
 use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
-use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\JudolContentDetected;
+use App\Services\AppSettings;
 use App\Services\Notifications\MailSettings;
 use DOMDocument;
 use Generator;
@@ -652,7 +652,7 @@ class JudolScanner
         // only if the table is somehow empty, so a botched migration/seed never
         // leaves the scanner silently matching nothing.
         $keywords = JudolKeyword::activeList() ?: config('judol.keywords', []);
-        $threshold = (int) (Setting::get('judol_threshold') ?? config('judol.threshold', 1));
+        $threshold = app(AppSettings::class)->judolThreshold();
 
         $matched = collect($keywords)
             ->filter(fn (string $keyword) => Str::contains($haystack, Str::lower($keyword))
@@ -985,7 +985,7 @@ class JudolScanner
     public function pruneStaleDetections(): int
     {
         $activeKeywords = collect(JudolKeyword::activeList())->map(fn (string $k) => Str::lower($k))->all();
-        $threshold = (int) (Setting::get('judol_threshold') ?? config('judol.threshold', 1));
+        $threshold = app(AppSettings::class)->judolThreshold();
         $cleared = 0;
 
         JudolDetection::whereNotNull('matched_keywords')

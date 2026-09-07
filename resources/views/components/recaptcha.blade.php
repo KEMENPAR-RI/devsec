@@ -1,7 +1,5 @@
 @props(['action'])
 
-@php $recaptcha = app(\App\Services\Security\Recaptcha::class); @endphp
-
 {{--
     Google reCAPTCHA v3 for one public form. Renders nothing at all when it isn't
     configured, so a fresh install (and the test suite) never loads Google.
@@ -17,13 +15,13 @@
     just runs the callback straight away.
 --}}
 
-@if ($recaptcha->enabled())
-    <script src="https://www.google.com/recaptcha/api.js?render={{ $recaptcha->siteKey() }}" async defer></script>
+@if ($recaptchaEnabled)
+    <script src="https://www.google.com/recaptcha/api.js?render={{ $recaptchaSiteKey }}" async defer></script>
 @endif
 
 <script>
     // Defined either way, so a form's submit handler never has to be conditional.
-    window.recaptchaSiteKey = @js($recaptcha->enabled() ? $recaptcha->siteKey() : null);
+    window.recaptchaSiteKey = @js($recaptchaSiteKey);
     window.recaptchaAction = @js($action);
 
     document.addEventListener('alpine:init', () => {

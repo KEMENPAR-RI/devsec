@@ -159,6 +159,19 @@ class Index extends Component
     }
 
     /**
+     * The shared AppSettings instance.
+     *
+     * A Livewire component cannot hold a service in a public property (everything
+     * public is serialized between requests), so it is resolved on demand - but it
+     * is a singleton now, so this hands back the same instance every time rather
+     * than building a new one per call site.
+     */
+    protected function appSettings(): AppSettings
+    {
+        return app(AppSettings::class);
+    }
+
+    /**
      * Stored the moment a file is picked rather than waiting for "Simpan": an
      * upload that only lands on save would be lost by any validation error
      * elsewhere on the page.
@@ -171,7 +184,7 @@ class Index extends Component
             'logo' => ['image', 'mimes:png,jpg,jpeg,webp,svg', 'max:1024'],
         ], [], ['logo' => 'logo']);
 
-        $previous = app(AppSettings::class)->logoPath();
+        $previous = $this->appSettings()->logoPath();
 
         $path = $this->logo->store('branding', 'public');
         Setting::set('app_logo_path', $path);
@@ -199,7 +212,7 @@ class Index extends Component
             'favicon' => ['file', 'mimes:png,ico,svg,webp', 'max:512'],
         ], [], ['favicon' => 'favicon']);
 
-        $previous = app(AppSettings::class)->faviconPath();
+        $previous = $this->appSettings()->faviconPath();
 
         $path = $this->favicon->store('branding', 'public');
         Setting::set('app_favicon_path', $path);
@@ -216,11 +229,13 @@ class Index extends Component
     {
         $this->authorize('pengaturan.update');
 
-        if ($path = app(AppSettings::class)->faviconPath()) {
+        if ($path = $this->appSettings()->faviconPath()) {
             Storage::disk('public')->delete($path);
         }
 
         Setting::forget('app_favicon_path');
+        // The file is gone but this request already memoized a URL for it.
+        $this->appSettings()->forgetResolvedUrls();
         session()->flash('status', 'Favicon dihapus.');
     }
 
@@ -228,11 +243,12 @@ class Index extends Component
     {
         $this->authorize('pengaturan.update');
 
-        if ($path = app(AppSettings::class)->logoPath()) {
+        if ($path = $this->appSettings()->logoPath()) {
             Storage::disk('public')->delete($path);
         }
 
         Setting::forget('app_logo_path');
+        $this->appSettings()->forgetResolvedUrls();
         session()->flash('status', 'Logo aplikasi dihapus - kembali ke inisial nama aplikasi.');
     }
 
@@ -277,7 +293,7 @@ class Index extends Component
             'mailTemplateSubject' => ['nullable', 'string', 'max:255'],
             'mailTemplateBody' => ['nullable', 'string', 'max:20000'],
             'appName' => ['required', 'string', 'max:60'],
-            'appTimezone' => ['required', 'string', Rule::in(array_keys(app(AppSettings::class)->timezoneOptions()))],
+            'appTimezone' => ['required', 'string', Rule::in(array_keys($this->appSettings()->timezoneOptions()))],
             'defaultCheckIntervalMinutes' => ['required', 'integer', 'min:1', 'max:1440'],
             'defaultJudolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'defaultDownThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
@@ -490,9 +506,9 @@ class Index extends Component
         $backup = app(DatabaseBackup::class);
 
         return view('livewire.settings.index', [
-            'timezoneOptions' => app(AppSettings::class)->timezoneOptions(),
-            'logoUrl' => app(AppSettings::class)->logoUrl(),
-            'faviconUrl' => app(AppSettings::class)->faviconUrl(),
+            'timezoneOptions' => $this->appSettings()->timezoneOptions(),
+            'logoUrl' => $this->appSettings()->logoUrl(),
+            'faviconUrl' => $this->appSettings()->faviconUrl(),
             'backups' => $backup->all(),
             'backupLastRunAt' => $backup->lastRunAt(),
             // So the toggle below can explain itself when .env is overruling it.

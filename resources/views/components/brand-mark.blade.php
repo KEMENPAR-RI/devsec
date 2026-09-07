@@ -18,6 +18,6 @@
     <img src="{{ $safeImageUrl }}" alt="Brand Mark" {{ $attributes->merge(['class' => $sizeClass]) }}>
 @else
     <span {{ $attributes->merge(['class' => 'inline-flex shrink-0 items-center justify-center bg-accent-600 font-semibold text-white ' . $sizeClass]) }}>
-        {{ Str::upper(substr(config('app.name'), 0, 1)) }}
+        {{ Str::upper(substr(app_name(), 0, 1)) }}
     </span>
 @endif

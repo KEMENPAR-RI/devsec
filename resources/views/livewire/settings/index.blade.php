@@ -458,11 +458,10 @@
             @error('mailTemplateBody') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
         </div>
 
-        @php $placeholders = app(\App\Services\Notifications\MailSettings::class)->placeholders(); @endphp
         <div class="flex flex-col gap-1.5 rounded-lg bg-zinc-50 p-3 text-xs dark:bg-zinc-800/60">
             <p class="font-medium text-zinc-600 dark:text-zinc-300">Placeholder yang tersedia (dipakai di Subjek & Isi):</p>
             <dl class="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
-                @foreach ($placeholders as $token => $description)
+                @foreach ($mailPlaceholders as $token => $description)
                     <div class="flex items-baseline gap-1.5">
                         <dt class="shrink-0 font-mono text-accent-600 dark:text-accent-400">{{ $token }}</dt>
                         <dd class="truncate text-zinc-500 dark:text-zinc-400">{{ $description }}</dd>

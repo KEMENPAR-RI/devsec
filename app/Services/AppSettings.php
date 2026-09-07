@@ -16,6 +16,34 @@ use Illuminate\Support\Facades\Storage;
  */
 class AppSettings
 {
+    /**
+     * Filesystem answers already given during this request, keyed by storage path.
+     *
+     * Setting::get() memoizes the path itself, but logoUrl()/faviconUrl() also ask
+     * the disk whether that file is still there - and the layout resolves both on
+     * every single page render. The existence check is the expensive half, so it
+     * is the half worth remembering.
+     *
+     * Keyed by path rather than by setting key so that replacing the logo, which
+     * stores under a new path, simply misses the memo. Removing one deletes the
+     * file under a path already answered for, so that case is cleared explicitly -
+     * see forgetResolvedUrls().
+     *
+     * @var array<string, ?string>
+     */
+    protected array $resolvedUrls = [];
+
+    /**
+     * Drops the memoized existence checks.
+     *
+     * Called after an upload is deleted, since the memo would otherwise still hand
+     * back a URL for a file that is no longer on disk for the rest of the request.
+     */
+    public function forgetResolvedUrls(): void
+    {
+        $this->resolvedUrls = [];
+    }
+
     public function name(): string
     {
         return Setting::get('app_name') ?: (string) config('app.name');
@@ -34,11 +62,7 @@ class AppSettings
      */
     public function logoUrl(): ?string
     {
-        $path = $this->logoPath();
-
-        return $path && Storage::disk('public')->exists($path)
-            ? Storage::disk('public')->url($path)
-            : null;
+        return $this->publicUrl($this->logoPath());
     }
 
     /** Storage path of the uploaded favicon, relative to the "public" disk. */
@@ -54,11 +78,31 @@ class AppSettings
      */
     public function faviconUrl(): ?string
     {
-        $path = $this->faviconPath();
+        return $this->publicUrl($this->faviconPath());
+    }
 
-        return $path && Storage::disk('public')->exists($path)
-            ? Storage::disk('public')->url($path)
-            : null;
+    /**
+     * A browser-loadable URL for an uploaded file, or null when the row points at
+     * something no longer on disk - so a deleted upload degrades to the fallback
+     * instead of rendering as a broken image or <link>.
+     *
+     * Shared by the logo and the favicon, which had the same four lines twice.
+     */
+    protected function publicUrl(?string $path): ?string
+    {
+        if (! $path) {
+            return null;
+        }
+
+        // array_key_exists rather than ??=, so a path whose file is missing
+        // memoizes as null instead of re-hitting the disk on every later call.
+        if (! array_key_exists($path, $this->resolvedUrls)) {
+            $this->resolvedUrls[$path] = Storage::disk('public')->exists($path)
+                ? Storage::disk('public')->url($path)
+                : null;
+        }
+
+        return $this->resolvedUrls[$path];
     }
 
     public function timezone(): string
@@ -84,6 +128,19 @@ class AppSettings
     public function defaultResponseTimeThresholdMs(): int
     {
         return (int) (Setting::get('default_response_time_threshold_ms') ?: 15000);
+    }
+
+    /**
+     * How many distinct keywords must appear on a page before it counts as a judol
+     * finding.
+     *
+     * Read by the scanner on every page, by the stale-detection prune, and by the
+     * Deteksi Judol screen - the same expression lived in all three, each carrying
+     * its own copy of the fallback.
+     */
+    public function judolThreshold(): int
+    {
+        return (int) (Setting::get('judol_threshold') ?? config('judol.threshold', 1));
     }
 
     /**

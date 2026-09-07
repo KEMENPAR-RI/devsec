@@ -1,15 +1,12 @@
 @props(['title' => null])
-@php
-    $appSettings = app(\App\Services\AppSettings::class);
-    $appLogoUrl = $appSettings->logoUrl();
-    $appFaviconUrl = $appSettings->faviconUrl();
-@endphp
+
+{{-- $appName, $appLogoUrl and $appFaviconUrl come from App\View\Composers\BrandingComposer. --}}
 <!DOCTYPE html>
 <html lang="id" class="h-full">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ $title ? $title . ' - ' . config('app.name') : config('app.name') }}</title>
+    <title>{{ $title ? $title.' - '.$appName : $appName }}</title>
 
     @if ($appFaviconUrl)
         <link rel="icon" href="{{ $appFaviconUrl }}">
@@ -47,7 +44,7 @@
                 <x-brand-mark size="md" :image_url="$appLogoUrl" class="object-contain" />
                 <div class="flex flex-col">
                     <span class="text-lg font-semibold tracking-tight text-white">
-                        {{ config('app.name') }}
+                        {{ $appName }}
                     </span>
                     <small class="text-sm text-accent-200">
                         Kementerian Pariwisata Republik Indonesia
@@ -71,7 +68,14 @@
                 <div class="mb-8 flex items-center justify-between lg:hidden">
                     <div class="flex items-center gap-2.5">
                         <x-brand-mark size="sm" :image_url="$appLogoUrl" class="object-contain" />
-                        <span class="font-semibold tracking-tight">{{ config('app.name') }}</span>
+                        <div class="flex flex-col">
+                            <span class="text-lg font-semibold tracking-tight text-white">
+                                {{ $appName }}
+                            </span>
+                            <small class="text-sm text-accent-200">
+                                Kementerian Pariwisata Republik Indonesia
+                            </small>
+                        </div>
                     </div>
                     <x-theme-toggle x-data />
                 </div>

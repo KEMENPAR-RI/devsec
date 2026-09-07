@@ -13,7 +13,7 @@
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>
                 &copy; {{ now()->year }}
-                <span class="font-medium text-zinc-700 dark:text-zinc-300">{{ config('app.name') }}</span>
+                <span class="font-medium text-zinc-700 dark:text-zinc-300">{{ app_name() }}</span>
             </span>
             <span class="hidden h-3 w-px bg-zinc-200 sm:block dark:bg-zinc-700" aria-hidden="true"></span>
             <span>Kementerian Pariwisata Republik Indonesia</span>

@@ -6,6 +6,7 @@ use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\Website;
+use App\Services\AppSettings;
 use App\Services\Monitoring\JudolScanner;
 use App\Support\DailyGroups;
 use App\Support\QueueHealth;
@@ -56,7 +57,7 @@ class Index extends Component
     {
         $this->authorize('deteksi-judol.view');
 
-        $this->threshold = (int) (Setting::get('judol_threshold') ?? config('judol.threshold', 1));
+        $this->threshold = app(AppSettings::class)->judolThreshold();
     }
 
     public function updatingSearch(): void
