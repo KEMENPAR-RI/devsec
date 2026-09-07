@@ -1,20 +1,5 @@
 @props(['action'])
 
-{{--
-    Google reCAPTCHA v3 for one public form. Renders nothing at all when it isn't
-    configured, so a fresh install (and the test suite) never loads Google.
-
-    Usage - the form drives the submit itself, because the token has to be minted
-    *before* Livewire's request goes out:
-
-        <x-recaptcha action="login" />
-        <form @submit.prevent="$recaptcha(() => $wire.login())">
-
-    $recaptcha(callback) fetches a fresh token, puts it on the component's
-    $recaptchaToken property, and then runs the callback. With reCAPTCHA off it
-    just runs the callback straight away.
---}}
-
 @if ($recaptchaEnabled)
     <script src="https://www.google.com/recaptcha/api.js?render={{ $recaptchaSiteKey }}" async defer></script>
 @endif

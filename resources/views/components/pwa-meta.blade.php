@@ -1,12 +1,3 @@
-{{--
-    Everything the browser reads to decide the app is installable, shared by both
-    layouts - the prompt has to be available on the login screen too, since that
-    is the first page most people ever see.
-
-    The manifest and its icons come from App\Http\Controllers\PwaController, so
-    they follow the name and logo saved in Pengaturan instead of a static file
-    that would go stale the moment the branding changes.
---}}
 <link rel="manifest" href="{{ route('pwa.manifest') }}">
 
 {{-- Tints the browser/OS chrome; matched to the page background of each theme. --}}

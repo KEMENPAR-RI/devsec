@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Setting;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -145,5 +146,70 @@ class PwaInstallTest extends TestCase
             file_get_contents(resource_path('js/pwa.js')),
             'the worker must be registered from the root for scope / to be granted'
         );
+    }
+
+    /**
+     * The favicon is the mark already chosen to work at a tiny size, which is the
+     * job a home-screen icon does - so it wins over the logo, whose wordmark would
+     * shrink to a smudge.
+     */
+    public function test_the_icon_is_drawn_from_the_favicon_when_one_is_uploaded(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('branding/favicon.png', $this->solidPng(64, [0xFF, 0x00, 0x00]));
+        Storage::disk('public')->put('branding/logo.png', $this->solidPng(64, [0x00, 0xFF, 0x00]));
+        Setting::set('app_favicon_path', 'branding/favicon.png');
+        Setting::set('app_logo_path', 'branding/logo.png');
+
+        $this->assertSame([0xFF, 0x00, 0x00], $this->centerPixelOfIcon(), 'the favicon should be the one drawn');
+    }
+
+    public function test_the_logo_is_used_when_there_is_no_favicon(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('branding/logo.png', $this->solidPng(64, [0x00, 0xFF, 0x00]));
+        Setting::set('app_logo_path', 'branding/logo.png');
+
+        $this->assertSame([0x00, 0xFF, 0x00], $this->centerPixelOfIcon());
+    }
+
+    /**
+     * Regression guard for the reason this falls back at all: the favicon upload
+     * accepts .ico, and GD cannot decode that format. Preferring the favicon
+     * blindly would drop every .ico user back to the generic shield.
+     */
+    public function test_an_ico_favicon_falls_through_to_the_logo_rather_than_the_shield(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('branding/favicon.ico', 'not something GD can decode');
+        Storage::disk('public')->put('branding/logo.png', $this->solidPng(64, [0x00, 0xFF, 0x00]));
+        Setting::set('app_favicon_path', 'branding/favicon.ico');
+        Setting::set('app_logo_path', 'branding/logo.png');
+
+        $this->assertSame([0x00, 0xFF, 0x00], $this->centerPixelOfIcon());
+    }
+
+    /** The RGB at the middle of the generated 192px icon, where the mark is drawn. */
+    private function centerPixelOfIcon(): array
+    {
+        $png = $this->get(route('pwa.icon', 192))->assertOk()->getContent();
+        $image = imagecreatefromstring($png);
+        $rgb = imagecolorat($image, 96, 96);
+        imagedestroy($image);
+
+        return [($rgb >> 16) & 0xFF, ($rgb >> 8) & 0xFF, $rgb & 0xFF];
+    }
+
+    /** A solid square PNG, so the colour at the icon's centre identifies the source. */
+    private function solidPng(int $size, array $rgb): string
+    {
+        $image = imagecreatetruecolor($size, $size);
+        imagefilledrectangle($image, 0, 0, $size, $size, imagecolorallocate($image, ...$rgb));
+
+        ob_start();
+        imagepng($image);
+        imagedestroy($image);
+
+        return (string) ob_get_clean();
     }
 }

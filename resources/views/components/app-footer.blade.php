@@ -1,13 +1,3 @@
-{{--
-    Sits at the bottom of the scrolling area on every dashboard page, so it
-    follows the content instead of stealing a strip of the viewport on short
-    screens.
-
-    Also the home of the PWA controls (see resources/js/pwa.js): the install
-    affordance, which stays hidden until the browser actually offers an install,
-    and the offline badge - worth having in a monitoring tool, where "no
-    incidents" and "no connection" look identical on screen.
---}}
 <footer class="border-t border-zinc-200 bg-white px-4 py-4 sm:px-6 lg:px-8 dark:border-zinc-800 dark:bg-zinc-900">
     <div class="flex flex-col gap-3 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between dark:text-zinc-400">
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">

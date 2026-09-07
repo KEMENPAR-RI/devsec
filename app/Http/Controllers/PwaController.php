@@ -106,7 +106,7 @@ class PwaController extends Controller
         $box = (int) round($scale * (1 - 2 * $padding));
         $offset = (int) round(($scale - $box) / 2);
 
-        if ($logo = $this->logoImage($settings)) {
+        if ($logo = $this->brandImage($settings)) {
             $this->drawContained($canvas, $logo, $offset, $box);
             imagedestroy($logo);
         } else {
@@ -129,18 +129,40 @@ class PwaController extends Controller
         ]);
     }
 
-    /** The uploaded logo as a GD image, or null when there is none to draw. */
-    private function logoImage(AppSettings $settings): ?GdImage
+    /**
+     * The artwork to put on the icon: the favicon when there is one, otherwise the
+     * logo, otherwise null for the built-in shield.
+     *
+     * The favicon comes first because it is the mark already chosen to stand alone
+     * at a tiny size, which is exactly the job a home-screen icon does - a wide
+     * logo with a wordmark shrinks to an illegible smudge there.
+     *
+     * Both are tried rather than only the favicon, because the favicon upload also
+     * accepts .ico and GD cannot decode that format at all. Falling through to the
+     * logo means an .ico favicon still yields a real icon instead of dropping
+     * everyone who uploaded one back to the generic shield.
+     */
+    private function brandImage(AppSettings $settings): ?GdImage
     {
-        $path = $settings->logoPath();
+        foreach ([$settings->faviconPath(), $settings->logoPath()] as $path) {
+            if ($image = $this->imageAt($path)) {
+                return $image;
+            }
+        }
 
+        return null;
+    }
+
+    /** One stored branding file as a GD image, or null when it cannot be drawn. */
+    private function imageAt(?string $path): ?GdImage
+    {
         if (! $path || ! Storage::disk('public')->exists($path)) {
             return null;
         }
 
-        // A branding upload can be png/jpg/webp/svg; imagecreatefromstring handles
-        // the raster ones and returns false for anything it cannot decode, which
-        // falls through to the built-in mark below.
+        // A branding upload can be png/jpg/webp/svg/ico; imagecreatefromstring
+        // handles the raster ones and returns false for anything it cannot decode
+        // (SVG and ICO among them), which is what the caller falls through on.
         $image = @imagecreatefromstring((string) Storage::disk('public')->get($path));
 
         return $image ?: null;

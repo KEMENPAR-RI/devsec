@@ -1,0 +1,42 @@
+# Queue worker for the monitoring dashboard (systemd).
+#
+# Every automatic website check and judol crawl is dispatched as a queued job, so
+# without this running the jobs table just fills up and the automatic monitoring
+# silently never happens - while "Cek Judol" and "Cek URL Tertentu" keep working,
+# because those run inside the web request. See App\Support\QueueHealth.
+#
+# Install:
+#   sudo cp deploy/dashboard-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now dashboard-worker
+#   sudo systemctl status dashboard-worker
+#
+# Adjust User, Group and WorkingDirectory to match the server.
+
+[Unit]
+Description=Dashboard queue worker
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/dashboard
+Restart=always
+RestartSec=5
+
+# --max-time recycles the process hourly so a long-lived worker cannot accumulate
+# leaked memory, and --tries=1 keeps a failed crawl from being retried into a
+# storm; a scan that fails is simply picked up again on the next schedule tick.
+#
+# --timeout must stay above the longest job's own $timeout (ScanWebsiteForJudolJob
+# is 300s) and below DB_QUEUE_RETRY_AFTER in .env (320s), or a slow crawl gets
+# released and run a second time while the first is still going.
+ExecStart=/usr/bin/php artisan queue:work --queue=default --sleep=3 --tries=1 --timeout=300 --max-time=3600
+
+# Let a running job finish instead of killing it mid-crawl on restart.
+KillSignal=SIGTERM
+TimeoutStopSec=330
+
+[Install]
+WantedBy=multi-user.target
