@@ -69,11 +69,55 @@
     >
         <x-slot:toolbar>
             <x-search-input model="search" placeholder="Cari nama atau URL situs..." />
+
+            @can('situs.update')
+                {{-- Selection bar: only present once something is ticked, so the toolbar
+                stays quiet during ordinary browsing. --}}
+                <div class="flex flex-wrap items-center gap-3">
+                    <label class="flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                        <input
+                            type="checkbox"
+                            @checked($filteredCount > 0 && count($selected) === $filteredCount)
+                            x-on:change="$wire.toggleSelectAll($event.target.checked)"
+                            class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700"
+                        >
+                        Pilih semua{{ $search ? ' hasil pencarian' : '' }} ({{ $filteredCount }})
+                    </label>
+
+                    @if ($selected)
+                        <span class="text-xs text-zinc-400">{{ count($selected) }} dipilih</span>
+                        <button
+                            type="button"
+                            wire:click="openMassEdit"
+                            class="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98]"
+                        >
+                            <x-phosphor-sliders-horizontal class="h-3.5 w-3.5" />
+                            Ubah Setelan Massal
+                        </button>
+                        <button
+                            type="button"
+                            wire:click="$set('selected', [])"
+                            class="text-xs font-medium text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                        >
+                            Bersihkan pilihan
+                        </button>
+                    @endif
+                </div>
+            @endcan
         </x-slot:toolbar>
 
         <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="previousPage,nextPage,gotoPage,search">
                 @foreach ($websites as $website)
                     <div class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:gap-4">
+                        @can('situs.update')
+                            <input
+                                type="checkbox"
+                                value="{{ $website->uuid }}"
+                                wire:model.live="selected"
+                                aria-label="Pilih {{ $website->name }}"
+                                class="h-4 w-4 shrink-0 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700"
+                            >
+                        @endcan
                         <x-status-dot :status="$website->statusKey(isset($offlineIds[$website->id]))" />
 
                         <div class="min-w-0 flex-1">
@@ -315,6 +359,104 @@
                             <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="bulkImport" />
                             <span wire:loading.remove wire:target="bulkImport">Impor</span>
                             <span wire:loading wire:target="bulkImport">Memproses...</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    @endcan
+
+    @can('situs.update')
+        {{-- Mass edit modal. Every field is behind its own toggle: only the ticked
+        ones are written, so a bulk change to one setting never flattens the others
+        on a site that was tuned deliberately. --}}
+        <div
+            x-cloak
+            x-show="$wire.showMassModal"
+            x-transition.opacity
+            class="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
+            @keydown.escape.window="$wire.showMassModal = false"
+        >
+            <div x-show="$wire.showMassModal" x-transition.opacity wire:click="$set('showMassModal', false)" class="absolute inset-0 bg-zinc-900/50"></div>
+
+            <div
+                x-show="$wire.showMassModal"
+                x-transition
+                class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl shadow-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-900"
+            >
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Ubah Setelan Massal</h2>
+                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Berlaku untuk <span class="font-medium text-zinc-700 dark:text-zinc-200">{{ count($selected) }} situs</span> yang dipilih.
+                    Hanya setelan yang dicentang yang diubah - sisanya dibiarkan apa adanya per situs.
+                </p>
+
+                @error('massApply') <p class="mt-2 text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+
+                <form wire:submit="massSave" class="mt-4 flex flex-col gap-4">
+                    @php
+                        $massFields = [
+                            'checkIntervalMinutes' => ['label' => 'Interval Cek Uptime (menit)', 'model' => 'massCheckIntervalMinutes', 'min' => 1, 'step' => 1],
+                            'judolScanIntervalMinutes' => ['label' => 'Interval Scan Judol (menit)', 'model' => 'massJudolScanIntervalMinutes', 'min' => 5, 'step' => 1],
+                            'downThresholdFailures' => ['label' => 'Ambang Batas Down', 'model' => 'massDownThresholdFailures', 'min' => 1, 'step' => 1],
+                            'responseTimeThresholdMs' => ['label' => 'Ambang Batas Response Time (ms)', 'model' => 'massResponseTimeThresholdMs', 'min' => 200, 'step' => 100],
+                        ];
+                    @endphp
+
+                    @foreach ($massFields as $key => $field)
+                        <div class="flex flex-col gap-1.5">
+                            <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                                <input type="checkbox" wire:model.live="massApply.{{ $key }}" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                {{ $field['label'] }}
+                            </label>
+                            {{-- Disabled until its toggle is on, so it is obvious the number
+                            sitting there is not about to be applied. --}}
+                            <input
+                                type="number" min="{{ $field['min'] }}" step="{{ $field['step'] }}"
+                                wire:model="{{ $field['model'] }}"
+                                @disabled(! ($massApply[$key] ?? false))
+                                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white dark:disabled:bg-zinc-800/40 dark:disabled:text-zinc-600"
+                            >
+                            @error($field['model']) <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                        </div>
+                    @endforeach
+
+                    <div class="flex flex-col gap-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60">
+                        <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            <input type="checkbox" wire:model.live="massApply.isActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                            Ubah status pantau
+                        </label>
+                        @if ($massApply['isActive'] ?? false)
+                            <label class="ml-7 flex items-center gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
+                                <input type="checkbox" wire:model="massIsActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                Pantau situs ini
+                            </label>
+                        @endif
+
+                        <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            <input type="checkbox" wire:model.live="massApply.isInternalOnly" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                            Ubah status jaringan internal
+                        </label>
+                        @if ($massApply['isInternalOnly'] ?? false)
+                            <label class="ml-7 flex items-center gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
+                                <input type="checkbox" wire:model="massIsInternalOnly" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                Hanya bisa diakses dari jaringan internal/instansi
+                            </label>
+                        @endif
+                    </div>
+
+                    <div class="mt-2 flex justify-end gap-2">
+                        <button type="button" wire:click="$set('showMassModal', false)" class="rounded-lg px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-300 dark:hover:bg-zinc-800">
+                            Batal
+                        </button>
+                        <button
+                            type="submit"
+                            wire:loading.attr="disabled"
+                            wire:target="massSave"
+                            class="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                            <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="massSave" />
+                            <span wire:loading.remove wire:target="massSave">Terapkan ke {{ count($selected) }} Situs</span>
+                            <span wire:loading wire:target="massSave">Menerapkan...</span>
                         </button>
                     </div>
                 </form>

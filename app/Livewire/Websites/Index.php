@@ -56,6 +56,10 @@ class Index extends Component
     public function updatingSearch(): void
     {
         $this->resetPage();
+
+        // Otherwise a site ticked under an earlier search stays selected while
+        // invisible, and a later mass edit silently changes it too.
+        $this->selected = [];
     }
 
     public function openCreate(): void
@@ -242,6 +246,137 @@ class Index extends Component
         return [null, SiteUrl::withScheme($line)];
     }
 
+    // --- Mass edit -----------------------------------------------------------
+
+    /**
+     * uuids of the rows ticked in the list. Livewire round-trips this as strings,
+     * so it stays a string array and is resolved to models only when applied.
+     *
+     * @var array<int, string>
+     */
+    public array $selected = [];
+
+    public bool $showMassModal = false;
+
+    /**
+     * Which fields the mass edit is allowed to touch. Every field is opt-in, so a
+     * setting deliberately tuned for one site is never flattened by a bulk change
+     * aimed at a different setting entirely.
+     *
+     * @var array<string, bool>
+     */
+    public array $massApply = [
+        'checkIntervalMinutes' => false,
+        'judolScanIntervalMinutes' => false,
+        'downThresholdFailures' => false,
+        'responseTimeThresholdMs' => false,
+        'isActive' => false,
+        'isInternalOnly' => false,
+    ];
+
+    public int $massCheckIntervalMinutes = 5;
+
+    public int $massJudolScanIntervalMinutes = 60;
+
+    public int $massDownThresholdFailures = 3;
+
+    public int $massResponseTimeThresholdMs = 15000;
+
+    public bool $massIsActive = true;
+
+    public bool $massIsInternalOnly = false;
+
+    /** The mass-edit form field for each toggle, and the column it writes to. */
+    protected const MASS_FIELDS = [
+        'checkIntervalMinutes' => ['massCheckIntervalMinutes', 'check_interval_minutes'],
+        'judolScanIntervalMinutes' => ['massJudolScanIntervalMinutes', 'judol_scan_interval_minutes'],
+        'downThresholdFailures' => ['massDownThresholdFailures', 'down_threshold_failures'],
+        'responseTimeThresholdMs' => ['massResponseTimeThresholdMs', 'response_time_threshold_ms'],
+        'isActive' => ['massIsActive', 'is_active'],
+        'isInternalOnly' => ['massIsInternalOnly', 'is_internal_only'],
+    ];
+
+    /** Ticking the header box selects every site the current filter matches. */
+    public function toggleSelectAll(bool $checked): void
+    {
+        $this->selected = $checked ? $this->filteredQuery()->pluck('uuid')->all() : [];
+    }
+
+    public function openMassEdit(): void
+    {
+        $this->authorize('situs.update');
+
+        if ($this->selected === []) {
+            return;
+        }
+
+        // Seeded from the app defaults so the numbers on screen are sensible ones
+        // to apply, not whatever the last edited site happened to use.
+        $defaults = app(AppSettings::class)->websiteDefaults();
+        $this->massCheckIntervalMinutes = $defaults['check_interval_minutes'];
+        $this->massJudolScanIntervalMinutes = $defaults['judol_scan_interval_minutes'];
+        $this->massDownThresholdFailures = $defaults['down_threshold_failures'];
+        $this->massResponseTimeThresholdMs = $defaults['response_time_threshold_ms'];
+
+        $this->reset('massApply');
+        $this->resetValidation();
+        $this->showMassModal = true;
+    }
+
+    /**
+     * Applies only the ticked fields to the selected sites.
+     *
+     * Validated per field rather than wholesale: a value for a field nobody ticked
+     * must not be able to block the save, and the rules are the same ones the
+     * single-site form enforces so a bulk change cannot smuggle in an interval the
+     * normal form would reject.
+     */
+    public function massSave(): void
+    {
+        $this->authorize('situs.update');
+
+        $applying = array_keys(array_filter($this->massApply));
+
+        if ($applying === [] || $this->selected === []) {
+            $this->addError('massApply', 'Pilih minimal satu setelan yang ingin diubah.');
+
+            return;
+        }
+
+        $single = $this->rules();
+        $rules = [];
+
+        foreach ($applying as $field) {
+            [$property] = self::MASS_FIELDS[$field];
+            $rules[$property] = $single[$field];
+        }
+
+        $this->validate($rules);
+
+        $changes = [];
+
+        foreach ($applying as $field) {
+            [$property, $column] = self::MASS_FIELDS[$field];
+            $changes[$column] = $this->{$property};
+        }
+
+        $count = Website::whereIn('uuid', $this->selected)->update($changes);
+
+        $this->showMassModal = false;
+        $this->selected = [];
+
+        session()->flash('status', 'Setelan '.count($applying)." field berhasil diterapkan ke {$count} situs.");
+    }
+
+    /** The list the current search matches, without pagination. */
+    protected function filteredQuery()
+    {
+        return Website::query()
+            ->when($this->search, fn ($q) => $q->where(fn ($q) => $q
+                ->where('name', 'like', "%{$this->search}%")
+                ->orWhere('url', 'like', "%{$this->search}%")));
+    }
+
     public function checkNow(Website $website): void
     {
         $this->authorize('situs.update');
@@ -252,10 +387,9 @@ class Index extends Component
 
     public function render()
     {
-        $websites = Website::query()
-            ->when($this->search, fn ($q) => $q->where(fn ($q) => $q
-                ->where('name', 'like', "%{$this->search}%")
-                ->orWhere('url', 'like', "%{$this->search}%")))
+        // Same filter "select all" uses, so the box can never tick a different set
+        // of sites than the one on screen.
+        $websites = $this->filteredQuery()
             // Newest first: a freshly added site is the one being checked on.
             ->latest()
             ->paginate(10);
@@ -264,6 +398,7 @@ class Index extends Component
             'websites' => $websites,
             // One query for the whole page instead of one per row - see Website::offlineIds().
             'offlineIds' => Website::offlineIds($websites),
+            'filteredCount' => $this->filteredQuery()->count(),
         ]);
     }
 }
