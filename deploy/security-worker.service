@@ -1,4 +1,4 @@
-# Queue worker for the monitoring dashboard (systemd).
+# Queue worker for the monitoring security (systemd).
 #
 # Every automatic website check and judol crawl is dispatched as a queued job, so
 # without this running the jobs table just fills up and the automatic monitoring
@@ -6,22 +6,22 @@
 # because those run inside the web request. See App\Support\QueueHealth.
 #
 # Install:
-#   sudo cp deploy/dashboard-worker.service /etc/systemd/system/
+#   sudo cp deploy/security-worker.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now dashboard-worker
-#   sudo systemctl status dashboard-worker
+#   sudo systemctl enable --now security-worker
+#   sudo systemctl status security-worker
 #
 # Adjust User, Group and WorkingDirectory to match the server.
 
 [Unit]
-Description=Dashboard queue worker
+Description=Security queue worker
 After=network.target mysql.service
 
 [Service]
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/var/www/dashboard
+WorkingDirectory=/www/wwwroot/deadsec
 Restart=always
 RestartSec=5
 

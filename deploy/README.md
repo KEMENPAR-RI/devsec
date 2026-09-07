@@ -32,19 +32,19 @@ dua kali.
 **systemd** (VPS/server sendiri):
 
 ```bash
-sudo cp deploy/dashboard-worker.service /etc/systemd/system/
+sudo cp deploy/security-worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now dashboard-worker
-sudo systemctl status dashboard-worker
+sudo systemctl enable --now security-worker
+sudo systemctl status security-worker
 ```
 
 **supervisor** (cPanel/Plesk):
 
 ```bash
-sudo cp deploy/dashboard-worker.supervisor.conf /etc/supervisor/conf.d/dashboard-worker.conf
+sudo cp deploy/security-worker.supervisor.conf /etc/supervisor/conf.d/security-worker.conf
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl status dashboard-worker:*
+sudo supervisorctl status security-worker:*
 ```
 
 Sesuaikan `User`, `Group`, dan path direktori di file-nya dengan server.
@@ -54,7 +54,7 @@ Sesuaikan `User`, `Group`, dan path direktori di file-nya dengan server.
 Kalau sebelumnya ada baris ini di crontab, **hapus**:
 
 ```
-* * * * * php /var/www/dashboard/artisan websites:scan-judol --sync
+* * * * * php /var/www/security/artisan websites:scan-judol --sync
 ```
 
 Dengan worker aktif, baris itu membuat setiap situs dipindai dua kali - sekali
@@ -65,7 +65,7 @@ oleh cron, sekali oleh worker.
 Ini satu-satunya baris cron yang dibutuhkan:
 
 ```
-* * * * * cd /var/www/dashboard && php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /var/www/security && php artisan schedule:run >> /dev/null 2>&1
 ```
 
 ## Memastikan sudah benar
@@ -75,7 +75,7 @@ Ini satu-satunya baris cron yang dibutuhkan:
 php artisan queue:monitor default
 
 # Harus menampilkan job yang diproses, bukan diam saja.
-sudo journalctl -u dashboard-worker -f      # systemd
+sudo journalctl -u security-worker -f      # systemd
 tail -f storage/logs/worker.log             # supervisor
 ```
 
