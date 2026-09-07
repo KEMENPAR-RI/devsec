@@ -91,6 +91,33 @@ Kalau nilainya lebih kecil, crawl yang berjalan lebih lama dari itu akan
 dilepas dan dijalankan ulang **sementara yang pertama masih berjalan**, berulang
 sampai kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
 
+## Website yang sedang mati tidak dipindai
+
+Crawl judol hanya dijalankan untuk website yang statusnya `up` menurut
+pengecekan uptime terakhir. Website berstatus `down` atau `unknown` dilewati,
+dan `websites:scan-judol` menyebutkannya di output.
+
+Ini disengaja. Pada host yang mati, setiap satu dari maksimal `judol.max_pages`
+URL akan gagal dengan cara yang sama seperti yang baru saja dilaporkan oleh
+pengecekan uptime - jadi job menghabiskan seluruh jatah 300 detiknya untuk
+mengonfirmasi hal yang sudah diketahui, lalu gagal, lalu dijadwalkan ulang.
+Gejalanya di systemd: `status=9/KILL` dan `restart counter` yang terus naik.
+
+`--now` mengabaikan interval pemindaian, **bukan** status ini: website yang
+tidak dapat diakses tetap tidak punya apa pun untuk di-crawl.
+
+Kalau sebuah situs tampak tidak pernah dipindai, periksa statusnya lebih dulu:
+
+```bash
+php artisan websites:scan-judol
+```
+
+Output-nya menyebut nama setiap website yang dilewati beserta alasannya.
+
+Situs internal (`is_internal_only`) memang selalu terbaca `down` dari luar, jadi
+situs seperti itu tidak akan pernah masuk crawl otomatis. Tombol "Cek Judol" di
+halaman detail tetap bisa dipakai untuk memindainya secara manual.
+
 ## Kalau worker gagal jalan
 
 ### `status=200/CHDIR` - "Changing to the requested working directory failed"

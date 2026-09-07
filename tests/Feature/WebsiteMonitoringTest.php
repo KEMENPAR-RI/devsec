@@ -504,9 +504,12 @@ class WebsiteMonitoringTest extends TestCase
         // for newly added sites.
         Queue::fake();
 
-        Website::factory()->create(['judol_scanned_at' => now(), 'judol_scan_interval_minutes' => 60]);
-        $due = Website::factory()->create(['judol_scanned_at' => now()->subHours(2), 'judol_scan_interval_minutes' => 60]);
-        $neverScanned = Website::factory()->create(['judol_scanned_at' => null]);
+        // last_status 'up' throughout: this covers interval gating, and a crawl is
+        // only dispatched for a site the uptime probe has found reachable (see
+        // Website::isScannable()).
+        Website::factory()->create(['judol_scanned_at' => now(), 'judol_scan_interval_minutes' => 60, 'last_status' => 'up']);
+        $due = Website::factory()->create(['judol_scanned_at' => now()->subHours(2), 'judol_scan_interval_minutes' => 60, 'last_status' => 'up']);
+        $neverScanned = Website::factory()->create(['judol_scanned_at' => null, 'last_status' => 'up']);
 
         $this->artisan('websites:scan-judol')->assertSuccessful();
 

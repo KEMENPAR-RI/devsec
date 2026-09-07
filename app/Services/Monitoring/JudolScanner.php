@@ -138,7 +138,36 @@ class JudolScanner
         $host = parse_url($website->url, PHP_URL_HOST);
 
         $visited = [];
-        $queue = [[$website->url, 0]];
+
+        // Probe the homepage before anything else, including the sitemap fetch.
+        // If the site does not answer here it will not answer for any of the
+        // max_pages URLs below either, and each of those failures costs a full
+        // connect timeout x retries - so a dead host would otherwise spend the
+        // job's entire timeout budget confirming the same thing over and over.
+        // This is the last line of defence for callers that bypass the
+        // last_status gate in ScanJudol / ScanWebsiteForJudolJob - notably the
+        // manual "Cek Judol" button, which scans on demand.
+        $homepage = $this->normalizeUrl($website->url);
+        $visited[$homepage] = true;
+        $root = $this->fetchWithError($homepage);
+
+        if ($root['body'] === null) {
+            Log::warning("JudolScanner: menghentikan crawl {$website->url} - halaman utama tidak dapat diambil: {$root['error']}");
+
+            return;
+        }
+
+        yield $homepage => ['html' => $root['body'], 'last_modified' => $root['last_modified']];
+
+        $queue = [];
+
+        if ($maxDepth > 0) {
+            foreach ($this->extractLinks($root['body'], $homepage, $host) as $link) {
+                if (! isset($visited[$link])) {
+                    $queue[] = [$link, 1];
+                }
+            }
+        }
 
         foreach ($this->sitemapUrls($website) as $sitemapUrl) {
             $queue[] = [$sitemapUrl, 0];
@@ -313,7 +342,11 @@ class JudolScanner
         ])
             ->withOptions(['verify' => $verifySsl])
             ->timeout(15)
-            ->connectTimeout(10)
+            // 5s to connect, and two attempts rather than three. The crawl visits
+            // up to max_pages URLs, so per-URL cost is multiplied by that: at 10s
+            // and 3 attempts a site whose links have gone stale could spend well
+            // past the job's 300s timeout on connection failures alone.
+            ->connectTimeout(5)
             ->retry(2, 400, throw: false);
     }
 

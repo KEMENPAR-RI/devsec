@@ -19,6 +19,15 @@ class ScanJudol extends Command
         $websites = Website::active()->get();
         $due = $this->option('now') ? $websites : $websites->filter->isDueForJudolScan();
 
+        // Crawling a site that is currently down is pure waste - see
+        // Website::isScannable(). --now overrides the interval, not this: an
+        // unreachable site has nothing to crawl no matter who asked.
+        [$due, $skipped] = $due->partition->isScannable();
+
+        if ($skipped->isNotEmpty()) {
+            $this->line("Melewati {$skipped->count()} website yang sedang tidak dapat diakses: ".$skipped->pluck('name')->implode(', ').'.');
+        }
+
         if ($due->isEmpty()) {
             $this->info('Tidak ada website yang perlu dipindai saat ini.');
 

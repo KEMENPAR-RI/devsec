@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\ScanWebsiteForJudolJob;
 use App\Models\Website;
+use App\Services\Monitoring\JudolScanner;
 use App\Support\QueueHealth;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -29,7 +30,7 @@ class AutomaticCrawlTest extends TestCase
     {
         Queue::fake();
 
-        Website::factory()->create(['is_active' => true, 'judol_scanned_at' => null]);
+        Website::factory()->create(['is_active' => true, 'judol_scanned_at' => null, 'last_status' => 'up']);
 
         $this->artisan('websites:scan-judol')->assertSuccessful();
 
@@ -44,7 +45,7 @@ class AutomaticCrawlTest extends TestCase
         // property that matters on a server with no worker.
         config(['queue.default' => 'database']);
 
-        $website = Website::factory()->create(['is_active' => true, 'judol_scanned_at' => null]);
+        $website = Website::factory()->create(['is_active' => true, 'judol_scanned_at' => null, 'last_status' => 'up']);
 
         // No HTTP fake, so every fetch fails and the crawl finds nothing - fine here,
         // since what is under test is where the work runs, not what it finds.
@@ -64,6 +65,7 @@ class AutomaticCrawlTest extends TestCase
             'is_active' => true,
             'judol_scan_interval_minutes' => 60,
             'judol_scanned_at' => now()->subMinutes(5),
+            'last_status' => 'up',
         ]);
 
         $this->artisan('websites:scan-judol')->assertSuccessful();
@@ -72,6 +74,77 @@ class AutomaticCrawlTest extends TestCase
         // --now is the override for "scan everything, never mind the interval".
         $this->artisan('websites:scan-judol --now')->assertSuccessful();
         Queue::assertPushed(ScanWebsiteForJudolJob::class, 1);
+    }
+
+    public function test_a_website_that_is_down_is_not_crawled(): void
+    {
+        Queue::fake();
+
+        Website::factory()->create([
+            'is_active' => true,
+            'judol_scanned_at' => null,
+            'last_status' => 'down',
+        ]);
+
+        $this->artisan('websites:scan-judol')->assertSuccessful();
+
+        // Every fetch a crawl of an unreachable host makes is going to fail exactly
+        // the way the uptime probe already did, so the job would spend its whole
+        // timeout budget - and take the worker down with it - to learn nothing.
+        Queue::assertNothingPushed();
+
+        // --now overrides the scan interval, not reachability.
+        $this->artisan('websites:scan-judol --now')->assertSuccessful();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_a_website_never_checked_yet_is_not_crawled(): void
+    {
+        Queue::fake();
+
+        // 'unknown' means no uptime probe has landed yet - typically a site added
+        // moments ago, possibly with a typo'd URL. websites:check runs every minute,
+        // so waiting for that verdict costs almost nothing.
+        Website::factory()->create([
+            'is_active' => true,
+            'judol_scanned_at' => null,
+            'last_status' => 'unknown',
+        ]);
+
+        $this->artisan('websites:scan-judol')->assertSuccessful();
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_a_queued_crawl_is_abandoned_if_the_site_went_down_before_it_ran(): void
+    {
+        $website = Website::factory()->create(['is_active' => true, 'last_status' => 'down']);
+
+        Http::fake();
+
+        // The job re-reads status on arrival: a scan can sit behind a long crawl for
+        // minutes, and dispatch-time reachability says nothing about now.
+        (new ScanWebsiteForJudolJob($website))->handle(app(JudolScanner::class));
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_crawl_stops_when_the_homepage_cannot_be_fetched(): void
+    {
+        $website = Website::factory()->create(['is_active' => true, 'last_status' => 'up']);
+
+        Http::fake(['*' => Http::response('', 500)]);
+
+        app(JudolScanner::class)->scan($website);
+
+        // Homepage first, and nothing after it: no sitemap fetch, no link following.
+        // This is the backstop for callers that bypass the last_status gate - the
+        // manual "Cek Judol" button scans whatever it is pointed at, on demand.
+        $this->assertLessThanOrEqual(
+            2,
+            count(Http::recorded()),
+            'a dead homepage must not fan out into a full max_pages crawl'
+        );
     }
 
     public function test_an_idle_queue_is_not_reported_as_stalled(): void

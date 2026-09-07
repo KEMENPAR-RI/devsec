@@ -19,6 +19,15 @@
 Description=Security queue worker
 After=network.target mysql.service
 
+# Give up after 10 failures inside 5 minutes instead of restarting forever. A
+# worker that dies this fast is failing on something a restart cannot fix (a
+# misconfigured .env, an unreachable database), and Restart=always alone would
+# retry that silently until someone happened to read the journal. Once tripped,
+# the unit stays down until `systemctl reset-failed security-worker` - which is
+# the point: the failure becomes visible in `systemctl status`.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
 [Service]
 Type=simple
 User=www-data

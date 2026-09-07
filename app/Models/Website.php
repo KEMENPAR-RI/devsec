@@ -80,6 +80,29 @@ class Website extends Model
     }
 
     /**
+     * Whether a judol crawl against this site is worth running at all.
+     *
+     * A crawl only makes sense on a site that actually responds: on a down site
+     * every one of the up-to-max_pages fetches is guaranteed to fail the same way
+     * the uptime probe just did, so the job burns its whole timeout budget (page
+     * count x connect timeout x retries) to learn nothing, fails, and gets
+     * redispatched on the next due tick. Uptime checking is what decides whether a
+     * site is reachable - the scanner consumes that verdict instead of
+     * rediscovering it one dead URL at a time.
+     *
+     * 'unknown' (never checked - typically a site added moments ago, or a typo'd
+     * URL) is excluded too: websites:check runs every minute, so the first probe
+     * lands well before the much longer judol_scan_interval_minutes elapses.
+     *
+     * Mirrors the existing "only when up" gate around SSL inspection in
+     * WebsiteChecker::maybeCheckSsl().
+     */
+    public function isScannable(): bool
+    {
+        return $this->last_status === 'up';
+    }
+
+    /**
      * A site down for a full day straight stops being "urgent, just happened" (red)
      * and becomes "known, long-term offline" (gray) - the same underlying down state,
      * just a calmer color once it's no longer fresh news. Driven off the open

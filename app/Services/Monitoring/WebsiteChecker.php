@@ -131,8 +131,16 @@ class WebsiteChecker
             // (common for shared-hosting government/institutional sites) gets counted as a
             // real, measured "down due to slow response" rather than an opaque connection timeout.
             ->timeout(20)
-            ->connectTimeout(10)
-            ->retry(1, 300, throw: false);
+            // A host that has not completed a TCP/TLS connection in 5s is not
+            // "slow but reachable", it is unreachable - and for a dead DNS entry
+            // the full 10s was spent per attempt to learn nothing.
+            ->connectTimeout(5)
+            // One attempt, no retry (Http::retry() counts total tries, not extra
+            // ones): this is the uptime probe, so a site that answers slowly or
+            // intermittently *is* the signal being measured. Retrying hid that
+            // behind a second attempt while doubling the job's worst-case runtime.
+            // down_threshold_failures already absorbs one-off blips across checks.
+            ->retry(1, 0, throw: false);
     }
 
     protected function handleUpDown(Website $website, WebsiteCheck $check): void
