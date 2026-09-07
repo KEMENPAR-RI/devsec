@@ -62,7 +62,7 @@ class SecurityHeadersTest extends TestCase
 
     public function test_hsts_over_https_carries_the_directives_preload_requires(): void
     {
-        $header = $this->get('https://localhost/login')
+        $header = $this->get('https://deadsec.apiprs.my.id/login')
             ->headers->get('Strict-Transport-Security');
 
         $this->assertNotNull($header);

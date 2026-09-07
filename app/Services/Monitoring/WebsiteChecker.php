@@ -131,16 +131,21 @@ class WebsiteChecker
             // (common for shared-hosting government/institutional sites) gets counted as a
             // real, measured "down due to slow response" rather than an opaque connection timeout.
             ->timeout(20)
-            // A host that has not completed a TCP/TLS connection in 5s is not
-            // "slow but reachable", it is unreachable - and for a dead DNS entry
-            // the full 10s was spent per attempt to learn nothing.
-            ->connectTimeout(5)
-            // One attempt, no retry (Http::retry() counts total tries, not extra
-            // ones): this is the uptime probe, so a site that answers slowly or
-            // intermittently *is* the signal being measured. Retrying hid that
-            // behind a second attempt while doubling the job's worst-case runtime.
-            // down_threshold_failures already absorbs one-off blips across checks.
-            ->retry(1, 0, throw: false);
+            // 10s to connect, not less. The sites monitored here are mostly
+            // government/institutional ones on shared hosting, where a TLS
+            // handshake routinely takes longer than a commodity host would: at 5s
+            // they were cut off mid-handshake and recorded as down while a browser
+            // still loaded them fine. The failure is also invisible in the numbers
+            // it produces - no response means no response_time_ms, so the check
+            // reads as "down" with a latency well under the threshold, which is
+            // exactly the confusing shape this caused in production.
+            ->connectTimeout(10)
+            // Two attempts with backoff. This is deliberately NOT the tight probe
+            // it looks like it should be: one dropped handshake here becomes a red
+            // dot on the dashboard and, past down_threshold_failures, a downtime
+            // incident and an email to every admin. The cost of a retry is one more
+            // request; the cost of skipping it is a false alarm.
+            ->retry(2, 300, throw: false);
     }
 
     protected function handleUpDown(Website $website, WebsiteCheck $check): void

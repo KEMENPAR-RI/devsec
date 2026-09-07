@@ -104,6 +104,44 @@ class WebsiteMonitoringTest extends TestCase
         $this->assertSame(1, Incident::where('website_id', $website->id)->where('type', 'downtime')->count());
     }
 
+    /**
+     * Regression: connectTimeout was briefly lowered to 5s and the retry removed,
+     * as a "a host that has not connected by now is unreachable" optimisation. It
+     * is not true here - the government/institutional sites this monitors sit on
+     * shared hosting whose TLS handshake regularly runs past 5s - and every one of
+     * them flipped red while still loading fine in a browser.
+     *
+     * The symptom was deceptive enough to be worth pinning: a cut-off handshake
+     * produces no response at all, so the check recorded "down" with a
+     * response_time_ms far below the threshold. A red site whose latency looked
+     * healthy.
+     *
+     * This reads the source rather than the client object: Http::fake() never opens
+     * a connection, so no behavioural test can observe a connect timeout, and the
+     * alternative - reflecting into PendingRequest's private state - pins this
+     * suite to framework internals that are free to change.
+     */
+    public function test_the_probe_allows_a_slow_tls_handshake_and_retries_once(): void
+    {
+        $source = file_get_contents(app_path('Services/Monitoring/WebsiteChecker.php'));
+
+        preg_match('/->connectTimeout\((\d+)\)/', $source, $connect);
+        $this->assertNotEmpty($connect, 'the probe must set an explicit connect timeout');
+        $this->assertGreaterThanOrEqual(
+            10,
+            (int) $connect[1],
+            'shared-hosting TLS handshakes need room; below 10s these sites read as down'
+        );
+
+        preg_match('/->retry\((\d+),/', $source, $retry);
+        $this->assertNotEmpty($retry, 'the probe must set an explicit retry count');
+        $this->assertGreaterThanOrEqual(
+            2,
+            (int) $retry[1],
+            'a single dropped handshake must not be enough to open a downtime incident'
+        );
+    }
+
     public function test_pages_with_gambling_keywords_are_flagged(): void
     {
         NotificationFacade::fake();

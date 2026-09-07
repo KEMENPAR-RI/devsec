@@ -14,12 +14,16 @@ class CheckWebsiteJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    // Must clear the checker's own worst case, not match it: a probe is up to
-    // 20s, and WebsiteChecker retries once and may then repeat the whole thing
-    // without SSL verification. At 20s this job was killed mid-probe on any slow
-    // site - taking the worker process down with it (queue:work enforces the
-    // timeout with SIGKILL), which is what drove the restart loop.
-    public int $timeout = 90;
+    // Must clear the checker's own worst case, not match it. WebsiteChecker makes
+    // two 20s attempts with backoff, and on a certificate error repeats that whole
+    // sequence without SSL verification: ~80s before it gives up on its own.
+    //
+    // This was 20s, i.e. below its own probe. queue:work enforces a job timeout by
+    // SIGKILLing the worker, so every slow site took the process down with it and
+    // systemd restarted it into the same job - the restart loop that showed up as
+    // status=9/KILL in the journal. Stays under DB_QUEUE_RETRY_AFTER (320s), or a
+    // slow check would be released and run again while the first is still going.
+    public int $timeout = 120;
 
     public function __construct(public Website $website) {}
 

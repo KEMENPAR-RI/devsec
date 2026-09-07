@@ -342,11 +342,16 @@ class JudolScanner
         ])
             ->withOptions(['verify' => $verifySsl])
             ->timeout(15)
-            // 5s to connect, and two attempts rather than three. The crawl visits
-            // up to max_pages URLs, so per-URL cost is multiplied by that: at 10s
-            // and 3 attempts a site whose links have gone stale could spend well
-            // past the job's 300s timeout on connection failures alone.
-            ->connectTimeout(5)
+            // 10s, matching WebsiteChecker: the same shared-hosting sites are being
+            // fetched, and at 5s their TLS handshake was being cut off. Here that
+            // showed up as a crawl that stopped at the homepage (see crawl()) on a
+            // site the dashboard was reporting as up.
+            //
+            // The per-URL cost this multiplies out to is bounded by the last_status
+            // gate rather than by a short timeout: an unreachable site is never
+            // crawled in the first place, so this budget is only ever spent on
+            // hosts that answer.
+            ->connectTimeout(10)
             ->retry(2, 400, throw: false);
     }
 
