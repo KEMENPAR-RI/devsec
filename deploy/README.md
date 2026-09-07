@@ -90,3 +90,56 @@ terlama (`ScanWebsiteForJudolJob` = 300 detik). Saat ini 320, dan itu benar.
 Kalau nilainya lebih kecil, crawl yang berjalan lebih lama dari itu akan
 dilepas dan dijalankan ulang **sementara yang pertama masih berjalan**, berulang
 sampai kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
+
+## Kalau worker gagal jalan
+
+### `status=200/CHDIR` - "Changing to the requested working directory failed"
+
+`WorkingDirectory` di file service menunjuk ke direktori yang tidak ada, jadi
+systemd menyerah **sebelum** PHP sempat dijalankan. Ini kegagalan paling umum
+saat pertama memasang, karena path di file contoh harus disesuaikan dulu.
+
+Cocokkan dengan lokasi aplikasi yang sebenarnya:
+
+```bash
+# Path yang benar adalah direktori yang berisi file artisan.
+cd /www/wwwroot/deadsec.apiprs.my.id && pwd && ls artisan
+
+# Perbaiki, lalu muat ulang.
+sudo nano /etc/systemd/system/security-worker.service
+sudo systemctl daemon-reload
+sudo systemctl restart security-worker
+sudo systemctl status security-worker
+```
+
+### `status=203/EXEC` - PHP tidak ditemukan di path itu
+
+`ExecStart` memakai `/usr/bin/php`. Kalau PHP di server ada di tempat lain
+(umum pada aaPanel/cPanel dengan PHP versi tersendiri), cari lokasinya dan
+tulis path absolutnya:
+
+```bash
+which php
+# mis. /www/server/php/82/bin/php
+```
+
+### Worker jalan tapi antrean tidak berkurang
+
+Pastikan worker memakai `.env` yang sama dengan aplikasi web - terutama
+`QUEUE_CONNECTION` dan kredensial database. `WorkingDirectory` yang salah bisa
+membuat worker membaca `.env` yang berbeda tanpa error apa pun.
+
+```bash
+sudo systemctl show security-worker -p WorkingDirectory
+php artisan queue:monitor default
+```
+
+### Izin file
+
+Jalankan worker sebagai user yang sama dengan pemilik direktori aplikasi.
+Kalau `User=www-data` sedangkan file dimiliki user lain, worker tidak bisa
+menulis ke `storage/logs` dan gagal saat mencatat log.
+
+```bash
+stat -c '%U:%G' /www/wwwroot/deadsec.apiprs.my.id
+```

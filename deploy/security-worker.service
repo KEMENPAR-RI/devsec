@@ -11,7 +11,9 @@
 #   sudo systemctl enable --now security-worker
 #   sudo systemctl status security-worker
 #
-# Adjust User, Group and WorkingDirectory to match the server.
+# Adjust User, Group and the two paths below to match the server. WorkingDirectory
+# must be the directory that actually holds artisan - systemd fails the unit with
+# "status=200/CHDIR" before PHP ever runs if that path does not exist.
 
 [Unit]
 Description=Security queue worker
@@ -21,7 +23,7 @@ After=network.target mysql.service
 Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/www/wwwroot/deadsec
+WorkingDirectory=/www/wwwroot/deadsec.apiprs.my.id
 Restart=always
 RestartSec=5
 
@@ -32,7 +34,7 @@ RestartSec=5
 # --timeout must stay above the longest job's own $timeout (ScanWebsiteForJudolJob
 # is 300s) and below DB_QUEUE_RETRY_AFTER in .env (320s), or a slow crawl gets
 # released and run a second time while the first is still going.
-ExecStart=/usr/bin/php artisan queue:work --queue=default --sleep=3 --tries=1 --timeout=300 --max-time=3600
+ExecStart=/usr/bin/php /www/wwwroot/deadsec.apiprs.my.id/artisan queue:work --queue=default --sleep=3 --tries=1 --timeout=300 --max-time=3600
 
 # Let a running job finish instead of killing it mid-crawl on restart.
 KillSignal=SIGTERM
