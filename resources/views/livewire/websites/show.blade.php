@@ -57,6 +57,7 @@
                 by their names. --}}
                 <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                     <x-status-badge :status="$statusKey" />
+                    <x-load-badge :level="$website->loadLevel()" :response-time="$checks->last()?->response_time_ms" />
                     <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ \App\Models\Website::statusConfig($statusKey)['description'] }}</span>
                 </div>
                 {{-- Truncated, not wrapped: the full URL is one tap away on the link

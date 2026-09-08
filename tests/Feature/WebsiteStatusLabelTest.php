@@ -185,7 +185,7 @@ class WebsiteStatusLabelTest extends TestCase
             'attributes' => new ComponentAttributeBag,
         ]);
 
-        $this->assertStringContainsString('Trafik Tinggi', $badge);
+        $this->assertStringContainsString('Slow', $badge);
         $this->assertStringContainsString('bg-yellow-50', $badge, 'filled in its own colour');
         $this->assertStringContainsString('rounded-full', $badge);
     }
@@ -225,7 +225,7 @@ class WebsiteStatusLabelTest extends TestCase
 
         Livewire::actingAs($user)
             ->test(Show::class, ['website' => $website])
-            ->assertSee('Trafik Tinggi')
+            ->assertSee('Slow')
             ->assertSee('lebih lambat dari biasanya');
     }
 

@@ -400,6 +400,7 @@ class Index extends Component
             'offlineIds' => Website::offlineIds($websites),
             'attackedIds' => Website::attackedIds($websites),
             'spikingIds' => Website::spikingIds($websites),
+            'loadLevels' => Website::loadLevels($websites),
             'filteredCount' => $this->filteredQuery()->count(),
         ]);
     }

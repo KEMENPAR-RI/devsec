@@ -124,6 +124,7 @@
                                 isset($spikingIds[$website->id]),
                                 isset($attackedIds[$website->id]),
                             );
+                            $load = $loadLevels[$website->id] ?? ['level' => 'unknown', 'response_time_ms' => null];
                         @endphp
 
                         <x-status-dot :status="$statusKey" />
@@ -134,15 +135,11 @@
                             </a>
                             <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">{{ $website->url }}</p>
 
-                            {{-- On a phone the row stacks and the columns to the right
-                            are gone, so the status travels with the name instead of
-                            disappearing. Left-aligned here because it sits under the
-                            URL, not in a column of its own. --}}
-                            <div class="mt-2 flex flex-wrap items-center gap-2 sm:hidden">
-                                <x-status-badge :status="$statusKey" />
+                            <div class="mt-2 flex flex-wrap items-center gap-2 md:hidden">
+                                <span class="sm:hidden"><x-status-badge :status="$statusKey" /></span>
+                                <x-load-badge :level="$load['level']" :response-time="$load['response_time_ms']" />
                             </div>
-                            {{-- Uptime rejoins the row at md, so between sm and md it
-                            rides along here rather than being missing from both. --}}
+                            
                             <p class="mt-1 flex flex-wrap items-center gap-2 text-xs md:hidden">
                                 <span class="font-mono text-zinc-400 dark:text-zinc-500">{{ $website->uptimePercentage() }}% uptime</span>
                                 @unless ($website->is_active)
@@ -151,19 +148,14 @@
                             </p>
                         </div>
 
-                        {{-- Fixed widths, not intrinsic ones: status names and uptime
-                        figures differ in length from row to row, and left to size
-                        themselves each row lands its columns somewhere slightly
-                        different. Centred within those widths so the column reads as a
-                        column. Hidden below sm, where the row stacks and there is
-                        nothing to line up. --}}
                         <div class="hidden shrink-0 items-center gap-3 text-xs text-zinc-500 sm:flex dark:text-zinc-400">
                             <span class="flex w-48 justify-center">
                                 <x-status-badge :status="$statusKey" />
                             </span>
-                            {{-- Uptime and the inactive pill wait for md: between sm and
-                            md the row still has to fit a name, a status badge and four
-                            action buttons, and the status is the column worth keeping. --}}
+                            
+                            <span class="hidden w-24 justify-center md:flex">
+                                <x-load-badge :level="$load['level']" :response-time="$load['response_time_ms']" />
+                            </span>
                             <span class="hidden w-28 text-center font-mono md:block">{{ $website->uptimePercentage() }}% uptime</span>
                             <span class="hidden w-20 text-center md:block">
                                 @unless ($website->is_active)

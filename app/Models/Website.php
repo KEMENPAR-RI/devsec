@@ -323,7 +323,7 @@ class Website extends Model
             'description' => 'Situs merespons normal.',
         ],
         'spike' => [
-            'label' => 'Trafik Tinggi',
+            'label' => 'Slow',
             'dot' => 'bg-yellow-400',
             'text' => 'text-yellow-700 dark:text-yellow-500',
             'badge' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20 dark:bg-yellow-500/10 dark:text-yellow-500 dark:ring-yellow-400/30',
@@ -367,11 +367,202 @@ class Website extends Model
     ];
 
     /**
+     * How hard the server appeared to be working on the last check, as three levels.
+     *
+     * "Beban", not "traffic": this app probes from outside and never sees a request
+     * count. What it measures is how long one response took, and a site can be slow
+     * because it is popular, because a query went bad, or because the disk is full.
+     * Naming the column after load keeps it to what the measurement supports - an
+     * operator reading "Traffic: Tinggi" would reasonably conclude visitors are up,
+     * which this app has no way of knowing.
+     *
+     * @var array<string, array{label: string, badge: string, dot: string}>
+     */
+    public const LOAD_LEVELS = [
+        'light' => [
+            'label' => 'Ringan',
+            'dot' => 'bg-emerald-500',
+            'badge' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/30',
+        ],
+        'moderate' => [
+            'label' => 'Sedang',
+            'dot' => 'bg-yellow-400',
+            'badge' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20 dark:bg-yellow-500/10 dark:text-yellow-500 dark:ring-yellow-400/30',
+        ],
+        'heavy' => [
+            'label' => 'Berat',
+            'dot' => 'bg-red-500',
+            'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
+        ],
+        'unknown' => [
+            'label' => '-',
+            'dot' => 'bg-zinc-300 dark:bg-zinc-600',
+            'badge' => 'bg-zinc-100 text-zinc-500 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
+        ],
+    ];
+
+    /** Times over baseline where load stops reading as light. */
+    protected const LOAD_MODERATE_FACTOR = 2.0;
+
+    /** Times over baseline where load reads as heavy - the same 3x that opens a spike incident. */
+    protected const LOAD_HEAVY_FACTOR = 3.0;
+
+    /**
+     * Baseline checks sampled. Matches the window WebsiteChecker's own spike
+     * detection averages over, so the column and the incident agree.
+     */
+    protected const LOAD_BASELINE_CHECKS = 10;
+
+    /**
+     * A baseline below this is too small for a ratio to mean anything - doubling
+     * 12ms is noise, not load - so such sites are reported light rather than
+     * flickering between levels on jitter alone.
+     */
+    protected const LOAD_MIN_BASELINE_MS = 50.0;
+
+    /**
+     * The load level from the last check, measured against this site's own recent
+     * average rather than a fixed number of milliseconds.
+     *
+     * Relative because the sites monitored here differ enormously in how fast they
+     * are when perfectly healthy: an institutional site on shared hosting answering
+     * in 2 seconds is normal for it, and a fixed threshold would paint it amber
+     * forever while saying nothing about whether anything changed.
+     *
+     * @param  float|null  $baselineMs  pass Website::loadBaselines() for list views
+     *                                  (avoids a query per row); computed here when omitted
+     */
+    public function loadLevel(?float $baselineMs = null): string
+    {
+        $last = $this->checks()->latest('checked_at')->first();
+
+        // A failed check has no meaningful latency to grade: it either timed out or
+        // never connected, and the status column is already saying so.
+        if (! $last || ! $last->is_up || ! $last->response_time_ms) {
+            return 'unknown';
+        }
+
+        $baseline = $baselineMs ?? $this->loadBaseline($last->id);
+
+        if (! $baseline || $baseline < self::LOAD_MIN_BASELINE_MS) {
+            return 'light';
+        }
+
+        $ratio = $last->response_time_ms / $baseline;
+
+        return match (true) {
+            $ratio >= self::LOAD_HEAVY_FACTOR => 'heavy',
+            $ratio >= self::LOAD_MODERATE_FACTOR => 'moderate',
+            default => 'light',
+        };
+    }
+
+    /**
+     * This site's recent average response time over its successful checks.
+     *
+     * The check being graded is excluded, exactly as
+     * WebsiteChecker::detectResponseTimeAnomaly() excludes it: leaving it in lets a
+     * spike raise the very average it is measured against, which flattens the ratio
+     * and hides the load it was supposed to reveal. With ten samples a 4x spike
+     * reads as 2.7x - enough to drop it a whole level.
+     *
+     * @param  int|null  $exceptCheckId  the check being graded
+     */
+    public function loadBaseline(?int $exceptCheckId = null): ?float
+    {
+        $average = $this->checks()
+            ->where('is_up', true)
+            ->whereNotNull('response_time_ms')
+            ->when($exceptCheckId, fn ($q) => $q->where('id', '!=', $exceptCheckId))
+            ->latest('checked_at')
+            ->limit(self::LOAD_BASELINE_CHECKS)
+            ->avg('response_time_ms');
+
+        return $average ? (float) $average : null;
+    }
+
+    /**
+     * Load levels for a whole list, in two queries rather than two per row.
+     *
+     * Both the last check and the baseline average are fetched for every site at
+     * once and graded in PHP - the same arithmetic loadLevel() does, just not once
+     * per website.
+     *
+     * The measurement each level was graded from travels with it, so the view can
+     * put the actual milliseconds in a tooltip without going back to the database.
+     *
+     * @param  iterable<Website>  $websites
+     * @return array<int, array{level: string, response_time_ms: int|null}>
+     */
+    public static function loadLevels(iterable $websites): array
+    {
+        $rows = $websites instanceof AbstractPaginator ? $websites->getCollection() : collect($websites);
+        $ids = $rows->pluck('id');
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        // The most recent check per site, whether it succeeded or not: a site whose
+        // latest check failed has no latency to grade, same as loadLevel() decides.
+        // Ordered oldest-first so keyBy() leaves the newest row per site standing -
+        // later keys overwrite earlier ones.
+        $latest = WebsiteCheck::whereIn('website_id', $ids)
+            ->oldest('checked_at')
+            ->get(['id', 'website_id', 'is_up', 'response_time_ms'])
+            ->keyBy('website_id');
+
+        // Baselines from the successful checks inside the same window loadBaseline()
+        // uses, averaged per site - and, like it, excluding the check being graded so
+        // a spike cannot inflate the average it is measured against.
+        $baselines = WebsiteCheck::whereIn('website_id', $ids)
+            ->where('is_up', true)
+            ->whereNotNull('response_time_ms')
+            ->orderByDesc('checked_at')
+            ->get(['id', 'website_id', 'response_time_ms'])
+            ->groupBy('website_id')
+            ->map(fn ($checks, $websiteId) => $checks
+                ->reject(fn ($check) => $check->id === $latest->get($websiteId)?->id)
+                ->take(self::LOAD_BASELINE_CHECKS)
+                ->avg('response_time_ms'));
+
+        return $rows->mapWithKeys(function (Website $website) use ($latest, $baselines) {
+            $check = $latest->get($website->id);
+
+            if (! $check || ! $check->is_up || ! $check->response_time_ms) {
+                return [$website->id => ['level' => 'unknown', 'response_time_ms' => null]];
+            }
+
+            $baseline = (float) ($baselines[$website->id] ?? 0);
+            $ratio = $baseline >= self::LOAD_MIN_BASELINE_MS ? $check->response_time_ms / $baseline : 0.0;
+
+            return [$website->id => [
+                'level' => match (true) {
+                    $ratio >= self::LOAD_HEAVY_FACTOR => 'heavy',
+                    $ratio >= self::LOAD_MODERATE_FACTOR => 'moderate',
+                    default => 'light',
+                },
+                'response_time_ms' => $check->response_time_ms,
+            ]];
+        })->all();
+    }
+
+    /**
+     * The display config for a load level, falling back to 'unknown'.
+     *
+     * @return array{label: string, badge: string, dot: string}
+     */
+    public static function loadConfig(string $level): array
+    {
+        return self::LOAD_LEVELS[$level] ?? self::LOAD_LEVELS['unknown'];
+    }
+
+    /**
      * The display config for a status key, falling back to 'unknown' so a status
      * this table has not caught up with renders as "belum diketahui" rather than
      * throwing on a live dashboard.
      *
-     * @return array{label: string, dot: string, text: string, description: string}
+     * @return array{label: string, dot: string, text: string, badge: string, description: string}
      */
     public static function statusConfig(string $status): array
     {
