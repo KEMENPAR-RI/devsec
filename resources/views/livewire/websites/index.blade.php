@@ -55,9 +55,9 @@
     </div>
 
     @php
-        $emptyTitle = $search ? 'Tidak ada situs yang cocok' : 'Belum ada situs';
-        $emptyMessage = $search
-            ? "Tidak ada situs yang cocok dengan \"{$search}\"."
+        $emptyTitle = $this->hasFilters() ? 'Tidak ada situs yang cocok' : 'Belum ada situs';
+        $emptyMessage = $this->hasFilters()
+            ? ($search ? "Tidak ada situs yang cocok dengan \"{$search}\" pada filter ini." : 'Tidak ada situs pada filter ini.')
             : 'Tambahkan situs pertama untuk mulai memantau down time, serangan, dan konten judol.';
     @endphp
 
@@ -68,7 +68,43 @@
         :empty-message="$emptyMessage"
     >
         <x-slot:toolbar>
-            <x-search-input model="search" placeholder="Cari nama atau URL situs..." />
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <x-search-input model="search" placeholder="Cari nama atau URL situs..." />
+
+                <div class="flex flex-wrap items-center gap-2">
+                    <select
+                        wire:model.live="status"
+                        aria-label="Saring berdasarkan status"
+                        class="rounded-lg border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    >
+                        <option value="">Semua status</option>
+                        @foreach (\App\Models\Website::STATUSES as $key => $config)
+                            <option value="{{ $key }}">{{ $config['label'] }}</option>
+                        @endforeach
+                    </select>
+
+                    <select
+                        wire:model.live="activity"
+                        aria-label="Saring berdasarkan pemantauan"
+                        class="rounded-lg border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    >
+                        <option value="">Semua pemantauan</option>
+                        <option value="active">Dipantau</option>
+                        <option value="inactive">Nonaktif</option>
+                    </select>
+
+                    @if ($this->hasFilters())
+                        <button
+                            type="button"
+                            wire:click="clearFilters"
+                            class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                        >
+                            <x-phosphor-x class="h-3.5 w-3.5" />
+                            Reset
+                        </button>
+                    @endif
+                </div>
+            </div>
 
             @can('situs.update')
                 {{-- Selection bar: only present once something is ticked, so the toolbar

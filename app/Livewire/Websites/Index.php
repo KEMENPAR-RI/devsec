@@ -21,6 +21,14 @@ class Index extends Component
     #[Url]
     public string $search = '';
 
+    /** '' for all, otherwise a Website::STATUSES key. */
+    #[Url]
+    public string $status = '';
+
+    /** '' for all, otherwise 'active' or 'inactive'. */
+    #[Url]
+    public string $activity = '';
+
     public bool $showModal = false;
 
     public ?Website $editing = null;
@@ -368,13 +376,71 @@ class Index extends Component
         session()->flash('status', 'Setelan '.count($applying)." field berhasil diterapkan ke {$count} situs.");
     }
 
-    /** The list the current search matches, without pagination. */
+    public function updatingStatus(): void
+    {
+        $this->resetPage();
+        $this->selected = [];
+    }
+
+    public function updatingActivity(): void
+    {
+        $this->resetPage();
+        $this->selected = [];
+    }
+
+    public function clearFilters(): void
+    {
+        $this->reset('search', 'status', 'activity');
+        $this->resetPage();
+        $this->selected = [];
+    }
+
+    public function hasFilters(): bool
+    {
+        return $this->search !== '' || $this->status !== '' || $this->activity !== '';
+    }
+
+    /** The list the current filters match, without pagination. */
     protected function filteredQuery()
     {
         return Website::query()
             ->when($this->search, fn ($q) => $q->where(fn ($q) => $q
                 ->where('name', 'like', "%{$this->search}%")
-                ->orWhere('url', 'like', "%{$this->search}%")));
+                ->orWhere('url', 'like', "%{$this->search}%")))
+            ->when($this->activity !== '', fn ($q) => $q->where('is_active', $this->activity === 'active'))
+            ->when($this->status !== '', fn ($q) => $q->whereIn('id', $this->idsMatchingStatus()));
+    }
+
+    /**
+     * Websites whose displayed status matches the filter.
+     *
+     * statusKey() reads open incidents rather than a column, so this cannot be a
+     * WHERE clause - the keys are resolved for every site first, then fed back as
+     * an id list so pagination still counts the right rows.
+     *
+     * @return array<int, int>
+     */
+    protected function idsMatchingStatus(): array
+    {
+        $websites = Website::query()
+            ->when($this->search, fn ($q) => $q->where(fn ($q) => $q
+                ->where('name', 'like', "%{$this->search}%")
+                ->orWhere('url', 'like', "%{$this->search}%")))
+            ->when($this->activity !== '', fn ($q) => $q->where('is_active', $this->activity === 'active'))
+            ->get();
+
+        $offline = Website::offlineIds($websites);
+        $attacked = Website::attackedIds($websites);
+        $spiking = Website::spikingIds($websites);
+
+        return $websites
+            ->filter(fn (Website $site) => $site->statusKey(
+                isset($offline[$site->id]),
+                isset($spiking[$site->id]),
+                isset($attacked[$site->id]),
+            ) === $this->status)
+            ->pluck('id')
+            ->all();
     }
 
     public function checkNow(Website $website): void

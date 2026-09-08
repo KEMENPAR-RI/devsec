@@ -23,7 +23,7 @@
     </div>
 
     {{-- KPI stats --}}
-    <div class="grid grid-cols-2 gap-4 lg:grid-cols-5">
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         @foreach ($stats as $i => $stat)
             <div
                 class="enter rounded-2xl border border-zinc-200 bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
@@ -34,6 +34,7 @@
                         'flex h-9 w-9 items-center justify-center rounded-lg',
                         'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' => ($stat['tone'] ?? null) === 'down',
                         'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' => ($stat['tone'] ?? null) === 'up',
+                        'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-500' => ($stat['tone'] ?? null) === 'slow',
                         'bg-accent-50 text-accent-600 dark:bg-accent-500/10 dark:text-accent-400' => empty($stat['tone']),
                     ])>
                         <x-dynamic-component :component="'phosphor-'.$stat['icon']" class="h-4.5 w-4.5" />
@@ -47,16 +48,16 @@
         @endforeach
     </div>
 
-    {{-- Traffic (response time) chart, filterable per site --}}
+    {{-- Response time chart, filterable per site --}}
     <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
         <div class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Trafik Response Time</h2>
+            <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Response Time</h2>
             {{-- A searchable combobox scales to any number of sites without wrapping
             into a messy wall of pills, and typing filters instantly (client-side -
             the site list is already loaded, no need to round-trip per keystroke). --}}
             <div
                 class="relative w-full sm:w-64"
-                wire:key="traffic-picker-{{ $websiteStatuses->pluck('uuid')->implode('-') }}"
+                wire:key="response-picker-{{ $websiteStatuses->pluck('uuid')->implode('-') }}"
                 x-data="{
                     open: false,
                     query: @js($selectedWebsite?->name ?? ''),
@@ -124,7 +125,7 @@
                 <x-phosphor-chart-line class="h-7 w-7 text-zinc-300 dark:text-zinc-600" />
                 <p class="text-sm text-zinc-500 dark:text-zinc-400">Pilih situs di atas untuk melihat grafik response time-nya.</p>
             </div>
-        @elseif ($trafficChecks->isEmpty())
+        @elseif ($responseChecks->isEmpty())
             <p class="mt-6 text-sm text-zinc-500 dark:text-zinc-400">Belum ada data pengecekan untuk {{ $selectedWebsite->name }}.</p>
         @else
             @php
@@ -134,12 +135,12 @@
                 $padBottom = 30;
                 $plotBottom = $chartHeight - $padBottom;
                 $plotHeight = $plotBottom - $padTop;
-                $maxMs = max(50, $trafficChecks->max('response_time_ms'), $selectedWebsite->response_time_threshold_ms);
-                $n = $trafficChecks->count();
+                $maxMs = max(50, $responseChecks->max('response_time_ms'), $selectedWebsite->response_time_threshold_ms);
+                $n = $responseChecks->count();
 
                 $toY = fn (int $ms) => $padTop + $plotHeight - (min($ms, $maxMs) / $maxMs) * $plotHeight;
 
-                $points = $trafficChecks->values()->map(fn ($check, $i) => [
+                $points = $responseChecks->values()->map(fn ($check, $i) => [
                     'x' => round($n > 1 ? ($i / ($n - 1)) * $chartWidth : $chartWidth / 2, 1),
                     'y' => round($toY($check->response_time_ms), 1),
                     'check' => $check,
@@ -254,8 +255,8 @@
             </div>
 
             <div class="mt-1 flex justify-between text-[11px] text-zinc-400">
-                <span>{{ $trafficChecks->first()->checked_at->format('d M H:i') }}</span>
-                <span>{{ $trafficChecks->last()->checked_at->format('d M H:i') }}</span>
+                <span>{{ $responseChecks->first()->checked_at->format('d M H:i') }}</span>
+                <span>{{ $responseChecks->last()->checked_at->format('d M H:i') }}</span>
             </div>
         @endif
     </div>
@@ -285,7 +286,14 @@
             @else
                 <div class="space-y-1 px-3 pb-3 overflow-y-auto">
                     @foreach ($recentIncidents as $incident)
-                        @php $incidentHref = auth()->user()?->hasPermission('insiden.view') ? route('insiden') : null; @endphp
+                        @php
+                            // A judol incident's detail lives on Deteksi Judol, not on the
+                            // incidents page, which lists it without the matched keywords,
+                            // the affected URLs, or the AI verdict.
+                            $incidentHref = $incident->type === 'judol'
+                                ? (auth()->user()?->hasPermission('deteksi-judol.view') ? route('deteksi-judol') : null)
+                                : (auth()->user()?->hasPermission('insiden.view') ? route('insiden') : null);
+                        @endphp
                         <a
                             @if ($incidentHref) href="{{ $incidentHref }}" wire:navigate @endif
                             class="flex items-center gap-2.5 rounded-xl px-2.5 py-2.5 transition hover:bg-zinc-50 sm:gap-3 dark:hover:bg-zinc-800/60"
@@ -330,19 +338,22 @@
             {{-- 7-day uptime chart: plain CSS bars --}}
             <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Uptime 7 Hari Terakhir</h2>
-                <div class="mt-6 flex h-35 items-end gap-2.5">
-                    @foreach ($weeklyUptime as $day)
-                        <div class="flex flex-1 flex-col items-center gap-2">
-                            <div class="flex h-24 w-full items-end">
-                                <div
-                                    class="w-full rounded-md bg-accent-500/85 transition-all duration-300 hover:bg-accent-500 dark:bg-accent-500/70"
-                                    style="height: {{ max(8, $day['value']) }}%"
-                                    title="{{ $day['label'] }}: {{ $day['value'] }}% uptime"
-                                ></div>
-                            </div>
-                            <span class="font-mono text-[11px] text-zinc-400">{{ $day['label'] }}</span>
-                        </div>
-                    @endforeach
+                @php
+                    $uptimeBars = collect($weeklyUptime)->map(fn ($day) => [
+                        'height' => max(8, $day['value']),
+                        'class' => 'rounded-md bg-accent-500/85 hover:bg-accent-500 dark:bg-accent-500/70',
+                        'label' => $day['label'],
+                        'value' => $day['value'].'% uptime',
+                        'tone' => null,
+                    ])->all();
+                @endphp
+                <div class="mt-6">
+                    <x-bar-chart :bars="$uptimeBars" height="h-24" gap="gap-2.5" />
+                    <div class="mt-2 flex gap-2.5">
+                        @foreach ($weeklyUptime as $day)
+                            <span class="flex-1 text-center font-mono text-[11px] text-zinc-400">{{ $day['label'] }}</span>
+                        @endforeach
+                    </div>
                 </div>
             </div>
 

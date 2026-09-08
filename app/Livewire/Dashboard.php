@@ -23,14 +23,30 @@ class Dashboard extends Component
     }
 
     /**
-     * @param  Collection<int, Website>  $websites  passed in from
-     *                                              render() so this and websiteStatuses() share one query instead of each
-     *                                              scanning the websites table separately.
+     * Counted from the same statusKey() the dots and badges use, so a card total
+     * and the list underneath it can never disagree.
+     *
+     * @param  Collection<int, Website>  $websites
+     * @return array<string, int>
      */
-    public function stats($websites): array
+    protected function statusCounts($websites, array $offline, array $spiking, array $attacked): array
+    {
+        return $websites
+            ->countBy(fn (Website $site) => $site->statusKey(
+                isset($offline[$site->id]),
+                isset($spiking[$site->id]),
+                isset($attacked[$site->id]),
+            ))
+            ->all();
+    }
+
+    public function stats($websites, array $counts): array
     {
         $openIncidents = Incident::open()->count();
         $newJudol = JudolDetection::where('status', 'new')->count();
+
+        $down = ($counts['down'] ?? 0) + ($counts['attack'] ?? 0) + ($counts['offline'] ?? 0) + ($counts['internal'] ?? 0);
+        $slow = $counts['spike'] ?? 0;
 
         return [
             [
@@ -40,13 +56,19 @@ class Dashboard extends Component
             ],
             [
                 'label' => 'Online',
-                'value' => (string) $websites->where('last_status', 'up')->count(),
+                'value' => (string) ($counts['up'] ?? 0),
                 'icon' => 'check-circle',
                 'tone' => 'up',
             ],
             [
+                'label' => 'Slow',
+                'value' => (string) $slow,
+                'icon' => 'gauge',
+                'tone' => $slow > 0 ? 'slow' : null,
+            ],
+            [
                 'label' => 'Down',
-                'value' => (string) $websites->where('last_status', 'down')->count(),
+                'value' => (string) $down,
                 'icon' => 'warning-circle',
                 'tone' => 'down',
             ],
@@ -118,17 +140,24 @@ class Dashboard extends Component
             : null;
         $websiteStatuses = $this->websiteStatuses();
 
+        // One query each for the whole list, shared between the cards and the rows.
+        $offlineIds = Website::offlineIds($websiteStatuses);
+        $attackedIds = Website::attackedIds($websiteStatuses);
+        $spikingIds = Website::spikingIds($websiteStatuses);
+
         return view('livewire.dashboard', [
-            'stats' => $this->stats($websiteStatuses),
+            'stats' => $this->stats(
+                $websiteStatuses,
+                $this->statusCounts($websiteStatuses, $offlineIds, $spikingIds, $attackedIds),
+            ),
             'weeklyUptime' => $this->weeklyUptime(),
             'recentIncidents' => $this->recentIncidents(),
             'websiteStatuses' => $websiteStatuses,
-            // One query each for the whole list instead of one per row - see Website::offlineIds().
-            'offlineIds' => Website::offlineIds($websiteStatuses),
-            'attackedIds' => Website::attackedIds($websiteStatuses),
-            'spikingIds' => Website::spikingIds($websiteStatuses),
+            'offlineIds' => $offlineIds,
+            'attackedIds' => $attackedIds,
+            'spikingIds' => $spikingIds,
             'selectedWebsite' => $selectedWebsite,
-            'trafficChecks' => $selectedWebsite
+            'responseChecks' => $selectedWebsite
                 ? $selectedWebsite->checks()->latest('checked_at')->limit(50)->get()->reverse()->values()
                 : collect(),
         ]);

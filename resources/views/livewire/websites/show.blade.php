@@ -118,19 +118,18 @@
         @if ($checks->isEmpty())
             <p class="mt-4 text-sm text-zinc-500 dark:text-zinc-400">Belum ada data pengecekan.</p>
         @else
-            @php $max = max(50, $checks->max('response_time_ms')); @endphp
-            <div class="mt-6 flex h-32 items-end gap-1">
-                @foreach ($checks as $check)
-                    <div
-                        @class([
-                            'flex-1 rounded-sm transition-all duration-300',
-                            'bg-emerald-500/80 hover:bg-emerald-500' => $check->is_up,
-                            'bg-red-500/80 hover:bg-red-500' => ! $check->is_up,
-                        ])
-                        style="height: {{ max(6, round($check->response_time_ms / $max * 100)) }}%"
-                        title="{{ $check->checked_at->format('d M H:i') }} &middot; {{ $check->response_time_ms }}ms &middot; {{ $check->is_up ? 'Up' : 'Down' }}"
-                    ></div>
-                @endforeach
+            @php
+                $max = max(50, $checks->max('response_time_ms'));
+                $bars = $checks->map(fn ($check) => [
+                    'height' => (int) max(6, round($check->response_time_ms / $max * 100)),
+                    'class' => $check->is_up ? 'bg-emerald-500/80 hover:bg-emerald-500' : 'bg-red-500/80 hover:bg-red-500',
+                    'label' => $check->checked_at->format('d M Y, H:i'),
+                    'value' => number_format($check->response_time_ms).'ms',
+                    'tone' => $check->is_up ? 'up' : 'down',
+                ])->values()->all();
+            @endphp
+            <div class="mt-6">
+                <x-bar-chart :bars="$bars" />
             </div>
         @endif
     </div>
