@@ -53,6 +53,34 @@ class RegionFindings
         $this->rememberUrl($bucket, $url);
     }
 
+    /**
+     * Records that this URL carries gambling keywords. Keywords come from the page
+     * text as a whole rather than from a located element, so they are filed under
+     * the page body - the region a text injection actually lives in.
+     *
+     * @param  array<int, string>  $keywords
+     */
+    public function addKeywords(string $url, array $keywords): void
+    {
+        // No keywords, no finding. The scanner calls this for every crawled page,
+        // and bucket() below would otherwise open a keyword_injection region on a
+        // site where nothing matched - a finding that reports nothing.
+        if ($keywords === []) {
+            return;
+        }
+
+        $bucket = &$this->bucket(
+            ['key' => 'page_body', 'label' => 'Isi halaman', 'selector' => null],
+            'keyword_injection'
+        );
+
+        foreach ($keywords as $keyword) {
+            $bucket['keywords'][$keyword] = true;
+        }
+
+        $this->rememberUrl($bucket, $url);
+    }
+
     public function isEmpty(): bool
     {
         return $this->regions === [];

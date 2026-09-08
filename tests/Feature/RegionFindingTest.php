@@ -117,6 +117,149 @@ class RegionFindingTest extends TestCase
         $this->assertSame('Penyisipan backlink', $finding->attackLabel());
     }
 
+    /**
+     * The other half of the same idea: promo TEXT stuffed into a shared template
+     * is one edit too, and reads as one finding filed under the page body.
+     */
+    public function test_injected_promo_text_on_many_pages_is_one_keyword_finding(): void
+    {
+        $promo = '<p>Situs slot gacor terpercaya, maxwin setiap hari.</p>';
+
+        Http::fake([
+            'teks.example/sitemap.xml' => Http::response('', 404),
+            'teks.example' => Http::response(
+                '<html><body><a href="/berita">Berita</a><a href="/kontak">Kontak</a>'.$promo.'</body></html>',
+                200
+            ),
+            'teks.example/*' => Http::response('<html><body><p>Isi biasa.</p>'.$promo.'</body></html>', 200),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://teks.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+
+        $findings = JudolFinding::where('website_id', $website->id)->get();
+
+        // No outbound link anywhere on this fixture, so the text is the only finding.
+        $this->assertCount(1, $findings);
+
+        $finding = $findings->first();
+        $this->assertSame('keyword_injection', $finding->attack_type);
+        $this->assertSame('page_body', $finding->region_key);
+        $this->assertSame('Isi halaman', $finding->region_label);
+        $this->assertContains('slot gacor', $finding->matched_keywords);
+        // Homepage plus the two pages it links to.
+        $this->assertGreaterThan(1, $finding->affected_count);
+        $this->assertSame('Penyisipan teks promosi', $finding->attackLabel());
+    }
+
+    /**
+     * One edit, one finding. A gambling link whose anchor text reads "Slot Gacor
+     * Maxwin" is a backlink injection - reported with the region it sits in and
+     * where it points. Counting that same anchor text again as injected page text
+     * filed a second finding for the same edit and pointed at the wrong place to
+     * fix it.
+     */
+    public function test_the_anchor_text_of_a_flagged_link_is_not_also_promo_text(): void
+    {
+        Http::fake([
+            'anchor.example/sitemap.xml' => Http::response('', 404),
+            'anchor.example' => Http::response(
+                '<html><body><p>Pengumuman layanan publik.</p>'
+                .'<footer class="site-footer"><a href="https://gacor88.com">Slot Gacor Maxwin</a></footer>'
+                .'</body></html>',
+                200
+            ),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://anchor.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+
+        $findings = JudolFinding::where('website_id', $website->id)->get();
+
+        $this->assertCount(1, $findings);
+        $this->assertSame('backlink_injection', $findings->first()->attack_type);
+
+        // The page itself is still flagged - as a link-only detection, with no
+        // keywords to its name, because the only ones on the page were the link's.
+        $detection = $website->judolDetections()->firstOrFail();
+        $this->assertSame([], $detection->matched_keywords);
+    }
+
+    /**
+     * The exclusion is scoped to the flagged link, not to links in general: promo
+     * text that happens to sit next to one is still text somebody injected.
+     */
+    public function test_promo_text_beside_a_flagged_link_is_still_reported(): void
+    {
+        Http::fake([
+            'campur.example/sitemap.xml' => Http::response('', 404),
+            'campur.example' => Http::response(
+                '<html><body><p>Situs slot gacor terpercaya, maxwin setiap hari.</p>'
+                .'<footer class="site-footer"><a href="https://gacor88.com">Kunjungi</a></footer>'
+                .'</body></html>',
+                200
+            ),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://campur.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+
+        $this->assertEqualsCanonicalizing(
+            ['backlink_injection', 'keyword_injection'],
+            JudolFinding::where('website_id', $website->id)->pluck('attack_type')->all()
+        );
+    }
+
+    public function test_a_site_with_no_keywords_files_no_keyword_finding(): void
+    {
+        Http::fake([
+            'bersih.example/sitemap.xml' => Http::response('', 404),
+            'bersih.example' => Http::response('<html><body><p>Pengumuman layanan publik.</p></body></html>', 200),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://bersih.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+
+        // addKeywords() is called for every crawled page, so an empty match must not
+        // open a region: a finding that reports no keywords is worse than none.
+        $this->assertSame(0, JudolFinding::where('website_id', $website->id)->count());
+    }
+
+    /**
+     * The second crawl is where this used to go wrong. evaluateAndStore() skips a
+     * page it has already flagged, so the keywords for those pages have to come
+     * from the stored detection - otherwise a sitewide text injection would shrink
+     * to "1 halaman" the moment the site was crawled twice.
+     */
+    public function test_a_rescan_does_not_shrink_the_keyword_finding(): void
+    {
+        $promo = '<p>Situs slot gacor terpercaya, maxwin setiap hari.</p>';
+
+        Http::fake([
+            'ulang.example/sitemap.xml' => Http::response('', 404),
+            'ulang.example' => Http::response(
+                '<html><body><a href="/berita">Berita</a><a href="/kontak">Kontak</a>'.$promo.'</body></html>',
+                200
+            ),
+            'ulang.example/*' => Http::response('<html><body><p>Isi biasa.</p>'.$promo.'</body></html>', 200),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://ulang.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+        $first = JudolFinding::where('website_id', $website->id)->firstOrFail();
+
+        app(JudolScanner::class)->scan($website->fresh());
+
+        $this->assertSame(1, JudolFinding::where('website_id', $website->id)->count());
+        $this->assertSame($first->affected_count, $first->fresh()->affected_count);
+        $this->assertContains('slot gacor', $first->fresh()->matched_keywords);
+    }
+
     public function test_two_different_regions_are_two_findings(): void
     {
         Http::fake([

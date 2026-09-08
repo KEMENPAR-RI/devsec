@@ -92,12 +92,27 @@ class JudolScanner
         // rows repeating each other. See RegionFindings.
         $regions = new RegionFindings;
 
+        // The keywords already on record for this site, keyed by URL - one query
+        // rather than one per crawled page. evaluateAndStore() deliberately skips a
+        // page it flagged on an earlier crawl, so without this the text injection
+        // that covers forty pages would report "1 halaman" from the second crawl on,
+        // while the backlink beside it kept counting all forty.
+        $storedKeywords = $website->judolDetections()->pluck('matched_keywords', 'url');
+
         foreach ($this->crawl($website) as $url => $page) {
             $this->recordRegions($website, $regions, $url, $page['html']);
 
-            if ($detection = $this->evaluateAndStore($website, $url, $page['html'], lastModified: $page['last_modified'])) {
+            $detection = $this->evaluateAndStore($website, $url, $page['html'], lastModified: $page['last_modified']);
+
+            if ($detection) {
                 $found->push($detection);
             }
+
+            // Same reason recordRegions() runs unconditionally: what proves an
+            // injection is sitewide is the pages that were ALREADY flagged.
+            $regions->addKeywords($url, $detection
+                ? $detection->matched_keywords ?? []
+                : $storedKeywords->get($url) ?? []);
         }
 
         $newFindings = $regions->persist($website);
@@ -477,13 +492,23 @@ class JudolScanner
      * <meta content="..."> value. Judol/SEO spam is very often stuffed into meta
      * description, og:description, keywords, etc. - which live in an attribute, so a
      * plain strip_tags() on the raw HTML silently misses all of it.
+     *
+     * @param  array<int, string>  $excludingLinksTo  registrable domains whose anchor
+     *                                                text is dropped before reading -
+     *                                                see evaluateAndStore()
+     * @param  string|null  $baseUrl  needed only to resolve relative hrefs while
+     *                                deciding which anchors those are
      */
-    protected function extractText(string $html): string
+    protected function extractText(string $html, array $excludingLinksTo = [], ?string $baseUrl = null): string
     {
         $dom = $this->parseHtml($html);
 
         if (! $dom) {
             return '';
+        }
+
+        if ($excludingLinksTo !== [] && $baseUrl !== null) {
+            $this->stripLinksTo($dom, $excludingLinksTo, $baseUrl);
         }
 
         $parts = [$dom->textContent ?? ''];
@@ -495,6 +520,38 @@ class JudolScanner
         }
 
         return implode(' ', $parts);
+    }
+
+    /**
+     * Deletes the <a> elements pointing at any of these domains, so their anchor
+     * text is not part of what extractText() returns.
+     *
+     * @param  array<int, string>  $domains  registrable domains
+     */
+    protected function stripLinksTo(DOMDocument $dom, array $domains, string $baseUrl): void
+    {
+        $doomed = [];
+
+        foreach ($dom->getElementsByTagName('a') as $anchor) {
+            $href = trim($anchor->getAttribute('href'));
+
+            if ($href === '') {
+                continue;
+            }
+
+            $absolute = $this->resolveUrl($href, $baseUrl);
+            $host = $absolute ? Str::lower((string) parse_url($absolute, PHP_URL_HOST)) : '';
+
+            if ($host !== '' && in_array($this->registrableDomain($host), $domains, true)) {
+                $doomed[] = $anchor;
+            }
+        }
+
+        // Collected first, removed after: getElementsByTagName() hands back a LIVE
+        // list, so deleting while iterating it skips every other match.
+        foreach ($doomed as $anchor) {
+            $anchor->parentNode?->removeChild($anchor);
+        }
     }
 
     /**
@@ -836,7 +893,22 @@ class JudolScanner
             return null;
         }
 
-        $rawText = $this->extractText($html);
+        // Judged before the page text is read, because the answer changes what counts
+        // as page text. Runs whether or not a keyword matched - that is the entire
+        // point. Backlink injection leaves the visible page exactly as it was and only
+        // adds hidden <a href> tags to a gambling site, so on this page the keyword
+        // filter has nothing to find and the destination host is the only evidence
+        // there is.
+        $linkedDomains = $this->gamblingLinkedDomains($html, $url, parse_url($website->url, PHP_URL_HOST));
+
+        // The anchor text of a link that was just flagged is left out. "Slot Gacor"
+        // sitting inside <a href="gacor88.com"> IS the backlink finding, already
+        // reported with the region it lives in and where it points; reading it a
+        // second time as page text files a separate "teks promosi disisipkan"
+        // finding for one single edit, and sends the operator to the page body when
+        // the thing to fix is the link. Only ever excludes what the link classifier
+        // actually flagged, so with the AI off nothing is dropped.
+        $rawText = $this->extractText($html, excludingLinksTo: $linkedDomains, baseUrl: $url);
         $text = Str::lower($rawText);
         // Also check the URL itself: some injected pages carry the keyword only in
         // their slug (e.g. /slot-gacor-hari-ini/) with sparse or JS-rendered content.
@@ -861,12 +933,6 @@ class JudolScanner
             ->values();
 
         $keywordsMatched = $matched->count() >= $threshold;
-
-        // Runs whether or not a keyword matched - that is the entire point. Backlink
-        // injection leaves the visible page exactly as it was and only adds hidden
-        // <a href> tags to a gambling site, so on this page the keyword filter has
-        // nothing to find and the destination host is the only evidence there is.
-        $linkedDomains = $this->gamblingLinkedDomains($html, $url, parse_url($website->url, PHP_URL_HOST));
 
         if (! $keywordsMatched && $linkedDomains === []) {
             $this->clearStaleDetection($existing, $url, 'kata kunci tidak lagi cocok dan tidak ada tautan ke situs judi');
