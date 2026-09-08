@@ -51,7 +51,14 @@ class ErrorPagesTest extends TestCase
         // A 500 is often thrown *because* the asset pipeline is broken (a missing
         // manifest after a failed deploy). An error page that calls @vite in that
         // state throws its own exception instead of rendering.
-        $layout = file_get_contents(resource_path('views/errors/layout.blade.php'));
+        // Strip Blade comments first: the layout's own docblock explains that it
+        // uses no @vite, and matching that sentence made this test fail on the
+        // very file it was passing.
+        $layout = preg_replace(
+            '/\{\{--.*?--\}\}/s',
+            '',
+            file_get_contents(resource_path('views/errors/layout.blade.php'))
+        );
 
         $this->assertStringNotContainsString('@vite', $layout);
         $this->assertStringNotContainsString('@livewire', $layout);

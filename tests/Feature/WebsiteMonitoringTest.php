@@ -64,7 +64,11 @@ class WebsiteMonitoringTest extends TestCase
 
     public function test_a_recovered_website_resolves_its_downtime_incident(): void
     {
-        Http::fakeSequence()->push('', 500)->push('ok', 200);
+        // Two 500s, then the recovery: the probe retries once before giving up
+        // (see WebsiteChecker::httpClient), so a single failing response is not
+        // enough to record an outage - by design, since one dropped handshake
+        // would otherwise open an incident and email every admin.
+        Http::fakeSequence()->push('', 500)->push('', 500)->push('ok', 200);
 
         $website = Website::factory()->create(['down_threshold_failures' => 1]);
         $checker = new WebsiteChecker;

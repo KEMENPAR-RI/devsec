@@ -54,6 +54,15 @@ class Website extends Model
         return $this->hasMany(JudolDetection::class);
     }
 
+    /**
+     * Injection sites - one per region of markup carrying spam, however many pages
+     * render it. See JudolFinding for why this is separate from judolDetections().
+     */
+    public function judolFindings(): HasMany
+    {
+        return $this->hasMany(JudolFinding::class);
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);

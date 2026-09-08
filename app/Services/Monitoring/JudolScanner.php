@@ -85,11 +85,22 @@ class JudolScanner
     {
         $found = collect();
 
+        // Per-page detections answer "which pages are dirty"; this answers "what was
+        // changed". A backlink dropped into a shared footer shows up on every page
+        // that renders it, and reporting that once - with the region and the list of
+        // affected URLs - is the difference between one actionable finding and forty
+        // rows repeating each other. See RegionFindings.
+        $regions = new RegionFindings;
+
         foreach ($this->crawl($website) as $url => $page) {
+            $this->recordRegions($website, $regions, $url, $page['html']);
+
             if ($detection = $this->evaluateAndStore($website, $url, $page['html'], lastModified: $page['last_modified'])) {
                 $found->push($detection);
             }
         }
+
+        $newFindings = $regions->persist($website);
 
         // Marks this site "just scanned" so isDueForJudolScan() waits out its
         // interval before the scheduler queues another full crawl for it.
@@ -100,6 +111,75 @@ class JudolScanner
         $this->notifyFindings($website, $found);
 
         return $found->count();
+    }
+
+    /**
+     * Files this page's evidence under the region of markup it came from.
+     *
+     * Runs alongside evaluateAndStore() rather than inside it: that method returns
+     * early for a URL it has already flagged, which is exactly the case this needs
+     * to see - the fortieth page carrying the same footer is what proves the
+     * injection is sitewide.
+     */
+    protected function recordRegions(Website $website, RegionFindings $regions, string $url, string $html): void
+    {
+        $host = parse_url($website->url, PHP_URL_HOST);
+        $located = $this->extractLocatedOutboundLinks($html, $url, $host);
+
+        if ($located === []) {
+            return;
+        }
+
+        // Ask the classifier once for every domain on the page, then attribute the
+        // answers back to the regions they came from - one call per page rather
+        // than one per region.
+        $domains = array_values(array_unique(array_column($located, 'domain')));
+        $flagged = $this->flagGamblingDomains($domains, array_column($located, 'text', 'domain'));
+
+        if ($flagged === []) {
+            return;
+        }
+
+        $byRegion = [];
+
+        foreach ($located as $link) {
+            if (! in_array($link['domain'], $flagged, true)) {
+                continue;
+            }
+
+            $key = $link['region']['key'];
+            $byRegion[$key] ??= ['region' => $link['region'], 'domains' => [], 'anchors' => []];
+            $byRegion[$key]['domains'][] = $link['domain'];
+            $byRegion[$key]['anchors'][] = $link['text'];
+        }
+
+        foreach ($byRegion as $group) {
+            $regions->addLinks($url, $group['region'], array_unique($group['domains']), array_unique($group['anchors']));
+        }
+    }
+
+    /**
+     * Which of these domains are gambling sites, as judged by the link classifier.
+     *
+     * @param  array<int, string>  $domains
+     * @param  array<string, string>  $anchors  domain => anchor text
+     * @return array<int, string>
+     */
+    protected function flagGamblingDomains(array $domains, array $anchors): array
+    {
+        $settings = app(JudolAiSettings::class);
+
+        if (! $settings->enabled() || ! config('judol.ai.links.enabled', true) || $domains === []) {
+            return [];
+        }
+
+        $links = [];
+
+        foreach ($domains as $domain) {
+            $links[$domain] = $anchors[$domain] ?? '';
+        }
+
+        return app(JudolLinkClassifier::class)->gamblingDomains($links);
     }
 
     /**
@@ -523,6 +603,70 @@ class JudolScanner
         }
 
         return $links;
+    }
+
+    /**
+     * The same outbound links, but each one paired with WHERE on the page it sits.
+     *
+     * extractOutboundLinks() answers "which domains", which is what the classifier
+     * needs. This answers "which domains, from which region" - the extra axis that
+     * lets a sitewide injection be reported once instead of once per URL, because
+     * the region signature is the part that stays the same across pages.
+     *
+     * @return array<int, array{domain: string, text: string, region: array{key: string, label: string, selector: ?string}}>
+     */
+    protected function extractLocatedOutboundLinks(string $html, string $baseUrl, ?string $host): array
+    {
+        $dom = $this->parseHtml($html);
+
+        if (! $dom) {
+            return [];
+        }
+
+        $ignored = array_map(Str::lower(...), (array) config('judol.ignored_link_hosts', []));
+        $regions = app(PageRegion::class);
+        $located = [];
+        $seen = [];
+
+        foreach ($dom->getElementsByTagName('a') as $anchor) {
+            $href = trim($anchor->getAttribute('href'));
+
+            if ($href === '' || str_starts_with($href, '#') || Str::startsWith($href, ['mailto:', 'tel:', 'javascript:'])) {
+                continue;
+            }
+
+            $absolute = $this->resolveUrl($href, $baseUrl);
+            $linkHost = $absolute ? Str::lower((string) parse_url($absolute, PHP_URL_HOST)) : '';
+
+            if ($linkHost === '' || ($host && strcasecmp($linkHost, $host) === 0)) {
+                continue;
+            }
+
+            $domain = $this->registrableDomain($linkHost);
+
+            if (in_array($domain, $ignored, true)) {
+                continue;
+            }
+
+            $region = $regions->locate($anchor);
+
+            // One entry per domain per region: an injected block repeats the same
+            // link a dozen times, and that is one fact, not a dozen.
+            $signature = $region['key'].'|'.$domain;
+
+            if (isset($seen[$signature])) {
+                continue;
+            }
+
+            $seen[$signature] = true;
+            $located[] = [
+                'domain' => $domain,
+                'text' => $this->anchorText($anchor),
+                'region' => $region,
+            ];
+        }
+
+        return $located;
     }
 
     /** The words a visitor would click on, falling back to what a screen reader would read. */

@@ -30,8 +30,8 @@ StartLimitBurst=10
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+User=www
+Group=www
 WorkingDirectory=/www/wwwroot/deadsec.apiprs.my.id
 Restart=always
 RestartSec=5
@@ -43,7 +43,7 @@ RestartSec=5
 # --timeout must stay above the longest job's own $timeout (ScanWebsiteForJudolJob
 # is 300s) and below DB_QUEUE_RETRY_AFTER in .env (320s), or a slow crawl gets
 # released and run a second time while the first is still going.
-ExecStart=/usr/bin/php /www/wwwroot/deadsec.apiprs.my.id/artisan queue:work --queue=default --sleep=3 --tries=1 --timeout=300 --max-time=3600
+ExecStart=cd /www/wwwroot/deadsec.apiprs.my.id && php artisan queue:work --queue=default --sleep=3 --tries=1 --timeout=300 --max-time=3600
 
 # Let a running job finish instead of killing it mid-crawl on restart.
 KillSignal=SIGTERM

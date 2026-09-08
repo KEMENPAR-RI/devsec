@@ -3,6 +3,7 @@
 namespace App\Livewire\JudolDetections;
 
 use App\Models\JudolDetection;
+use App\Models\JudolFinding;
 use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\Website;
@@ -53,6 +54,9 @@ class Index extends Component
     /** @var array<int, string> per-detection recheck() error, keyed by detection id */
     public array $recheckErrors = [];
 
+    /** Which finding's affected-URL list is expanded; null when all are collapsed. */
+    public ?string $expandedFinding = null;
+
     public function mount(): void
     {
         $this->authorize('deteksi-judol.view');
@@ -82,6 +86,30 @@ class Index extends Component
         $this->authorize('deteksi-judol.update');
 
         $detection->update(['status' => 'ignored']);
+    }
+
+    /**
+     * Triage for an injection site. Separate from the per-detection actions above
+     * because the unit of work is different: acting on a finding means the shared
+     * markup was cleaned, which settles every page that renders it at once.
+     */
+    public function markFindingReviewed(JudolFinding $finding): void
+    {
+        $this->authorize('deteksi-judol.update');
+
+        $finding->update(['status' => 'reviewed']);
+    }
+
+    public function markFindingIgnored(JudolFinding $finding): void
+    {
+        $this->authorize('deteksi-judol.update');
+
+        $finding->update(['status' => 'ignored']);
+    }
+
+    public function toggleFinding(string $uuid): void
+    {
+        $this->expandedFinding = $this->expandedFinding === $uuid ? null : $uuid;
     }
 
     /**
@@ -301,6 +329,16 @@ class Index extends Component
         return view('livewire.judol-detections.index', [
             'groups' => $groups,
             'detectionsByGroup' => $rows,
+            // Injection sites, shown above the per-page list rather than mixed into
+            // it: one of these stands for every page carrying the same shared
+            // markup, so filing it among those pages would re-create exactly the
+            // repetition it exists to collapse. Ignored ones drop out - they are a
+            // decision already made.
+            'findings' => JudolFinding::with('website')
+                ->where('status', '!=', 'ignored')
+                ->orderByDesc('affected_count')
+                ->orderByDesc('last_seen_at')
+                ->get(),
             'websites' => Website::whereIn('id', $groups->pluck('site_key'))->get()->keyBy('id'),
             'keywords' => JudolKeyword::orderBy('keyword')->get(),
             // The automatic crawl runs as a queued job, so with no worker on the
