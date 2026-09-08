@@ -138,6 +138,11 @@ class Incident extends Model
                 'Kode Status HTTP' => isset($meta['status_code']) ? "HTTP {$meta['status_code']}" : 'Tidak ada respons',
                 'Pesan Error' => $meta['error_message'] ?? null,
                 'Kegagalan Berturut-turut' => isset($meta['consecutive_failures']) ? "{$meta['consecutive_failures']}x" : null,
+                // Deliberately labelled "Dugaan": this is inferred from the shape of
+                // our own checks, not observed on the server. See App\Services\Monitoring\OutageCause.
+                'Dugaan Penyebab' => $meta['likely_cause'] ?? null,
+                'Dasar Dugaan' => $meta['cause_evidence'] ?? null,
+                'Catatan' => $meta['cause_caveat'] ?? null,
             ],
             'attack' => [
                 'Indikasi' => match ($meta['reason'] ?? null) {

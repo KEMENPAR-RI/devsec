@@ -123,8 +123,10 @@ class Dashboard extends Component
             'weeklyUptime' => $this->weeklyUptime(),
             'recentIncidents' => $this->recentIncidents(),
             'websiteStatuses' => $websiteStatuses,
-            // One query for the whole list instead of one per row - see Website::offlineIds().
+            // One query each for the whole list instead of one per row - see Website::offlineIds().
             'offlineIds' => Website::offlineIds($websiteStatuses),
+            'attackedIds' => Website::attackedIds($websiteStatuses),
+            'spikeSeverities' => Website::spikeSeverities($websiteStatuses),
             'selectedWebsite' => $selectedWebsite,
             'trafficChecks' => $selectedWebsite
                 ? $selectedWebsite->checks()->latest('checked_at')->limit(50)->get()->reverse()->values()

@@ -8,13 +8,27 @@
 
     @php $isOffline = $website->isOffline(); @endphp
 
+    {{-- Automatic probing stops after a full day of failures (Website::isPausedForOffline()).
+    Said out loud here, because a dashboard that has quietly stopped checking looks
+    exactly like one where nothing is wrong. --}}
+    @if ($website->isPausedForOffline())
+        <div class="enter flex flex-col gap-2 rounded-lg bg-zinc-100 px-4 py-3 text-sm text-zinc-600 sm:flex-row sm:items-center sm:justify-between dark:bg-zinc-800/60 dark:text-zinc-300">
+            <div class="flex items-start gap-2">
+                <x-phosphor-pause-circle class="mt-0.5 h-4 w-4 shrink-0" />
+                <span>Pengecekan otomatis dihentikan karena situs ini sudah down lebih dari 24 jam. Tekan <strong>Cek Sekarang</strong> untuk mencoba lagi - kalau berhasil, pemantauan otomatis berjalan kembali.</span>
+            </div>
+        </div>
+    @endif
+
     {{-- Header --}}
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         {{-- min-w-0 all the way down: without it a flex item refuses to shrink below
         its content, so one long URL widens the page and the whole layout can be
         dragged sideways on a phone. --}}
         <div class="flex min-w-0 items-start gap-3">
-            <x-status-dot :status="$website->statusKey($isOffline)" class="mt-1.5" />
+            
+            <x-status-dot :status="$website->statusKey($isOffline, $website->spikeSeverity(), $website->wasAttacked())" class="mt-1.5" />
+
             <div class="min-w-0">
                 <div class="flex items-center gap-2">
                     <a href="{{ route('situs') }}" wire:navigate class="text-sm text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">Situs</a>

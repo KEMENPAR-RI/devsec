@@ -360,7 +360,11 @@
                     @forelse ($websiteStatuses as $website)
                         @php $siteHref = auth()->user()?->hasPermission('situs.view') ? route('situs.show', $website) : null; @endphp
                         <a @if ($siteHref) href="{{ $siteHref }}" wire:navigate @endif class="flex items-center gap-3">
-                            <x-status-dot :status="$website->statusKey(isset($offlineIds[$website->id]))" />
+                            <x-status-dot :status="$website->statusKey(
+                                isset($offlineIds[$website->id]),
+                                $spikeSeverities[$website->id] ?? null,
+                                isset($attackedIds[$website->id]),
+                            )" />
                             <div class="min-w-0 flex-1">
                                 <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ $website->name }}</p>
                                 <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">{{ $website->url }}</p>

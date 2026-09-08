@@ -396,8 +396,10 @@ class Index extends Component
 
         return view('livewire.websites.index', [
             'websites' => $websites,
-            // One query for the whole page instead of one per row - see Website::offlineIds().
+            // One query each for the whole page instead of one per row - see Website::offlineIds().
             'offlineIds' => Website::offlineIds($websites),
+            'attackedIds' => Website::attackedIds($websites),
+            'spikeSeverities' => Website::spikeSeverities($websites),
             'filteredCount' => $this->filteredQuery()->count(),
         ]);
     }

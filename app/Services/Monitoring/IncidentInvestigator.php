@@ -86,6 +86,20 @@ class IncidentInvestigator
                 saran. Kalau datanya tidak cukup untuk menyimpulkan penyebab pasti, katakan
                 begitu dan sebutkan apa yang perlu dicek manual (mis. log server, panel hosting).
 
+                Khusus untuk insiden downtime, bedakan pola-pola ini dan jangan tertukar:
+                - Response time naik bertahap lalu timeout: konsisten dengan kelebihan beban,
+                  yang bisa berarti serangan DDoS ATAU lonjakan trafik wajar ATAU sumber daya
+                  server habis. Ketiganya terlihat sama dari luar.
+                - HTTP 429/503: permintaan dibatasi atau server kewalahan.
+                - HTTP 5xx dengan response time normal: kesalahan aplikasi atau database,
+                  BUKAN kelebihan beban.
+                - Gagal seketika tanpa kode status: layanan mati, server padam, atau DNS.
+
+                Kalau polanya mengarah ke DDoS, sebut sebagai kemungkinan yang perlu
+                dikonfirmasi lewat access log server - jangan nyatakan sebagai fakta.
+                Monitoring ini hanya melakukan probe HTTP dari luar dan tidak bisa melihat
+                trafik yang masuk ke server, jadi serangan tidak bisa dibuktikan dari sini.
+
                 Tulis sebagai teks biasa untuk ditampilkan apa adanya di dashboard: tanpa
                 format Markdown sama sekali (tanpa #, **, _, backtick, atau tabel). Pakai
                 baris baru dan angka/tanda hubung biasa kalau perlu memberi daftar.

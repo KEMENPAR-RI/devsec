@@ -118,7 +118,12 @@
                                 class="h-4 w-4 shrink-0 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700"
                             >
                         @endcan
-                        <x-status-dot :status="$website->statusKey(isset($offlineIds[$website->id]))" />
+                        
+                        <x-status-dot :status="$website->statusKey(
+                                isset($offlineIds[$website->id]),
+                                $spikeSeverities[$website->id] ?? null,
+                                isset($attackedIds[$website->id]),
+                            )" />
 
                         <div class="min-w-0 flex-1">
                             <a href="{{ route('situs.show', $website) }}" wire:navigate class="truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">

@@ -157,6 +157,11 @@ class WebsiteChecker
             if ($website->last_status !== 'down' && $website->consecutive_failures >= $website->down_threshold_failures) {
                 $website->update(['last_status' => 'down']);
 
+                // What the run-up looked like, recorded at the moment the incident
+                // opens - the checks it reads are pruned over time, so diagnosing
+                // this later from stored history would not give the same answer.
+                $diagnosis = app(OutageCause::class)->diagnose($website, $check);
+
                 $incident = Incident::create([
                     'website_id' => $website->id,
                     'type' => 'downtime',
@@ -167,6 +172,15 @@ class WebsiteChecker
                         'consecutive_failures' => $website->consecutive_failures,
                         'status_code' => $check->status_code,
                         'error_message' => $check->error_message,
+                        ...($diagnosis ? [
+                            'likely_cause' => $diagnosis['cause'],
+                            'cause_evidence' => $diagnosis['evidence'],
+                            'cause_caveat' => $diagnosis['caveat'],
+                            // Read by Website::statusKey() to colour the status dot.
+                            // A flag, not the prose: rewording the label must not
+                            // change what the dashboard shows.
+                            'cause_is_overload' => $diagnosis['is_overload'],
+                        ] : []),
                     ],
                     'status' => 'open',
                     'detected_at' => now(),
