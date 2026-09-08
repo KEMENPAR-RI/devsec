@@ -3,7 +3,6 @@
 namespace App\Services\Monitoring;
 
 use DOMElement;
-use DOMNode;
 use Illuminate\Support\Str;
 
 /**

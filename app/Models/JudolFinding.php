@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasUuid;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -66,11 +65,6 @@ class JudolFinding extends Model
     public function incident(): BelongsTo
     {
         return $this->belongsTo(Incident::class);
-    }
-
-    public function scopeNew(Builder $query): Builder
-    {
-        return $query->where('status', 'new');
     }
 
     /**

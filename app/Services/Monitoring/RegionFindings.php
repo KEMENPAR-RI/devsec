@@ -53,27 +53,6 @@ class RegionFindings
         $this->rememberUrl($bucket, $url);
     }
 
-    /**
-     * Records that this URL carries gambling keywords. Keywords come from the page
-     * text as a whole rather than from a located element, so they are filed under
-     * the page body - the region a text injection actually lives in.
-     *
-     * @param  array<int, string>  $keywords
-     */
-    public function addKeywords(string $url, array $keywords): void
-    {
-        $bucket = &$this->bucket(
-            ['key' => 'page_body', 'label' => 'Isi halaman', 'selector' => null],
-            'keyword_injection'
-        );
-
-        foreach ($keywords as $keyword) {
-            $bucket['keywords'][$keyword] = true;
-        }
-
-        $this->rememberUrl($bucket, $url);
-    }
-
     public function isEmpty(): bool
     {
         return $this->regions === [];
@@ -132,34 +111,6 @@ class RegionFindings
         }
 
         return $created;
-    }
-
-    /**
-     * Marks findings that no longer appear in a completed crawl as resolved by
-     * deleting them - the injection is gone, and a finding that describes markup
-     * which no longer exists is worse than no finding at all.
-     *
-     * Only safe to call after a crawl that actually completed: a run cut short by
-     * its time budget has not seen every page, so silence about a region is not
-     * evidence that it is clean.
-     *
-     * @return int rows removed
-     */
-    public function pruneMissing(Website $website): int
-    {
-        $seen = array_map(
-            fn (array $bucket) => $bucket['region']['key'].'|'.$bucket['type'],
-            array_values($this->regions)
-        );
-
-        return $website->judolFindings()->get()
-            ->reject(fn (JudolFinding $finding) => in_array(
-                $finding->region_key.'|'.$finding->attack_type,
-                $seen,
-                true
-            ))
-            ->each->delete()
-            ->count();
     }
 
     /**

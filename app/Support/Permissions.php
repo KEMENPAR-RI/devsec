@@ -103,21 +103,6 @@ class Permissions
     }
 
     /**
-     * The permissions granted by an "everything except adding and changing things"
-     * role - what the seeded Admin gets. Kept here rather than in the seeder so a
-     * newly added page is covered automatically.
-     *
-     * @return array<int, string>
-     */
-    public static function readAndDelete(): array
-    {
-        return collect(static::all())
-            ->reject(fn (string $permission) => str_ends_with($permission, '.create') || str_ends_with($permission, '.update'))
-            ->values()
-            ->all();
-    }
-
-    /**
      * Look, don't touch - what the seeded Admin gets. Kept here rather than in the
      * seeder so a page added later is covered without editing two files.
      *
