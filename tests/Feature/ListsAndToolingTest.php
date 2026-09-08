@@ -11,6 +11,7 @@ use App\Livewire\Settings\Index as SettingsIndex;
 use App\Livewire\Websites\Index;
 use App\Models\Incident;
 use App\Models\JudolDetection;
+use App\Models\JudolFinding;
 use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
@@ -134,7 +135,12 @@ class ListsAndToolingTest extends TestCase
         $this->assertDatabaseHas('incidents', ['id' => $keep->id]);
     }
 
-    public function test_deleting_a_judol_detection_resolves_its_incident(): void
+    /**
+     * Wiping the judol data has to close the incidents it raised. An open incident
+     * whose detection is gone points at nothing, and the Insiden page would keep
+     * showing it with no way left to close it.
+     */
+    public function test_wiping_judol_data_resolves_its_incidents(): void
     {
         $website = Website::factory()->create();
         $incident = $this->incident($website, 'judol');
@@ -143,13 +149,46 @@ class ListsAndToolingTest extends TestCase
             'url' => 'http://x.example/slot', 'matched_keywords' => ['slot gacor'],
             'status' => 'new', 'detected_at' => now(),
         ]);
+        $finding = JudolFinding::create([
+            'website_id' => $website->id, 'region_key' => 'footer', 'region_label' => 'Footer',
+            'attack_type' => 'backlink_injection', 'linked_domains' => ['gacor88.com'],
+            'affected_urls' => ['http://x.example/slot'], 'affected_count' => 1,
+            'status' => 'new', 'first_seen_at' => now(), 'last_seen_at' => now(),
+        ]);
 
         Livewire::actingAs($this->superadmin())
             ->test(JudolIndex::class)
-            ->call('delete', $detection->uuid);
+            ->call('deleteAll');
 
         $this->assertDatabaseMissing('judol_detections', ['id' => $detection->id]);
+        $this->assertDatabaseMissing('judol_findings', ['id' => $finding->id]);
         $this->assertSame('resolved', $incident->fresh()->status);
+    }
+
+    /** Removing one injection site leaves the rest of the results alone. */
+    public function test_deleting_one_injection_site_keeps_the_others(): void
+    {
+        $website = Website::factory()->create();
+
+        $drop = JudolFinding::create([
+            'website_id' => $website->id, 'region_key' => 'footer', 'region_label' => 'Footer',
+            'attack_type' => 'backlink_injection', 'linked_domains' => ['gacor88.com'],
+            'affected_urls' => ['http://x.example/a'], 'affected_count' => 1,
+            'status' => 'new', 'first_seen_at' => now(), 'last_seen_at' => now(),
+        ]);
+        $keep = JudolFinding::create([
+            'website_id' => $website->id, 'region_key' => 'header', 'region_label' => 'Header',
+            'attack_type' => 'backlink_injection', 'linked_domains' => ['togel99.net'],
+            'affected_urls' => ['http://x.example/b'], 'affected_count' => 1,
+            'status' => 'new', 'first_seen_at' => now(), 'last_seen_at' => now(),
+        ]);
+
+        Livewire::actingAs($this->superadmin())
+            ->test(JudolIndex::class)
+            ->call('deleteFinding', $drop->uuid);
+
+        $this->assertDatabaseMissing('judol_findings', ['id' => $drop->id]);
+        $this->assertDatabaseHas('judol_findings', ['id' => $keep->id]);
     }
 
     public function test_a_read_only_role_cannot_delete_a_row(): void

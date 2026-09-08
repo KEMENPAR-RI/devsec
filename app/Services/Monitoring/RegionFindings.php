@@ -16,12 +16,24 @@ use App\Models\Website;
  */
 class RegionFindings
 {
+    /** The region a keyword match falls back to when no element could be pinned down. */
+    public const FALLBACK_REGION = ['key' => 'page_body', 'label' => 'Isi halaman', 'selector' => null];
+
+    /**
+     * Promo banners kept per region. A footer holds a logo, payment icons and a
+     * dozen widget thumbnails; past a handful the list stops being evidence.
+     */
+    public const MAX_STORED_IMAGES = 6;
+
     /**
      * @var array<string, array{
      *     region: array{key: string, label: string, selector: ?string},
      *     domains: array<string, true>,
      *     anchors: array<string, true>,
      *     keywords: array<string, true>,
+     *     images: array<string, true>,
+     *     path: ?string,
+     *     snippet: ?string,
      *     urls: array<int, string>,
      *     seen: array<string, true>,
      *     type: string,
@@ -35,8 +47,10 @@ class RegionFindings
      * @param  array{key: string, label: string, selector: ?string}  $region
      * @param  array<int, string>  $domains
      * @param  array<int, string>  $anchors
+     * @param  array<int, string>  $images  promo banners sitting in the same region
+     * @param  array{path: ?string, html: ?string}|null  $evidence  where exactly, and the markup
      */
-    public function addLinks(string $url, array $region, array $domains, array $anchors): void
+    public function addLinks(string $url, array $region, array $domains, array $anchors, array $images = [], ?array $evidence = null): void
     {
         $bucket = &$this->bucket($region, 'backlink_injection');
 
@@ -50,17 +64,25 @@ class RegionFindings
             }
         }
 
+        $this->rememberImages($bucket, $images);
+        $this->rememberEvidence($bucket, $evidence);
         $this->rememberUrl($bucket, $url);
     }
 
     /**
-     * Records that this URL carries gambling keywords. Keywords come from the page
-     * text as a whole rather than from a located element, so they are filed under
-     * the page body - the region a text injection actually lives in.
+     * Records that this URL carries gambling keywords in this region.
+     *
+     * The region is passed in rather than assumed: a keyword injection is only
+     * actionable once you know WHERE the text sits. "Isi halaman" - the fallback -
+     * is what the caller sends when the phrase could not be pinned to an element,
+     * which happens when it lives in the URL slug or is split across inline tags.
      *
      * @param  array<int, string>  $keywords
+     * @param  array{key: string, label: string, selector: ?string}|null  $region
+     * @param  array<int, string>  $images
+     * @param  array{path: ?string, html: ?string}|null  $evidence
      */
-    public function addKeywords(string $url, array $keywords): void
+    public function addKeywords(string $url, array $keywords, ?array $region = null, array $images = [], ?array $evidence = null): void
     {
         // No keywords, no finding. The scanner calls this for every crawled page,
         // and bucket() below would otherwise open a keyword_injection region on a
@@ -69,15 +91,14 @@ class RegionFindings
             return;
         }
 
-        $bucket = &$this->bucket(
-            ['key' => 'page_body', 'label' => 'Isi halaman', 'selector' => null],
-            'keyword_injection'
-        );
+        $bucket = &$this->bucket($region ?? self::FALLBACK_REGION, 'keyword_injection');
 
         foreach ($keywords as $keyword) {
             $bucket['keywords'][$keyword] = true;
         }
 
+        $this->rememberImages($bucket, $images);
+        $this->rememberEvidence($bucket, $evidence);
         $this->rememberUrl($bucket, $url);
     }
 
@@ -118,10 +139,20 @@ class RegionFindings
                 'linked_domains' => array_keys($bucket['domains']),
                 'anchor_texts' => array_keys($bucket['anchors']),
                 'matched_keywords' => array_keys($bucket['keywords']),
+                'image_urls' => array_keys($bucket['images']),
                 'affected_urls' => array_slice($urls, 0, JudolFinding::MAX_STORED_URLS),
                 'affected_count' => $count,
                 'last_seen_at' => now(),
             ];
+
+            // Only written when this crawl actually produced them. A crawl that hit
+            // the fallback region has no snippet to offer, and blanking a good one
+            // recorded earlier would lose the only pointer at the exact node.
+            foreach (['evidence_html' => $bucket['snippet'], 'dom_path' => $bucket['path']] as $column => $value) {
+                if (filled($value)) {
+                    $attributes[$column] = $value;
+                }
+            }
 
             if ($existing) {
                 $existing->update($attributes);
@@ -143,7 +174,7 @@ class RegionFindings
 
     /**
      * @param  array{key: string, label: string, selector: ?string}  $region
-     * @return array{region: array{key: string, label: string, selector: ?string}, domains: array<string, true>, anchors: array<string, true>, keywords: array<string, true>, urls: array<int, string>, type: string}
+     * @return array{region: array{key: string, label: string, selector: ?string}, domains: array<string, true>, anchors: array<string, true>, keywords: array<string, true>, images: array<string, true>, path: ?string, snippet: ?string, urls: array<int, string>, seen: array<string, true>, type: string}
      */
     protected function &bucket(array $region, string $type): array
     {
@@ -155,6 +186,9 @@ class RegionFindings
                 'domains' => [],
                 'anchors' => [],
                 'keywords' => [],
+                'images' => [],
+                'path' => null,
+                'snippet' => null,
                 'urls' => [],
                 'seen' => [],
                 'type' => $type,
@@ -162,6 +196,41 @@ class RegionFindings
         }
 
         return $this->regions[$key];
+    }
+
+    /**
+     * @param  array{images: array<string, true>}  $bucket
+     * @param  array<int, string>  $images
+     */
+    protected function rememberImages(array &$bucket, array $images): void
+    {
+        foreach ($images as $image) {
+            if (count($bucket['images']) >= self::MAX_STORED_IMAGES) {
+                return;
+            }
+
+            if (trim($image) !== '') {
+                $bucket['images'][$image] = true;
+            }
+        }
+    }
+
+    /**
+     * First sighting wins. The same region on forty pages yields forty identical
+     * snippets, and the one from the page the injection was first seen on is as
+     * good as any - while re-deriving it every page would only churn the column.
+     *
+     * @param  array{path: ?string, snippet: ?string}  $bucket
+     * @param  array{path: ?string, html: ?string}|null  $evidence
+     */
+    protected function rememberEvidence(array &$bucket, ?array $evidence): void
+    {
+        if ($evidence === null) {
+            return;
+        }
+
+        $bucket['path'] ??= $evidence['path'] ?? null;
+        $bucket['snippet'] ??= $evidence['html'] ?? null;
     }
 
     /**

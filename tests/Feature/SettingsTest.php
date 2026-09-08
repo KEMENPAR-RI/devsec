@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Livewire\JudolDetections\Index;
 use App\Livewire\Settings\Index as SettingsIndex;
 use App\Models\JudolDetection;
+use App\Models\JudolFinding;
 use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\User;
@@ -248,6 +249,11 @@ class SettingsTest extends TestCase
             ->assertSet('mailTemplateBody', $mailSettings->defaultBodyTemplate());
     }
 
+    /**
+     * The re-check button now hangs off an affected URL inside an injection site,
+     * so the page has to be reached the way the crawl reaches it: scan(), which
+     * files the finding, rather than scanUrlNow(), which files only the detection.
+     */
     public function test_recheck_button_removes_a_now_stale_detection(): void
     {
         NotificationFacade::fake();
@@ -255,18 +261,21 @@ class SettingsTest extends TestCase
         $keyword = JudolKeyword::create(['keyword' => 'frasa ui stale tes', 'is_active' => true]);
 
         Http::fake([
-            'ui-stale-test.example' => Http::response('<title>Frasa UI Stale Tes</title>', 200),
+            'ui-stale-test.example/sitemap.xml' => Http::response('', 404),
+            'ui-stale-test.example' => Http::response('<html><body><p>Frasa UI Stale Tes</p></body></html>', 200),
         ]);
 
-        $website = Website::factory()->create(['url' => 'http://ui-stale-test.example']);
-        (new JudolScanner)->scanUrlNow($website, 'http://ui-stale-test.example');
+        $website = Website::factory()->create(['url' => 'http://ui-stale-test.example', 'last_status' => 'up']);
+        (new JudolScanner)->scan($website);
+
         $detection = JudolDetection::where('website_id', $website->id)->firstOrFail();
+        $finding = JudolFinding::where('website_id', $website->id)->firstOrFail();
 
         $keyword->delete();
 
         Livewire::actingAs($user)
             ->test(Index::class)
-            ->call('recheck', $detection->uuid)
+            ->call('recheckUrl', $finding->uuid, 0)
             ->assertSee('sudah bersih sekarang');
 
         $this->assertDatabaseMissing('judol_detections', ['id' => $detection->id]);

@@ -10,7 +10,7 @@
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Deteksi Judol</h1>
-            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Halaman yang terindikasi disusupi konten judi online, hasil crawl homepage & sitemap tiap situs.</p>
+            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Titik penyisipan konten judi online, hasil crawl homepage &amp; sitemap tiap situs - satu temuan per bukti, lengkap dengan letak persisnya di halaman.</p>
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
             @can('deteksi-judol.delete')
@@ -184,432 +184,301 @@
     </div>
 
 
-    {{-- Injection sites.
-
-         Above the per-page list, not inside it: one of these accounts for every
-         page carrying the same shared markup, so listing it among those pages
-         would re-create the repetition it exists to collapse. It also leads with
-         the remedy, because a sitewide backlink is fixed in the template - editing
-         forty pages by hand is the wrong answer and the UI should not imply it. --}}
-    @if ($findings->isNotEmpty())
-        <section class="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-            <div class="flex items-center gap-2.5 border-b border-zinc-100 px-5 py-3.5 dark:border-zinc-800">
-                <x-phosphor-crosshair class="h-4 w-4 text-amber-500" />
-                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Titik penyisipan</h2>
-                <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-                    {{ $findings->count() }}
-                </span>
-                <p class="ml-auto hidden text-xs text-zinc-400 sm:block">
-                    Satu baris = satu tempat yang disusupi, bukan satu halaman.
-                </p>
-            </div>
-
-            <div class="divide-y divide-zinc-100 dark:divide-zinc-800">
-                @foreach ($findings as $finding)
-                    @php
-                        $anchors = array_values(array_filter($finding->anchor_texts ?? []));
-                        $storedUrls = $finding->affected_urls ?? [];
-                        $isExpanded = $expandedFinding === $finding->uuid;
-                    @endphp
-
-                    <div class="px-5 py-4">
-                        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
-                            <div class="min-w-0 flex-1">
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span class="rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                                        {{ $finding->region_selector ?? $finding->region_label }}
-                                    </span>
-                                    <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                                        {{ $finding->attackLabel() }}
-                                    </span>
-                                    @if ($finding->isSitewide())
-                                        <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
-                                            {{ $finding->affected_count }} halaman
-                                        </span>
-                                    @endif
-                                </div>
-
-                                <p class="mt-2 text-sm text-zinc-900 dark:text-white">
-                                    {{ $finding->summary() }}
-                                </p>
-
-                                @if ($finding->website)
-                                    <a href="{{ route('situs.show', $finding->website) }}" wire:navigate class="mt-1 inline-block text-xs text-zinc-400 hover:text-accent-600 dark:hover:text-accent-400">
-                                        {{ $finding->website->name }}
-                                    </a>
-                                @endif
-
-                                {{-- The anchor text is often the only thing that gives an
-                                     injection away: a domain like wicc2024.com reads as a
-                                     conference until you see it sits under "Live Draw Macau". --}}
-                                @if ($anchors)
-                                    <div class="mt-2.5 flex flex-wrap gap-1.5">
-                                        @foreach (array_slice($anchors, 0, 6) as $anchor)
-                                            <span class="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-                                                {{ $anchor }}
-                                            </span>
-                                        @endforeach
-                                        @if (count($anchors) > 6)
-                                            <span class="px-1 py-0.5 text-xs text-zinc-400">+{{ count($anchors) - 6 }} lainnya</span>
-                                        @endif
-                                    </div>
-                                @endif
-
-                                <p class="mt-2.5 flex items-start gap-1.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                    <x-phosphor-wrench class="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                    <span>{{ $finding->remediation() }}</span>
-                                </p>
-
-                                @if ($storedUrls)
-                                    <button
-                                        type="button"
-                                        wire:click="toggleFinding('{{ $finding->uuid }}')"
-                                        class="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-600 hover:underline dark:text-accent-400"
-                                    >
-                                        {{ $isExpanded ? 'Sembunyikan' : 'Lihat' }} halaman terdampak
-                                        <x-phosphor-caret-down @class(['h-3 w-3 transition', 'rotate-180' => $isExpanded]) />
-                                    </button>
-
-                                    @if ($isExpanded)
-                                        <ul class="mt-2 max-h-60 space-y-1 overflow-y-auto rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
-                                            @foreach ($storedUrls as $url)
-                                                <li>
-                                                    <a href="{{ $url }}" target="_blank" rel="noopener" class="block truncate font-mono text-xs text-zinc-600 hover:text-accent-600 dark:text-zinc-300 dark:hover:text-accent-400">
-                                                        {{ $url }}
-                                                    </a>
-                                                </li>
-                                            @endforeach
-                                            {{-- The stored list is capped; affected_count carries the real total. --}}
-                                            @if ($finding->affected_count > count($storedUrls))
-                                                <li class="pt-1 text-xs text-zinc-400">
-                                                    ...dan {{ $finding->affected_count - count($storedUrls) }} halaman lain.
-                                                </li>
-                                            @endif
-                                        </ul>
-                                    @endif
-                                @endif
-                            </div>
-
-                            <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                <span @class([
-                                    'rounded-full px-2.5 py-1 text-xs font-medium',
-                                    'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $finding->status === 'new',
-                                    'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' => $finding->status !== 'new',
-                                ])>
-                                    {{ $finding->status === 'new' ? 'Baru' : 'Sudah Ditangani' }}
-                                </span>
-
-                                @can('deteksi-judol.update')
-                                    @if ($finding->status === 'new')
-                                        <button
-                                            type="button"
-                                            wire:click="markFindingReviewed('{{ $finding->uuid }}')"
-                                            wire:loading.attr="disabled"
-                                            wire:target="markFindingReviewed('{{ $finding->uuid }}')"
-                                            class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                        >
-                                            <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markFindingReviewed('{{ $finding->uuid }}')" />
-                                            Sudah Ditangani
-                                        </button>
-                                        <button
-                                            type="button"
-                                            wire:click="markFindingIgnored('{{ $finding->uuid }}')"
-                                            wire:loading.attr="disabled"
-                                            wire:target="markFindingIgnored('{{ $finding->uuid }}')"
-                                            class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                        >
-                                            <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markFindingIgnored('{{ $finding->uuid }}')" />
-                                            Abaikan
-                                        </button>
-                                    @endif
-                                @endcan
-                            </div>
-                        </div>
-                    </div>
-                @endforeach
-            </div>
-        </section>
-    @endif
-
     @php
         $emptyMessage = $search
-            ? "Tidak ada deteksi yang cocok dengan \"{$search}\"."
+            ? "Tidak ada titik penyisipan yang cocok dengan \"{$search}\"."
             : 'Belum ada konten judi online yang terdeteksi.';
     @endphp
 
+    {{-- Hasil deteksi, dikelompokkan per bukti temuan.
+
+         Grouped on the EVIDENCE rather than on the page. One edit by an attacker
+         lands in several regions and shows up on dozens of URLs, and reporting that
+         as dozens of rows buries the only fact worth acting on. So the evidence is
+         stated once, already open - an operator should not have to click to find out
+         what was found - and what hangs underneath it is the list of places to go
+         and clean, each with the exact node it sits on. --}}
     <x-list-card
         :is-empty="$groups->isEmpty()"
         empty-icon="phosphor-shield-check"
         :empty-message="$emptyMessage"
     >
         <x-slot:toolbar>
-            <x-search-input model="search" placeholder="Cari URL atau nama situs..." class="sm:max-w-xs" />
-            <select wire:model.live="verification" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                <option value="">Semua Verifikasi</option>
-                <option value="confirmed">Terverifikasi AI</option>
-                <option value="keyword">Belum diverifikasi AI</option>
-            </select>
+            <x-search-input model="search" placeholder="Cari domain, kata kunci, lokasi, atau URL..." class="sm:max-w-sm" />
+            <p class="hidden text-xs text-zinc-400 sm:block">
+                Satu entri = satu temuan. Di bawahnya: tempat persis penyisipannya.
+            </p>
         </x-slot:toolbar>
 
-        <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="previousPage,nextPage,gotoPage,search">
+        <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="search">
             @foreach ($groups as $group)
                 @php
-                    $site = $websites[$group->site_key] ?? null;
-                    $items = $detectionsByGroup[\App\Support\DailyGroups::key($group->site_key, $group->day)] ?? collect();
-                    $newCount = $items->where('status', 'new')->count();
+                    // The group's collapse state hangs off its first finding's uuid -
+                    // the group key itself is a hash with no row behind it.
+                    $anchorKey = $group['findings']->first()->uuid;
+                    $isExpanded = $expandedFinding === $anchorKey;
+                    $storedUrls = $group['urls'];
                 @endphp
 
-                <x-list-group
-                    :title="$site?->name ?? 'Situs sudah dihapus'"
-                    :href="$site ? route('situs.show', $site) : null"
-                    :day="\Illuminate\Support\Carbon::parse($group->day)"
-                    :count="$group->total"
-                    unit="halaman"
-                    :open="$loop->first"
-                    :tone="$newCount ? 'red' : 'zinc'"
-                    icon="phosphor-shield-warning"
-                >
-                    <x-slot:summary>
-                        @if ($newCount)
-                            <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $newCount }} baru</span>
-                        @else
-                            <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Sudah ditangani</span>
+                <section class="px-5 py-4" wire:key="grup-{{ $group['key'] }}">
+                    {{-- Ringkasan temuan --}}
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span @class([
+                            'rounded-full px-2.5 py-1 text-xs font-medium',
+                            'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $group['status'] === 'new',
+                            'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' => $group['status'] !== 'new',
+                        ])>
+                            {{ $group['status'] === 'new' ? 'Baru' : 'Sudah Ditangani' }}
+                        </span>
+
+                        <span class="text-sm font-semibold text-zinc-900 dark:text-white">
+                            {{ $group['attack_label'] }}
+                        </span>
+
+                        @if ($group['url_count'] > 1)
+                            <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
+                                {{ $group['url_count'] }} halaman
+                            </span>
                         @endif
-                    </x-slot:summary>
 
-                    <div class="divide-y divide-zinc-100 dark:divide-zinc-800">
-                        @foreach ($items as $detection)
-                            <div class="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-start sm:gap-4 sm:pl-[4.25rem]">
-                                <div class="min-w-0 flex-1">
-                                    <a href="{{ $detection->url }}" target="_blank" rel="noopener" class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
-                                        {{ $detection->url }}
-                                    </a>
-                                    <p class="font-mono text-xs text-zinc-400">
-                                        {{ app_datetime($detection->detected_at) }}
-                                        @if ($detection->page_last_modified_at)
-                                            &middot;
-                                            <span class="text-amber-600 dark:text-amber-400" title="Header Last-Modified dari server: kapan file halaman ini terakhir ditulis. Ini batas atas - penyusupan bisa terjadi lebih awal, dan penulisan ulang apa pun (restore backup, re-upload) akan menggeser tanggal ini.">
-                                                halaman diubah {{ app_datetime($detection->page_last_modified_at) }}
-                                            </span>
-                                        @endif
-                                    </p>
-                                    @php
-                                        $excerpts = $detection->matchedExcerpts();
-                                        $changes = $detection->content_changes;
-                                        $badge = $detection->aiBadge();
-                                        $hasAiFinding = filled($detection->ai_reasoning);
-                                        $linkedDomains = $detection->linked_domains ?? [];
-                                    @endphp
+                        <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                            {{ $group['findings']->count() }} titik penyisipan
+                        </span>
 
-                                    {{-- What the gambling content on this page actually says --}}
-                                    @if ($excerpts || $changes || $hasAiFinding || $linkedDomains)
-                                        <div x-data="{ open: false }" class="mt-2">
-                                            <button type="button" @click="open = !open" class="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
-                                                <x-phosphor-file-text class="h-3.5 w-3.5" />
-                                                <span x-show="!open">{{ $hasAiFinding ? 'Lihat temuan AI & isi konten' : 'Lihat isi konten' }}</span>
-                                                <span x-show="open" x-cloak>Sembunyikan detail</span>
-                                                @if ($changes)
-                                                    <span class="rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">berubah</span>
-                                                @endif
-                                            </button>
+                        <span class="ml-auto font-mono text-xs text-zinc-400">
+                            {{ app_datetime($group['last_seen_at']) }}
+                        </span>
+                    </div>
 
-                                            <div x-show="open" x-cloak x-transition class="mt-2 space-y-3">
-                                                @if ($hasAiFinding)
-                                                    <div @class([
-                                                        'rounded-lg px-3.5 py-3',
-                                                        'bg-accent-50/60 dark:bg-accent-500/5' => $badge['tone'] === 'accent',
-                                                        'bg-amber-50/60 dark:bg-amber-500/5' => $badge['tone'] === 'amber',
-                                                        'bg-zinc-100/70 dark:bg-zinc-800/40' => $badge['tone'] === 'zinc',
-                                                    ])>
-                                                        <div class="flex items-start gap-2.5">
-                                                            <x-phosphor-sparkle @class([
-                                                                'mt-0.5 h-4 w-4 shrink-0',
-                                                                'text-accent-500' => $badge['tone'] === 'accent',
-                                                                'text-amber-500' => $badge['tone'] === 'amber',
-                                                                'text-zinc-400' => $badge['tone'] === 'zinc',
-                                                            ]) />
-                                                            <div class="min-w-0 flex-1">
-                                                                <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                                                                    Temuan AI &middot; {{ $badge['label'] }}
-                                                                    @if ($detection->ai_confidence !== null)
-                                                                        &middot; keyakinan {{ number_format((float) $detection->ai_confidence * 100) }}%
-                                                                    @endif
-                                                                    @if ($detection->ai_checked_at)
-                                                                        &middot; {{ app_datetime($detection->ai_checked_at) }}
-                                                                    @endif
-                                                                </p>
-                                                                <p class="mt-1 whitespace-pre-line break-words text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">{{ $detection->ai_reasoning }}</p>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                @endif
+                    @if ($group['website'])
+                        <a href="{{ route('situs.show', $group['website']) }}" wire:navigate class="mt-1 inline-block text-xs text-zinc-400 hover:text-accent-600 dark:hover:text-accent-400">
+                            {{ $group['website']->name }}
+                        </a>
+                    @endif
 
-                                                @if ($linkedDomains)
-                                                    <div>
-                                                        <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                                                            Tautan keluar ke situs judi
-                                                        </p>
-                                                        {{-- The domains, not the full URLs: the same site is usually
-                                                        linked from several paths, and the domain is what has to be
-                                                        searched for in the source and stripped out. --}}
-                                                        <div class="mt-1 flex flex-wrap gap-1.5">
-                                                            @foreach ($linkedDomains as $domain)
-                                                                <span class="rounded-md bg-red-50 px-2 py-1 font-mono text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $domain }}</span>
-                                                            @endforeach
-                                                        </div>
-                                                        <p class="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                                            Cari domain di atas pada sumber halaman ini - biasanya berupa
-                                                            tag &lt;a&gt; tersembunyi yang disisipkan ke template atau isi artikel.
-                                                        </p>
-                                                    </div>
-                                                @endif
+                    {{-- Detail temuan. Deliberately not behind a disclosure: this is the
+                         answer to "apa yang ditemukan", and it is the reason the row is
+                         on screen at all. --}}
+                    <div class="mt-3 space-y-3 rounded-xl bg-zinc-50 px-4 py-3.5 dark:bg-zinc-800/40">
+                        @if ($group['keywords'])
+                            <div>
+                                <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Kata kunci ditemukan</p>
+                                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                                    @foreach ($group['keywords'] as $keyword)
+                                        <span class="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">{{ $keyword }}</span>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
 
-                                                @if ($excerpts)
-                                                    <div>
-                                                        <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Kutipan konten judi di halaman ini</p>
-                                                        <div class="mt-1 space-y-1.5">
-                                                            @foreach ($excerpts as $excerpt)
-                                                                <p class="break-words rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">{{ $excerpt }}</p>
-                                                            @endforeach
-                                                        </div>
-                                                    </div>
-                                                @endif
-
-                                                {{-- Only present once a re-check found the page different --}}
-                                                @if ($changes)
-                                                    <div>
-                                                        <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                                                            Perubahan terdeteksi {{ app_datetime($changes['at']) }}
-                                                        </p>
-                                                        <div class="mt-1 space-y-1">
-                                                            @foreach ($changes['added'] ?? [] as $line)
-                                                                <p class="break-words rounded-lg bg-emerald-50/70 px-3 py-1.5 text-xs text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
-                                                                    <span class="font-mono text-emerald-600 dark:text-emerald-400">+</span> {{ $line }}
-                                                                </p>
-                                                            @endforeach
-                                                            @foreach ($changes['removed'] ?? [] as $line)
-                                                                <p class="break-words rounded-lg bg-red-50/70 px-3 py-1.5 text-xs text-red-800 line-through dark:bg-red-500/10 dark:text-red-300">
-                                                                    <span class="font-mono text-red-600 no-underline dark:text-red-400">-</span> {{ $line }}
-                                                                </p>
-                                                            @endforeach
-                                                        </div>
-                                                    </div>
-                                                @endif
-                                            </div>
-                                        </div>
-                                    @endif
-
-                                    @php $badge = $detection->aiBadge(); @endphp
-                                    <p class="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                        <span
-                                            title="{{ $badge['detail'] }}"
-                                            @class([
-                                                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-                                                'bg-accent-50 text-accent-700 dark:bg-accent-500/10 dark:text-accent-400' => $badge['tone'] === 'accent',
-                                                'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' => $badge['tone'] === 'amber',
-                                                'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400' => $badge['tone'] === 'zinc',
-                                            ])
-                                        >
-                                            @if ($badge['tone'] === 'accent')
-                                                <x-phosphor-sparkle class="h-3 w-3" />
-                                            @endif
-                                            {{ $badge['label'] }}
-                                        </span>
-                                        @foreach ($detection->matched_keywords ?? [] as $keyword)
-                                            <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ $keyword }}</span>
-                                        @endforeach
-
-                                        {{-- A backlink injection matches no keyword at all, so without this the
-                                        row would show a bare AI badge and nothing saying what was found. --}}
-                                        @if ($count = count($detection->linked_domains ?? []))
-                                            <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
-                                                {{ $count }} tautan ke situs judi
-                                            </span>
-                                        @endif
-                                    </p>
-                                    @if ($error = ($recheckErrors[$detection->id] ?? null))
-                                        <p class="mt-1.5 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-                                            <x-phosphor-warning-circle class="h-3.5 w-3.5 shrink-0" />
-                                            {{ $error }}
-                                        </p>
-                                    @endif
+                        @if ($group['domains'])
+                            <div>
+                                <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Tautan ke situs judi</p>
+                                {{-- The domains, not the full URLs: the same site is usually
+                                linked from several paths, and the domain is what has to be
+                                searched for in the source and stripped out. --}}
+                                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                                    @foreach ($group['domains'] as $domain)
+                                        <span class="rounded-md bg-red-50 px-2 py-1 font-mono text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $domain }}</span>
+                                    @endforeach
                                 </div>
 
-                                <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                    <span @class([
-                                        'rounded-full px-2.5 py-1 text-xs font-medium',
-                                        'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $detection->status === 'new',
-                                        'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' => $detection->status === 'reviewed',
-                                        'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400' => $detection->status === 'ignored',
-                                    ])>
-                                        {{ match ($detection->status) { 'new' => 'Baru', 'reviewed' => 'Sudah Ditangani', default => 'Diabaikan' } }}
-                                    </span>
+                                {{-- The anchor text is often the only thing that gives an
+                                     injection away: a domain like wicc2024.com reads as a
+                                     conference until you see it sits under "Live Draw Macau". --}}
+                                @if ($group['anchors'])
+                                    <div class="mt-1.5 flex flex-wrap gap-1.5">
+                                        @foreach (array_slice($group['anchors'], 0, 6) as $anchor)
+                                            <span class="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ $anchor }}</span>
+                                        @endforeach
+                                        @if (count($group['anchors']) > 6)
+                                            <span class="px-1 py-0.5 text-xs text-zinc-400">+{{ count($group['anchors']) - 6 }} lainnya</span>
+                                        @endif
+                                    </div>
+                                @endif
+                            </div>
+                        @endif
+
+                        @if ($group['images'])
+                            <div>
+                                <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Gambar ditemukan di titik ini</p>
+                                <div class="mt-1.5 flex flex-wrap gap-2">
+                                    @foreach ($group['images'] as $image)
+                                        @php $source = safe_image_urls($image['source']); @endphp
+                                        <div x-data="{ broken: false }" class="w-32" wire:key="gambar-{{ $image['finding']->uuid }}-{{ $image['index'] }}">
+                                            {{-- Proxied through this origin: the page's CSP is
+                                            img-src 'self', so the remote URL would never load. --}}
+                                            <img
+                                                x-show="!broken"
+                                                {{-- x-on:, not @error - Blade owns @error and would
+                                                read it as the validation directive. --}}
+                                                x-on:error="broken = true"
+                                                src="{{ route('deteksi-judol.gambar', ['finding' => $image['finding'], 'index' => $image['index']]) }}"
+                                                alt="Gambar pada titik penyisipan"
+                                                loading="lazy"
+                                                class="h-20 w-32 rounded-lg border border-zinc-200 bg-white object-cover dark:border-zinc-700 dark:bg-zinc-900"
+                                            >
+                                            <div x-show="broken" x-cloak class="flex h-20 w-32 items-center justify-center rounded-lg border border-dashed border-zinc-300 px-2 text-center text-[11px] leading-tight text-zinc-400 dark:border-zinc-700">
+                                                Gambar tidak bisa diambil
+                                            </div>
+                                            @if ($source)
+                                                <a href="{{ $source }}" target="_blank" rel="noopener" class="mt-1 block truncate font-mono text-[10px] text-zinc-400 hover:text-accent-600 dark:hover:text-accent-400" title="{{ $source }}">
+                                                    {{ $source }}
+                                                </a>
+                                            @endif
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
+                    </div>
+
+                    {{-- Titik penyisipan: WHERE the evidence above sits, one entry per
+                         place that has to be cleaned. --}}
+                    <div class="mt-4 space-y-2.5">
+                        @foreach ($group['findings'] as $finding)
+                            <div class="rounded-xl border border-zinc-200 px-3.5 py-3 dark:border-zinc-800" wire:key="titik-{{ $finding->uuid }}">
+                                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                                    <x-phosphor-crosshair class="mt-0.5 hidden h-4 w-4 shrink-0 text-amber-500 sm:block" />
+
+                                    <div class="min-w-0 flex-1">
+                                        <p class="flex flex-wrap items-center gap-2 text-sm font-medium text-zinc-900 dark:text-white">
+                                            {{ $finding->region_label }}
+                                            @if ($finding->region_selector)
+                                                <span class="rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-xs font-normal text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ $finding->region_selector }}</span>
+                                            @endif
+                                            @if ($finding->affected_count > 1)
+                                                <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-normal text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ $finding->affected_count }} halaman</span>
+                                            @endif
+                                            @if ($finding->status !== 'new')
+                                                <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-normal text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Sudah ditangani</span>
+                                            @endif
+                                        </p>
+
+                                        {{-- The route down to the element. region_selector names
+                                        the block; this says which node inside it. --}}
+                                        @if ($finding->dom_path)
+                                            <p class="mt-1 break-all font-mono text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400" title="Jalur elemen di dalam halaman - tempel ke DevTools atau cari di berkas tema">
+                                                {{ $finding->dom_path }}
+                                            </p>
+                                        @endif
+                                    </div>
 
                                     @can('deteksi-judol.update')
-                                        <button
-                                            type="button"
-                                            wire:click="recheck('{{ $detection->uuid }}')"
-                                            wire:loading.attr="disabled"
-                                            wire:target="recheck('{{ $detection->uuid }}')"
-                                            title="Cek ulang URL ini dengan daftar kata kunci saat ini - kalau sudah bersih, deteksi ini otomatis dihapus"
-                                            class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                        >
-                                            <x-phosphor-arrows-clockwise class="h-3.5 w-3.5" wire:loading.remove wire:target="recheck('{{ $detection->uuid }}')" />
-                                            <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="recheck('{{ $detection->uuid }}')" />
-                                            Verifikasi Ulang
-                                        </button>
-
-                                        @if ($detection->status === 'new')
-                                            <button
-                                                type="button"
-                                                wire:click="markReviewed('{{ $detection->uuid }}')"
-                                                wire:loading.attr="disabled"
-                                                wire:target="markReviewed('{{ $detection->uuid }}')"
-                                                class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                            >
-                                                <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markReviewed('{{ $detection->uuid }}')" />
-                                                Sudah Ditangani
-                                            </button>
-                                            <button
-                                                type="button"
-                                                wire:click="markIgnored('{{ $detection->uuid }}')"
-                                                wire:loading.attr="disabled"
-                                                wire:target="markIgnored('{{ $detection->uuid }}')"
-                                                class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                            >
-                                                <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markIgnored('{{ $detection->uuid }}')" />
-                                                Abaikan
-                                            </button>
-                                        @endif
-                                    @endcan
-                                    @can('deteksi-judol.delete')
-                                        <x-confirm-dialog
-                                            title="Hapus deteksi ini?"
-                                            message="Temuan untuk {{ $detection->url }} akan dihapus permanen dan insidennya ditandai selesai."
-                                            confirm-text="Ya, Hapus"
-                                            variant="danger"
-                                            target="delete('{{ $detection->uuid }}')"
-                                        >
-                                            <x-slot:trigger>
-                                                <button type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-red-500/10 dark:hover:text-red-400">
-                                                    <x-phosphor-trash class="h-3.5 w-3.5" />
-                                                    Hapus
+                                        <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+                                            @if ($finding->status === 'new')
+                                                <button
+                                                    type="button"
+                                                    wire:click="markFindingReviewed('{{ $finding->uuid }}')"
+                                                    wire:loading.attr="disabled"
+                                                    wire:target="markFindingReviewed('{{ $finding->uuid }}')"
+                                                    class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                                >
+                                                    <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markFindingReviewed('{{ $finding->uuid }}')" />
+                                                    Sudah Ditangani
                                                 </button>
-                                            </x-slot:trigger>
-                                            <form wire:submit="delete('{{ $detection->uuid }}')" x-ref="form"></form>
-                                        </x-confirm-dialog>
+                                                <button
+                                                    type="button"
+                                                    wire:click="markFindingIgnored('{{ $finding->uuid }}')"
+                                                    wire:loading.attr="disabled"
+                                                    wire:target="markFindingIgnored('{{ $finding->uuid }}')"
+                                                    class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                                >
+                                                    <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markFindingIgnored('{{ $finding->uuid }}')" />
+                                                    Abaikan
+                                                </button>
+                                            @endif
+                                            @can('deteksi-judol.delete')
+                                                <x-confirm-dialog
+                                                    title="Hapus titik penyisipan ini?"
+                                                    message="Temuan di {{ $finding->region_label }} akan dihapus permanen. Halaman yang terdampak tidak ikut terhapus."
+                                                    confirm-text="Ya, Hapus"
+                                                    variant="danger"
+                                                    target="deleteFinding('{{ $finding->uuid }}')"
+                                                >
+                                                    <x-slot:trigger>
+                                                        <button type="button" title="Hapus titik penyisipan" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-red-500/10 dark:hover:text-red-400">
+                                                            <x-phosphor-trash class="h-3.5 w-3.5" />
+                                                        </button>
+                                                    </x-slot:trigger>
+                                                    <form wire:submit="deleteFinding('{{ $finding->uuid }}')" x-ref="form"></form>
+                                                </x-confirm-dialog>
+                                            @endcan
+                                        </div>
                                     @endcan
                                 </div>
+
+                                {{-- The markup itself, escaped, with the injected part marked.
+                                     This is what "letak persisnya" means without a headless
+                                     browser: the node, not a picture of the page. --}}
+                                <x-evidence-snippet
+                                    class="mt-2.5"
+                                    :html="$finding->evidence_html"
+                                    :terms="$finding->highlightTerms()"
+                                />
+
+                                @if ($error = ($recheckErrors[$finding->uuid] ?? null))
+                                    <p class="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                                        <x-phosphor-warning-circle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                        {{ $error }}
+                                    </p>
+                                @endif
                             </div>
                         @endforeach
                     </div>
-                </x-list-group>
+
+                    {{-- Stated once for the group: a sitewide injection is one fix in the
+                         template, and repeating it under every region implies otherwise. --}}
+                    <p class="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        <x-phosphor-wrench class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{{ $group['findings']->first()->remediation() }}</span>
+                    </p>
+
+                    @if ($storedUrls)
+                        <button
+                            type="button"
+                            wire:click="toggleFinding('{{ $anchorKey }}')"
+                            class="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-600 hover:underline dark:text-accent-400"
+                        >
+                            {{ $isExpanded ? 'Sembunyikan' : 'Lihat' }} {{ $group['url_count'] }} halaman terdampak
+                            <x-phosphor-caret-down @class(['h-3 w-3 transition', 'rotate-180' => $isExpanded]) />
+                        </button>
+
+                        @if ($isExpanded)
+                            <ul class="mt-2 max-h-60 space-y-1 overflow-y-auto rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+                                @foreach ($storedUrls as $entry)
+                                    <li class="flex items-center gap-2">
+                                        <a href="{{ $entry['url'] }}" target="_blank" rel="noopener" class="min-w-0 flex-1 truncate font-mono text-xs text-zinc-600 hover:text-accent-600 dark:text-zinc-300 dark:hover:text-accent-400">
+                                            {{ $entry['url'] }}
+                                        </a>
+                                        @can('deteksi-judol.update')
+                                            <button
+                                                type="button"
+                                                wire:click="recheckUrl('{{ $entry['finding']->uuid }}', {{ $entry['index'] }})"
+                                                wire:loading.attr="disabled"
+                                                wire:target="recheckUrl('{{ $entry['finding']->uuid }}', {{ $entry['index'] }})"
+                                                title="Cek ulang URL ini dengan daftar kata kunci saat ini - kalau sudah bersih, deteksi lamanya otomatis dihapus"
+                                                class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-white disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                            >
+                                                <x-phosphor-arrows-clockwise class="h-3 w-3" wire:loading.remove wire:target="recheckUrl('{{ $entry['finding']->uuid }}', {{ $entry['index'] }})" />
+                                                <x-phosphor-spinner class="h-3 w-3 animate-spin" wire:loading wire:target="recheckUrl('{{ $entry['finding']->uuid }}', {{ $entry['index'] }})" />
+                                                Verifikasi Ulang
+                                            </button>
+                                        @endcan
+                                    </li>
+                                @endforeach
+                                {{-- The stored list is capped per finding; url_count carries the real total. --}}
+                                @if ($group['url_count'] > count($storedUrls))
+                                    <li class="pt-1 text-xs text-zinc-400">
+                                        ...dan {{ $group['url_count'] - count($storedUrls) }} halaman lain.
+                                    </li>
+                                @endif
+                            </ul>
+                        @endif
+                    @endif
+                </section>
             @endforeach
         </div>
-
-        <x-slot:footer>
-            {{ $groups->links() }}
-        </x-slot:footer>
     </x-list-card>
 
     @can('deteksi-judol.update')

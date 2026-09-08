@@ -6,7 +6,7 @@ use App\Livewire\Incidents\Index as IncidentsIndex;
 use App\Livewire\JudolDetections\Index as JudolDetectionsIndex;
 use App\Livewire\Notifications\Index as NotificationsIndex;
 use App\Models\Incident;
-use App\Models\JudolDetection;
+use App\Models\JudolFinding;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\WebsiteDownNotification;
@@ -90,18 +90,54 @@ class ListGroupingTest extends TestCase
         $this->assertCount(2, $rows->first(), 'both incidents live under it');
     }
 
-    public function test_judol_detections_group_by_site_and_day(): void
+    /**
+     * The judol page groups on the EVIDENCE, not on the day. One edit by an
+     * attacker routinely lands in two places at once - the same link block pasted
+     * into the footer and the sidebar - and stating the whole body of evidence
+     * twice is exactly the repetition findings exist to collapse.
+     */
+    public function test_judol_findings_group_by_identical_evidence(): void
     {
         $user = User::factory()->create();
         $website = Website::factory()->create();
 
-        JudolDetection::create(['website_id' => $website->id, 'url' => 'http://x.example/a', 'matched_keywords' => ['slot gacor'], 'status' => 'new', 'detected_at' => now()]);
-        JudolDetection::create(['website_id' => $website->id, 'url' => 'http://x.example/b', 'matched_keywords' => ['slot gacor'], 'status' => 'new', 'detected_at' => now()]);
+        foreach ([['footer', 'Footer'], ['sidebar', 'Sidebar']] as [$key, $label]) {
+            $this->finding($website, $key, $label, ['gacor88.com'], ['http://x.example/a', 'http://x.example/b']);
+        }
+
+        // A different domain is a different finding, even though it is one more
+        // region on the same site.
+        $this->finding($website, 'header', 'Header', ['togel99.net'], ['http://x.example/a']);
 
         $groups = Livewire::actingAs($user)->test(JudolDetectionsIndex::class)->viewData('groups');
 
-        $this->assertSame(1, $groups->total());
-        $this->assertSame(2, (int) $groups->first()->total);
+        $this->assertCount(2, $groups, 'identical evidence collapses; different evidence does not');
+
+        $shared = $groups->first(fn (array $group) => $group['domains'] === ['gacor88.com']);
+
+        $this->assertCount(2, $shared['findings'], 'both insertion points hang under one entry');
+        // Unioned, not summed: the same two pages carry both regions.
+        $this->assertSame(2, $shared['url_count']);
+    }
+
+    /**
+     * @param  array<int, string>  $domains
+     * @param  array<int, string>  $urls
+     */
+    private function finding(Website $website, string $key, string $label, array $domains, array $urls): JudolFinding
+    {
+        return JudolFinding::create([
+            'website_id' => $website->id,
+            'region_key' => $key,
+            'region_label' => $label,
+            'attack_type' => 'backlink_injection',
+            'linked_domains' => $domains,
+            'affected_urls' => $urls,
+            'affected_count' => count($urls),
+            'status' => 'new',
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
     }
 
     public function test_notifications_group_by_the_website_id_inside_their_payload(): void

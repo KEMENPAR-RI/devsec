@@ -2,10 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Livewire\JudolDetections\Index;
 use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
-use App\Models\User;
 use App\Models\Website;
 use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
@@ -13,7 +11,6 @@ use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
-use Livewire\Livewire;
 use Tests\TestCase;
 
 class AiVerdictTest extends TestCase
@@ -107,39 +104,17 @@ class AiVerdictTest extends TestCase
         $this->assertSame(0, JudolDetection::count());
     }
 
-    public function test_the_page_can_filter_ai_confirmed_findings_apart_from_the_rest(): void
+    /**
+     * The classifier's verdict is still recorded in full; what changed is that the
+     * Deteksi Judol page no longer lists pages, so there is no per-detection AI
+     * panel and no "Belum diverifikasi AI" filter left to assert against. The badge
+     * is the surviving reading of that verdict, so that is what is checked here.
+     */
+    public function test_the_verdict_is_summarised_for_display(): void
     {
-        $user = User::factory()->create();
         $website = Website::factory()->create();
 
-        $confirmed = JudolDetection::create([
-            'website_id' => $website->id, 'url' => 'http://x.example/ai', 'matched_keywords' => ['slot gacor'],
-            'status' => 'new', 'detected_at' => now(), 'ai_verdict' => 'confirmed', 'ai_confidence' => 0.9,
-        ]);
-        $keywordOnly = JudolDetection::create([
-            'website_id' => $website->id, 'url' => 'http://x.example/plain', 'matched_keywords' => ['slot gacor'],
-            'status' => 'new', 'detected_at' => now(),
-        ]);
-
-        $ids = fn (string $filter) => Livewire::actingAs($user)
-            ->test(Index::class)
-            ->set('verification', $filter)
-            ->viewData('detectionsByGroup')
-            ->flatten()
-            ->pluck('id')
-            ->all();
-
-        $this->assertSame([$confirmed->id], $ids('confirmed'));
-        $this->assertSame([$keywordOnly->id], $ids('keyword'));
-        $this->assertCount(2, $ids(''));
-    }
-
-    public function test_the_page_shows_what_the_ai_actually_found(): void
-    {
-        $user = User::factory()->create();
-        $website = Website::factory()->create();
-
-        JudolDetection::create([
+        $detection = JudolDetection::create([
             'website_id' => $website->id,
             'url' => 'http://x.example/ai',
             'matched_keywords' => ['slot gacor'],
@@ -151,12 +126,12 @@ class AiVerdictTest extends TestCase
             'ai_checked_at' => now(),
         ]);
 
-        Livewire::actingAs($user)
-            ->test(Index::class)
-            ->assertSee('Temuan AI')
-            ->assertSee("Gambar menampilkan logo 'Slot Lions 88' di atas latar kasino.")
-            ->assertSee('keyakinan 95%')
-            ->assertSee('Lihat temuan AI');
+        $badge = $detection->aiBadge();
+
+        $this->assertSame('Terverifikasi AI', $badge['label']);
+        $this->assertSame('accent', $badge['tone']);
+        $this->assertStringContainsString('Slot Lions 88', $badge['detail']);
+        $this->assertStringContainsString('keyakinan 95%', $badge['detail']);
     }
 
     /**

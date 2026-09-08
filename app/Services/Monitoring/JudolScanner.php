@@ -4,6 +4,7 @@ namespace App\Services\Monitoring;
 
 use App\Models\Incident;
 use App\Models\JudolDetection;
+use App\Models\JudolFinding;
 use App\Models\JudolKeyword;
 use App\Models\User;
 use App\Models\Website;
@@ -11,6 +12,7 @@ use App\Notifications\JudolContentDetected;
 use App\Services\AppSettings;
 use App\Services\Notifications\MailSettings;
 use DOMDocument;
+use DOMText;
 use Generator;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Carbon;
@@ -47,7 +49,7 @@ class JudolScanner
      * ...) silently block/challenge requests that look like non-browser bots,
      * even though the same URL loads fine in an actual browser.
      */
-    protected const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+    public const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
     /** Image formats the Messages API can read - see looksLikeSupportedImage(). */
     protected const SUPPORTED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
@@ -110,7 +112,7 @@ class JudolScanner
 
             // Same reason recordRegions() runs unconditionally: what proves an
             // injection is sitewide is the pages that were ALREADY flagged.
-            $regions->addKeywords($url, $detection
+            $this->recordKeywordRegions($regions, $url, $page['html'], $detection
                 ? $detection->matched_keywords ?? []
                 : $storedKeywords->get($url) ?? []);
         }
@@ -155,6 +157,8 @@ class JudolScanner
             return;
         }
 
+        $pageRegion = app(PageRegion::class);
+        $imagesByRegion = $this->extractLocatedImages($html, $url);
         $byRegion = [];
 
         foreach ($located as $link) {
@@ -163,14 +167,253 @@ class JudolScanner
             }
 
             $key = $link['region']['key'];
-            $byRegion[$key] ??= ['region' => $link['region'], 'domains' => [], 'anchors' => []];
+            $byRegion[$key] ??= [
+                'region' => $link['region'],
+                'domains' => [],
+                'anchors' => [],
+                // Anchored on the FIRST flagged link in this region: that anchor is
+                // what proves the injection, so it is the node worth pointing at.
+                // Later links in the same region resolve to the same container
+                // anyway - the snippet would be identical.
+                'evidence' => [
+                    'path' => $pageRegion->path($link['node']),
+                    'html' => $pageRegion->snippet($link['node']),
+                ],
+            ];
             $byRegion[$key]['domains'][] = $link['domain'];
             $byRegion[$key]['anchors'][] = $link['text'];
         }
 
-        foreach ($byRegion as $group) {
-            $regions->addLinks($url, $group['region'], array_unique($group['domains']), array_unique($group['anchors']));
+        foreach ($byRegion as $key => $group) {
+            $regions->addLinks(
+                $url,
+                $group['region'],
+                array_unique($group['domains']),
+                array_unique($group['anchors']),
+                $imagesByRegion[$key] ?? [],
+                $group['evidence'],
+            );
         }
+    }
+
+    /**
+     * Files this page's keyword matches under the region of markup each phrase was
+     * actually found in.
+     *
+     * Before this, every keyword match on every site was filed under one hardcoded
+     * "Isi halaman" region, which is not a location - it is the absence of one. A
+     * text injection is as template-shaped as a backlink is (spam dropped into a
+     * widget, a footer blurb, the meta description), and the operator needs the
+     * same answer here as there: which block to open.
+     *
+     * @param  array<int, string>  $keywords
+     */
+    protected function recordKeywordRegions(RegionFindings $regions, string $url, string $html, array $keywords): void
+    {
+        if ($keywords === []) {
+            return;
+        }
+
+        $located = $this->locateKeywords($html, $keywords);
+        $imagesByRegion = $this->extractLocatedImages($html, $url);
+
+        foreach ($located['regions'] as $group) {
+            $regions->addKeywords(
+                $url,
+                $group['keywords'],
+                $group['region'],
+                $imagesByRegion[$group['region']['key']] ?? [],
+                $group['evidence'],
+            );
+        }
+
+        // Phrases that matched the page but could not be pinned to any element -
+        // they live in the URL slug, or are split across inline tags. Reported
+        // under the page body rather than guessed into a region they were not
+        // found in, for the same reason locate() says "Lokasi tidak dikenali".
+        $regions->addKeywords($url, $located['unlocated']);
+    }
+
+    /**
+     * Which element carries each matched keyword, grouped by the region around it.
+     *
+     * @param  array<int, string>  $keywords
+     * @return array{regions: array<int, array{region: array{key: string, label: string, selector: ?string}, keywords: array<int, string>, evidence: array{path: ?string, html: ?string}}>, unlocated: array<int, string>}
+     */
+    protected function locateKeywords(string $html, array $keywords): array
+    {
+        $dom = $this->parseHtml($html);
+
+        if (! $dom) {
+            return ['regions' => [], 'unlocated' => $keywords];
+        }
+
+        $pageRegion = app(PageRegion::class);
+
+        // Keyed by the lowercased phrase so a hit can be struck off in O(1) - the
+        // list runs to a few hundred entries and the page to a few thousand nodes.
+        $pending = [];
+
+        foreach ($keywords as $keyword) {
+            $pending[Str::lower($keyword)] = $keyword;
+        }
+
+        $groups = [];
+
+        foreach ($this->textCarryingElements($dom) as $candidate) {
+            if ($pending === []) {
+                break;
+            }
+
+            $haystack = Str::lower($candidate['text']);
+            // Same deobfuscation the page-level match uses, so "sl0t gac0r" is
+            // located rather than falling through to the fallback region.
+            $normalized = strtr($haystack, self::LEETSPEAK_MAP);
+            $hits = [];
+
+            foreach ($pending as $lower => $keyword) {
+                if (str_contains($haystack, $lower) || str_contains($normalized, $lower)) {
+                    $hits[] = $keyword;
+                    unset($pending[$lower]);
+                }
+            }
+
+            if ($hits === []) {
+                continue;
+            }
+
+            $region = $candidate['region'] ?? $pageRegion->locate($candidate['node']);
+
+            // Text sitting straight in <body> with no distinguishing container has
+            // a real answer - it is the page body - so saying "Lokasi tidak
+            // dikenali" here would be less true, not more careful. The node is
+            // still pinned exactly, by the dom_path recorded below. A LINK keeps
+            // reporting 'unknown', because there the container is the fix.
+            if ($region['key'] === 'unknown') {
+                $region = RegionFindings::FALLBACK_REGION;
+            }
+
+            $key = $region['key'];
+
+            $groups[$key] ??= [
+                'region' => $region,
+                'keywords' => [],
+                'evidence' => [
+                    'path' => $pageRegion->path($candidate['node']),
+                    'html' => $pageRegion->snippet($candidate['node']),
+                ],
+            ];
+
+            $groups[$key]['keywords'] = array_merge($groups[$key]['keywords'], $hits);
+        }
+
+        return ['regions' => array_values($groups), 'unlocated' => array_values($pending)];
+    }
+
+    /**
+     * Every node that could carry a keyword, paired with the text it carries.
+     *
+     * Meta tags come first because SEO spam is stuffed into the description far
+     * more often than into visible copy, and a match there has no visible element
+     * to point at. Then elements, each with only its OWN text nodes: a parent's
+     * textContent contains every descendant's copy as well, so matching on that
+     * would pin every phrase to <html> and report the region as "the whole page".
+     *
+     * @return Generator<int, array{node: \DOMElement, text: string, region: array{key: string, label: string, selector: ?string}|null}>
+     */
+    protected function textCarryingElements(DOMDocument $dom): Generator
+    {
+        foreach ($dom->getElementsByTagName('meta') as $meta) {
+            $content = trim($meta->getAttribute('content'));
+
+            if ($content === '') {
+                continue;
+            }
+
+            $name = trim($meta->getAttribute('name')) ?: trim($meta->getAttribute('property'));
+
+            yield [
+                'node' => $meta,
+                'text' => $content,
+                // <meta> sits in <head>, which no landmark or class hint describes,
+                // so locate() would call it "Lokasi tidak dikenali". Naming it is
+                // both accurate and the more useful instruction: the fix is in the
+                // SEO plugin or the template head, not in the page copy.
+                'region' => [
+                    'key' => 'meta',
+                    'label' => 'Meta tag halaman',
+                    'selector' => $name !== '' ? "meta[{$name}]" : 'meta',
+                ],
+            ];
+        }
+
+        foreach ($dom->getElementsByTagName('*') as $element) {
+            if (in_array(Str::lower($element->nodeName), ['script', 'style', 'noscript'], true)) {
+                continue;
+            }
+
+            $own = '';
+
+            foreach ($element->childNodes as $child) {
+                if ($child instanceof DOMText) {
+                    $own .= ' '.$child->data;
+                }
+            }
+
+            $own = Str::squish($own);
+
+            if ($own !== '') {
+                yield ['node' => $element, 'text' => $own, 'region' => null];
+            }
+        }
+    }
+
+    /**
+     * Every <img> on the page, grouped by the region it sits in.
+     *
+     * Deliberately not filtered by looksLikeSupportedImage(): that allow-list exists
+     * because the Messages API rejects a whole request over one unreadable image,
+     * which has nothing to do with showing a banner to an operator. What narrows
+     * this down is the region - only images from a region that was actually flagged
+     * are ever attached to a finding.
+     *
+     * @return array<string, array<int, string>> region key => absolute image URLs
+     */
+    protected function extractLocatedImages(string $html, string $baseUrl): array
+    {
+        $dom = $this->parseHtml($html);
+
+        if (! $dom) {
+            return [];
+        }
+
+        $pageRegion = app(PageRegion::class);
+        $byRegion = [];
+
+        foreach ($dom->getElementsByTagName('img') as $img) {
+            $src = trim($img->getAttribute('src'));
+
+            // Inline data: URIs aren't fetchable by URL, and "#"/anchor-only sources
+            // resolve to the page itself.
+            if ($src === '' || str_starts_with($src, 'data:') || str_starts_with($src, '#')) {
+                continue;
+            }
+
+            $absolute = $this->resolveUrl($src, $baseUrl);
+
+            if (! $absolute) {
+                continue;
+            }
+
+            $key = $pageRegion->locate($img)['key'];
+            $byRegion[$key] ??= [];
+
+            if (count($byRegion[$key]) < RegionFindings::MAX_STORED_IMAGES && ! in_array($absolute, $byRegion[$key], true)) {
+                $byRegion[$key][] = $absolute;
+            }
+        }
+
+        return $byRegion;
     }
 
     /**
@@ -670,7 +913,7 @@ class JudolScanner
      * lets a sitewide injection be reported once instead of once per URL, because
      * the region signature is the part that stays the same across pages.
      *
-     * @return array<int, array{domain: string, text: string, region: array{key: string, label: string, selector: ?string}}>
+     * @return array<int, array{domain: string, text: string, region: array{key: string, label: string, selector: ?string}, node: \DOMElement}>
      */
     protected function extractLocatedOutboundLinks(string $html, string $baseUrl, ?string $host): array
     {
@@ -720,6 +963,10 @@ class JudolScanner
                 'domain' => $domain,
                 'text' => $this->anchorText($anchor),
                 'region' => $region,
+                // Kept so the caller can ask PageRegion where exactly this sits.
+                // Valid only while $dom is alive, which it is for this call's
+                // lifetime - nothing here outlives recordRegions().
+                'node' => $anchor,
             ];
         }
 
@@ -1272,6 +1519,55 @@ class JudolScanner
                         $this->clearStaleDetection($detection, $detection->url, 'kata kunci yang cocok sudah dihapus/dinonaktifkan');
                         $cleared++;
                     }
+                }
+            });
+
+        return $cleared;
+    }
+
+    /**
+     * The same cleanup for injection sites, which is where results are actually read
+     * now: a phrase struck off the keyword list has to stop being reported as
+     * evidence, or the page keeps pointing an operator at a footer over a word
+     * somebody already decided was a false positive.
+     *
+     * No threshold is applied here, unlike pruneStaleDetections(). The threshold
+     * asks "is this PAGE dirty enough to flag", and a finding aggregates a region
+     * across many pages - so the honest rule is narrower: drop the keywords that are
+     * gone, and drop the finding only when nothing at all is left to report.
+     *
+     * @return int number of findings removed outright
+     */
+    public function pruneStaleFindings(): int
+    {
+        $activeKeywords = collect(JudolKeyword::activeList())->map(fn (string $k) => Str::lower($k))->all();
+        $cleared = 0;
+
+        JudolFinding::whereNotNull('matched_keywords')
+            ->chunkById(50, function ($findings) use ($activeKeywords, &$cleared) {
+                foreach ($findings as $finding) {
+                    $current = $finding->matched_keywords ?? [];
+
+                    $surviving = array_values(array_filter(
+                        $current,
+                        fn (string $keyword) => in_array(Str::lower($keyword), $activeKeywords, true)
+                    ));
+
+                    if ($surviving === $current) {
+                        continue;
+                    }
+
+                    // A backlink finding stands on where the page points, not on any
+                    // phrase, so editing the keyword list must never delete one.
+                    if ($surviving === [] && blank($finding->linked_domains)) {
+                        Log::info("JudolScanner: menghapus titik penyisipan {$finding->region_label} - semua kata kunci yang mendasarinya sudah dihapus/dinonaktifkan.");
+                        $finding->delete();
+                        $cleared++;
+
+                        continue;
+                    }
+
+                    $finding->update(['matched_keywords' => $surviving]);
                 }
             });
 

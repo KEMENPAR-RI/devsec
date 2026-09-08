@@ -37,6 +37,9 @@ class JudolFinding extends Model
         'linked_domains',
         'anchor_texts',
         'matched_keywords',
+        'image_urls',
+        'evidence_html',
+        'dom_path',
         'affected_urls',
         'affected_count',
         'status',
@@ -50,6 +53,7 @@ class JudolFinding extends Model
             'linked_domains' => 'array',
             'anchor_texts' => 'array',
             'matched_keywords' => 'array',
+            'image_urls' => 'array',
             'affected_urls' => 'array',
             'affected_count' => 'integer',
             'first_seen_at' => 'datetime',
@@ -128,5 +132,52 @@ class JudolFinding extends Model
             'keyword_injection' => 'Penyisipan teks promosi',
             default => 'Konten judi',
         };
+    }
+
+    /**
+     * What was found, reduced to a value two findings can be compared on.
+     *
+     * One edit by an attacker routinely lands in several regions at once - the same
+     * link block pasted into the footer AND the sidebar. Those are separate rows
+     * here, correctly, because each is a separate place to clean. But they are one
+     * FINDING, and listing them as two repeats the whole evidence twice over. This
+     * is what the UI groups on: identical evidence, one entry, the regions
+     * underneath it as the list of places to go.
+     *
+     * Sorted before hashing so the order the crawler happened to see the domains in
+     * cannot split a group.
+     */
+    public function evidenceSignature(): string
+    {
+        $domains = $this->linked_domains ?? [];
+        $keywords = $this->matched_keywords ?? [];
+
+        sort($domains);
+        sort($keywords);
+
+        return sha1(implode('|', [$this->attack_type, implode(',', $domains), implode(',', $keywords)]));
+    }
+
+    /**
+     * The strings worth picking out of evidence_html when it is shown.
+     *
+     * A footer's markup is mostly the site's own, and the injected part is a few
+     * characters in the middle of it - without this the operator reads 2000
+     * characters looking for the one that matters.
+     *
+     * @return array<int, string>
+     */
+    public function highlightTerms(): array
+    {
+        return collect([$this->linked_domains, $this->matched_keywords, $this->anchor_texts])
+            ->flatten()
+            ->filter(fn ($term) => is_string($term) && trim($term) !== '')
+            ->map(fn (string $term) => trim($term))
+            ->unique()
+            // Longest first, so "situs slot gacor" is marked whole rather than being
+            // broken up by an earlier pass over "slot gacor".
+            ->sortByDesc(fn (string $term) => mb_strlen($term))
+            ->values()
+            ->all();
     }
 }

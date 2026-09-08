@@ -2,33 +2,26 @@
 
 namespace App\Livewire\JudolDetections;
 
+use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\JudolFinding;
 use App\Models\JudolKeyword;
 use App\Models\Setting;
-use App\Models\Website;
 use App\Services\AppSettings;
 use App\Services\Monitoring\JudolScanner;
-use App\Support\DailyGroups;
 use App\Support\QueueHealth;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
-use Livewire\WithPagination;
 use Throwable;
 
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
-    use WithPagination;
-
     #[Url]
     public string $search = '';
-
-    /** '' | 'confirmed' | 'keyword' - lets the list separate AI-vetted findings. */
-    #[Url]
-    public string $verification = '';
 
     public string $newKeyword = '';
 
@@ -51,7 +44,7 @@ class Index extends Component
 
     public int $threshold = 1;
 
-    /** @var array<int, string> per-detection recheck() error, keyed by detection id */
+    /** @var array<string, string> per-finding recheckUrl() error, keyed by finding uuid */
     public array $recheckErrors = [];
 
     /** Which finding's affected-URL list is expanded; null when all are collapsed. */
@@ -64,34 +57,10 @@ class Index extends Component
         $this->threshold = app(AppSettings::class)->judolThreshold();
     }
 
-    public function updatingSearch(): void
-    {
-        $this->resetPage();
-    }
-
-    public function updatingVerification(): void
-    {
-        $this->resetPage();
-    }
-
-    public function markReviewed(JudolDetection $detection): void
-    {
-        $this->authorize('deteksi-judol.update');
-
-        $detection->update(['status' => 'reviewed']);
-    }
-
-    public function markIgnored(JudolDetection $detection): void
-    {
-        $this->authorize('deteksi-judol.update');
-
-        $detection->update(['status' => 'ignored']);
-    }
-
     /**
-     * Triage for an injection site. Separate from the per-detection actions above
-     * because the unit of work is different: acting on a finding means the shared
-     * markup was cleaned, which settles every page that renders it at once.
+     * Triage for an injection site - the only unit this page acts on now. Marking
+     * one settles every page that renders the same shared markup at once, which is
+     * the whole reason findings exist: cleaning the footer cleans all forty pages.
      */
     public function markFindingReviewed(JudolFinding $finding): void
     {
@@ -107,24 +76,43 @@ class Index extends Component
         $finding->update(['status' => 'ignored']);
     }
 
+    public function deleteFinding(JudolFinding $finding): void
+    {
+        $this->authorize('deteksi-judol.delete');
+
+        $finding->delete();
+
+        session()->flash('status', 'Titik penyisipan dihapus.');
+    }
+
     public function toggleFinding(string $uuid): void
     {
         $this->expandedFinding = $this->expandedFinding === $uuid ? null : $uuid;
     }
 
     /**
-     * Force-re-evaluates one detection's URL against the current keyword list -
-     * e.g. after removing a too-generic keyword that caused a false positive. If
-     * the page no longer matches, JudolScanner removes the stale detection itself
-     * (see clearStaleDetection()); this just surfaces the outcome to the user.
+     * Force-re-evaluates one affected URL against the current keyword list - e.g.
+     * after removing a too-generic keyword that caused a false positive. If the
+     * page no longer matches, JudolScanner removes the stale detection itself (see
+     * clearStaleDetection()); this just surfaces the outcome.
+     *
+     * Addressed by INDEX into the finding's stored affected_urls rather than by a
+     * URL from the request, so this button can only ever re-fetch an address the
+     * crawler already recorded - it must not become a way to make the server fetch
+     * an arbitrary URL.
      */
-    public function recheck(JudolDetection $detection): void
+    public function recheckUrl(JudolFinding $finding, int $index): void
     {
         $this->authorize('deteksi-judol.update');
 
-        unset($this->recheckErrors[$detection->id]);
-        $website = $detection->website;
-        $url = $detection->url;
+        unset($this->recheckErrors[$finding->uuid]);
+
+        $url = ($finding->affected_urls ?? [])[$index] ?? null;
+        $website = $finding->website;
+
+        if (! $url || ! $website) {
+            return;
+        }
 
         try {
             $matched = app(JudolScanner::class)->scanUrlNow($website, $url);
@@ -133,7 +121,7 @@ class Index extends Component
                 ? "{$url} masih cocok kata kunci: ".implode(', ', $matched).'.'
                 : "{$url} sudah bersih sekarang - deteksi lama dihapus.");
         } catch (Throwable $e) {
-            $this->recheckErrors[$detection->id] = $e->getMessage();
+            $this->recheckErrors[$finding->uuid] = $e->getMessage();
         }
     }
 
@@ -246,10 +234,7 @@ class Index extends Component
         // Deactivating can only make matches disappear, never add new ones - prune
         // right away so stale detections don't linger. Reactivating needs no pruning.
         if (! $keyword->is_active) {
-            $cleared = app(JudolScanner::class)->pruneStaleDetections();
-            session()->flash('keyword-status', $cleared > 0
-                ? "Kata kunci dinonaktifkan. {$cleared} deteksi yang sudah tidak valid ikut dibersihkan."
-                : 'Kata kunci dinonaktifkan.');
+            session()->flash('keyword-status', $this->pruneStale('Kata kunci dinonaktifkan.'));
         }
     }
 
@@ -259,10 +244,24 @@ class Index extends Component
 
         $keyword->delete();
 
-        $cleared = app(JudolScanner::class)->pruneStaleDetections();
-        session()->flash('keyword-status', $cleared > 0
-            ? "Kata kunci dihapus. {$cleared} deteksi yang sudah tidak valid ikut dibersihkan."
-            : 'Kata kunci dihapus.');
+        session()->flash('keyword-status', $this->pruneStale('Kata kunci dihapus.'));
+    }
+
+    /**
+     * Clears out what the removed keyword was holding up, on both sides.
+     *
+     * Findings are pruned as well as detections because findings are what this page
+     * shows: without it, striking a false-positive phrase off the list would leave
+     * the injection site that rested on it sitting at the top of the results.
+     */
+    protected function pruneStale(string $message): string
+    {
+        $scanner = app(JudolScanner::class);
+        $cleared = $scanner->pruneStaleDetections() + $scanner->pruneStaleFindings();
+
+        return $cleared > 0
+            ? "{$message} {$cleared} temuan yang sudah tidak valid ikut dibersihkan."
+            : $message;
     }
 
     public function saveThreshold(): void
@@ -276,70 +275,122 @@ class Index extends Component
     }
 
     /**
-     * Wipes every judol detection - the keyword list (App\Models\JudolKeyword) is
-     * untouched. Bound to both "Reset" and "Hapus Data" in the view.
+     * Wipes every judol result - detections AND injection sites. The keyword list
+     * (App\Models\JudolKeyword) is untouched. Bound to "Hapus Data" in the view.
      */
-    public function delete(JudolDetection $detection): void
-    {
-        $this->authorize('deteksi-judol.delete');
-
-        // Resolve the incident it raised too, otherwise the Insiden page keeps an
-        // open entry pointing at a finding that no longer exists.
-        $detection->incident?->resolve();
-        $detection->delete();
-
-        session()->flash('status', 'Deteksi judol dihapus.');
-    }
-
     public function deleteAll(): void
     {
         $this->authorize('deteksi-judol.delete');
 
-        JudolDetection::query()->delete();
+        // Resolved before the rows go, not after: an open judol incident whose
+        // detection has been deleted points at nothing, and the Insiden page would
+        // keep showing it forever with no way left to close it.
+        Incident::where('type', 'judol')->where('status', 'open')->each(fn (Incident $incident) => $incident->resolve());
 
-        $this->resetPage();
+        JudolDetection::query()->delete();
+        JudolFinding::query()->delete();
+
         session()->flash('status', 'Semua data deteksi judol berhasil dihapus. Kata kunci tetap tersimpan.');
     }
 
     /**
-     * The filtered set, before it gets split into (site, day) groups.
+     * Injection sites, filtered, with the ignored ones dropped - they are a
+     * decision already made.
      */
-    protected function baseQuery()
+    protected function findings()
     {
-        return JudolDetection::query()
-            ->when($this->search, fn ($q) => $q->where(fn ($q) => $q
-                ->where('url', 'like', "%{$this->search}%")
-                ->orWhereHas('website', fn ($q) => $q->where('name', 'like', "%{$this->search}%"))))
-            // "keyword" covers everything the AI did not positively confirm: never
-            // reviewed, unavailable, or reviewed and disputed.
-            ->when($this->verification === 'confirmed', fn ($q) => $q->where('ai_verdict', 'confirmed'))
-            ->when($this->verification === 'keyword', fn ($q) => $q->where(fn ($q) => $q
-                ->whereNull('ai_verdict')
-                ->orWhere('ai_verdict', '!=', 'confirmed')));
+        $search = trim($this->search);
+
+        return JudolFinding::with('website')
+            ->where('status', '!=', 'ignored')
+            ->when($search !== '', fn ($q) => $q->where(fn ($q) => $q
+                ->where('region_label', 'like', "%{$search}%")
+                ->orWhere('region_selector', 'like', "%{$search}%")
+                // The JSON columns are searched as raw text on purpose: the operator
+                // is looking for a domain or a phrase, and "does this blob contain
+                // it" is exactly that question. A JSON path query would buy
+                // precision nobody is asking for here.
+                ->orWhere('linked_domains', 'like', "%{$search}%")
+                ->orWhere('matched_keywords', 'like', "%{$search}%")
+                ->orWhere('affected_urls', 'like', "%{$search}%")
+                ->orWhereHas('website', fn ($q) => $q->where('name', 'like', "%{$search}%"))))
+            ->orderByDesc('affected_count')
+            ->orderByDesc('last_seen_at')
+            ->get();
+    }
+
+    /**
+     * Findings collapsed into one entry per distinct piece of evidence.
+     *
+     * One edit by an attacker routinely lands in several regions at once - the same
+     * link block pasted into the footer AND the sidebar. Those stay separate rows
+     * in the database, correctly, because each is a separate place to go and clean.
+     * But they are ONE finding, and listing them twice repeats the whole body of
+     * evidence twice. So the evidence is stated once, and the regions hang under it
+     * as the list of places it was found.
+     *
+     * @param  Collection<int, JudolFinding>  $findings
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function groupByEvidence($findings)
+    {
+        return $findings
+            ->groupBy(fn (JudolFinding $finding) => $finding->website_id.'|'.$finding->evidenceSignature())
+            ->map(function ($group) {
+                /** @var JudolFinding $first */
+                $first = $group->first();
+
+                // Unioned, not summed: the same page carries both the footer and the
+                // sidebar, so adding the counts would report it twice. Each URL keeps
+                // the finding and position it came from, because "Verifikasi Ulang"
+                // addresses a page by (finding, index) rather than by URL.
+                $urls = [];
+
+                // Keyed by the image URL for the same reason: the same banner sits
+                // in the footer and the sidebar, and showing it twice is the
+                // duplication this grouping exists to remove. The (finding, index)
+                // pair it keeps is the one the proxy route addresses it by, so it
+                // has to be the position in THAT finding's own list.
+                $images = [];
+
+                foreach ($group as $finding) {
+                    foreach ($finding->affected_urls ?? [] as $index => $url) {
+                        $urls[$url] ??= ['url' => $url, 'finding' => $finding, 'index' => $index];
+                    }
+
+                    foreach ($finding->image_urls ?? [] as $index => $image) {
+                        $images[$image] ??= ['source' => $image, 'finding' => $finding, 'index' => $index];
+                    }
+                }
+
+                $urls = array_values($urls);
+
+                return [
+                    'key' => $first->website_id.'|'.$first->evidenceSignature(),
+                    'website' => $first->website,
+                    'attack_label' => $first->attackLabel(),
+                    'domains' => $group->flatMap(fn (JudolFinding $f) => $f->linked_domains ?? [])->unique()->values()->all(),
+                    'keywords' => $group->flatMap(fn (JudolFinding $f) => $f->matched_keywords ?? [])->unique()->values()->all(),
+                    'anchors' => $group->flatMap(fn (JudolFinding $f) => $f->anchor_texts ?? [])->filter()->unique()->values()->all(),
+                    'images' => array_slice(array_values($images), 0, 8),
+                    'findings' => $group->values(),
+                    'urls' => $urls,
+                    // The stored URL lists are capped per finding, so the real total
+                    // can be higher than what was unioned above.
+                    'url_count' => max(count($urls), (int) $group->max('affected_count')),
+                    'status' => $group->contains(fn (JudolFinding $f) => $f->status === 'new') ? 'new' : 'reviewed',
+                    'first_seen_at' => $group->min('first_seen_at'),
+                    'last_seen_at' => $group->max('last_seen_at'),
+                ];
+            })
+            ->sortByDesc('url_count')
+            ->values();
     }
 
     public function render()
     {
-        ['groups' => $groups, 'rows' => $rows] = DailyGroups::forPage(
-            query: fn () => $this->baseQuery(),
-            dateColumn: 'detected_at',
-            rowKey: fn (JudolDetection $detection) => DailyGroups::key($detection->website_id, $detection->detected_at->toDateString()),
-        );
-
         return view('livewire.judol-detections.index', [
-            'groups' => $groups,
-            'detectionsByGroup' => $rows,
-            // Injection sites, shown above the per-page list rather than mixed into
-            // it: one of these stands for every page carrying the same shared
-            // markup, so filing it among those pages would re-create exactly the
-            // repetition it exists to collapse. Ignored ones drop out - they are a
-            // decision already made.
-            'findings' => JudolFinding::with('website')
-                ->where('status', '!=', 'ignored')
-                ->orderByDesc('affected_count')
-                ->orderByDesc('last_seen_at')
-                ->get(),
-            'websites' => Website::whereIn('id', $groups->pluck('site_key'))->get()->keyBy('id'),
+            'groups' => $this->groupByEvidence($this->findings()),
             'keywords' => JudolKeyword::orderBy('keyword')->get(),
             // The automatic crawl runs as a queued job, so with no worker on the
             // server it never happens - while manual checks, which run inside the

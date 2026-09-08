@@ -66,6 +66,13 @@ class PageRegion
     protected const MAX_DEPTH = 12;
 
     /**
+     * Characters of container markup kept as evidence. Enough to show the injected
+     * block in context; a themed footer's full markup runs to tens of kilobytes and
+     * nobody reads past the first screen of it.
+     */
+    protected const MAX_SNIPPET = 2000;
+
+    /**
      * A stable key for the region containing this element, plus a label an
      * operator can act on.
      *
@@ -73,29 +80,40 @@ class PageRegion
      */
     public function locate(DOMElement $element): array
     {
-        $selector = null;
-        $label = null;
-        $key = null;
+        $container = $this->resolveContainer($element);
 
-        $node = $element->parentNode;
+        if (! $container) {
+            // Nothing identifiable. Reported honestly rather than guessed at: a
+            // wrong region label would send someone editing the wrong template.
+            return ['key' => 'unknown', 'label' => 'Lokasi tidak dikenali', 'selector' => null];
+        }
+
+        return [
+            'key' => $container['key'],
+            'label' => $container['label'],
+            'selector' => $this->describe($container['node']),
+        ];
+    }
+
+    /**
+     * The exact route down to this element, e.g.
+     * "body > footer.site-footer > ul > li:nth-child(4) > a".
+     *
+     * locate() names the region, which is the unit of REPAIR - "it is in the
+     * footer, so fix the template". This is the unit of SEARCH: a themed footer runs
+     * to hundreds of lines, and this says which one of them. Pasteable into
+     * devtools and specific enough to grep the theme file for.
+     */
+    public function path(DOMElement $element): string
+    {
+        $segments = [];
+        $node = $element;
         $depth = 0;
 
-        while ($node instanceof DOMElement && $depth < self::MAX_DEPTH) {
-            $tag = Str::lower($node->nodeName);
+        while ($node instanceof DOMElement && $depth <= self::MAX_DEPTH) {
+            $segments[] = $this->segment($node);
 
-            if (isset(self::LANDMARKS[$tag])) {
-                $label = self::LANDMARKS[$tag];
-                $key = $tag;
-                $selector = $this->describe($node);
-
-                break;
-            }
-
-            if ($hint = $this->hintFrom($node)) {
-                $label = $hint['label'];
-                $key = $hint['key'];
-                $selector = $this->describe($node);
-
+            if (Str::lower($node->nodeName) === 'body') {
                 break;
             }
 
@@ -103,13 +121,91 @@ class PageRegion
             $depth++;
         }
 
-        if ($key === null) {
-            // Nothing identifiable. Reported honestly rather than guessed at: a
-            // wrong region label would send someone editing the wrong template.
-            return ['key' => 'unknown', 'label' => 'Lokasi tidak dikenali', 'selector' => null];
+        return implode(' > ', array_reverse($segments));
+    }
+
+    /**
+     * The container's own markup, capped - what was injected, in context.
+     *
+     * Deliberately the container rather than the element alone: a bare
+     * <a href="gacor.example">Slot</a> says nothing about which of the footer's six
+     * link lists it was appended to. Callers render this ESCAPED - it is markup
+     * lifted off a compromised site.
+     */
+    public function snippet(DOMElement $element): ?string
+    {
+        $node = $this->resolveContainer($element)['node'] ?? $element;
+
+        $html = $node->ownerDocument?->saveHTML($node);
+
+        if (! is_string($html) || trim($html) === '') {
+            return null;
         }
 
-        return ['key' => $key, 'label' => $label, 'selector' => $selector];
+        return Str::limit(Str::squish($html), self::MAX_SNIPPET);
+    }
+
+    /**
+     * The nearest ancestor that names a region, or null when nothing on the way up
+     * is identifiable.
+     *
+     * @return array{node: DOMElement, key: string, label: string}|null
+     */
+    protected function resolveContainer(DOMElement $element): ?array
+    {
+        $node = $element->parentNode;
+        $depth = 0;
+
+        while ($node instanceof DOMElement && $depth < self::MAX_DEPTH) {
+            $tag = Str::lower($node->nodeName);
+
+            if (isset(self::LANDMARKS[$tag])) {
+                return ['node' => $node, 'key' => $tag, 'label' => self::LANDMARKS[$tag]];
+            }
+
+            if ($hint = $this->hintFrom($node)) {
+                return ['node' => $node, 'key' => $hint['key'], 'label' => $hint['label']];
+            }
+
+            $node = $node->parentNode;
+            $depth++;
+        }
+
+        return null;
+    }
+
+    /**
+     * One step of a DOM path. :nth-child is appended only when the tag alone is
+     * ambiguous among its siblings - "ul > li:nth-child(4)" locates something,
+     * while "footer.site-footer:nth-child(1)" only adds noise.
+     */
+    protected function segment(DOMElement $node): string
+    {
+        $base = $this->describe($node);
+
+        if (! $node->parentNode instanceof DOMElement) {
+            return $base;
+        }
+
+        $position = 0;
+        $index = 0;
+        $ambiguous = false;
+
+        foreach ($node->parentNode->childNodes as $sibling) {
+            if (! $sibling instanceof DOMElement) {
+                continue;
+            }
+
+            $index++;
+
+            if ($sibling === $node) {
+                $position = $index;
+            } elseif (strcasecmp($sibling->nodeName, $node->nodeName) === 0) {
+                $ambiguous = true;
+            }
+        }
+
+        return $ambiguous && $position > 0 ? $base.':nth-child('.$position.')' : $base;
     }
 
     /**

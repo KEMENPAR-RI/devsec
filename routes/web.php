@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\JudolEvidenceController;
 use App\Http\Controllers\PwaController;
 use App\Livewire\Auth\ForgotPassword;
 use App\Livewire\Auth\Login;
@@ -71,7 +72,16 @@ Route::middleware('auth')->group(function () {
     });
 
     Route::get('/insiden', IncidentsIndex::class)->middleware('can:insiden.view')->name('insiden');
-    Route::get('/deteksi-judol', JudolDetectionsIndex::class)->middleware('can:deteksi-judol.view')->name('deteksi-judol');
+    Route::middleware('can:deteksi-judol.view')->group(function () {
+        Route::get('/deteksi-judol', JudolDetectionsIndex::class)->name('deteksi-judol');
+
+        // Promo banners found at an injection site, proxied rather than hotlinked -
+        // the page's CSP is img-src 'self', so a remote <img> never renders. See
+        // JudolEvidenceController for why the image is addressed by index.
+        Route::get('/deteksi-judol/{finding}/gambar/{index}', [JudolEvidenceController::class, 'image'])
+            ->whereNumber('index')
+            ->name('deteksi-judol.gambar');
+    });
     Route::get('/notifikasi', NotificationsIndex::class)->middleware('can:notifikasi.view')->name('notifikasi');
 
     Route::get('/roles', RolesIndex::class)->middleware('can:roles.view')->name('roles');
