@@ -19,12 +19,6 @@
 Description=Security queue worker
 After=network.target mysql.service
 
-# Give up after 10 failures inside 5 minutes instead of restarting forever. A
-# worker that dies this fast is failing on something a restart cannot fix (a
-# misconfigured .env, an unreachable database), and Restart=always alone would
-# retry that silently until someone happened to read the journal. Once tripped,
-# the unit stays down until `systemctl reset-failed security-worker` - which is
-# the point: the failure becomes visible in `systemctl status`.
 StartLimitIntervalSec=300
 StartLimitBurst=10
 
@@ -32,20 +26,19 @@ StartLimitBurst=10
 Type=simple
 User=www
 Group=www
+
 WorkingDirectory=/www/wwwroot/deadsec.apiprs.my.id
+
 Restart=always
 RestartSec=5
 
-# --max-time recycles the process hourly so a long-lived worker cannot accumulate
-# leaked memory, and --tries=1 keeps a failed crawl from being retried into a
-# storm; a scan that fails is simply picked up again on the next schedule tick.
-#
-# --timeout must stay above the longest job's own $timeout (ScanWebsiteForJudolJob
-# is 300s) and below DB_QUEUE_RETRY_AFTER in .env (320s), or a slow crawl gets
-# released and run a second time while the first is still going.
-ExecStart=cd /www/wwwroot/deadsec.apiprs.my.id && php artisan queue:work --queue=default --sleep=3 --tries=1 --timeout=300 --max-time=3600
+ExecStart=/usr/bin/php artisan queue:work \
+    --queue=default \
+    --sleep=3 \
+    --tries=1 \
+    --timeout=300 \
+    --max-time=3600
 
-# Let a running job finish instead of killing it mid-crawl on restart.
 KillSignal=SIGTERM
 TimeoutStopSec=330
 
