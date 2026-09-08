@@ -6,7 +6,12 @@
         </div>
     @endif
 
-    @php $isOffline = $website->isOffline(); @endphp
+    @php
+        $isOffline = $website->isOffline();
+        // Computed once and reused by the dot and the badge below, so they cannot
+        // drift apart - each call re-queries incidents.
+        $statusKey = $website->statusKey($isOffline, $website->hasTrafficSpike(), $website->wasAttacked());
+    @endphp
 
     {{-- Automatic probing stops after a full day of failures (Website::isPausedForOffline()).
     Said out loud here, because a dashboard that has quietly stopped checking looks
@@ -27,7 +32,7 @@
         dragged sideways on a phone. --}}
         <div class="flex min-w-0 items-start gap-3">
             
-            <x-status-dot :status="$website->statusKey($isOffline, $website->spikeSeverity(), $website->wasAttacked())" class="mt-1.5" />
+            <x-status-dot :status="$statusKey" class="mt-1.5" />
 
             <div class="min-w-0">
                 <div class="flex items-center gap-2">
@@ -36,12 +41,23 @@
                 </div>
                 <div class="flex min-w-0 items-center gap-2">
                     <h1 class="min-w-0 truncate text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">{{ $website->name }}</h1>
-                    @if ($website->is_internal_only)
+                    {{-- An up internal-only site would otherwise never say so anywhere:
+                    the status badge below only reads 'internal' while it is down. --}}
+                    @if ($website->is_internal_only && $statusKey !== 'internal')
                         <span title="Kemungkinan hanya bisa diakses dari jaringan internal/instansi - status down dari sini ditampilkan kuning, bukan merah." class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
                             <x-phosphor-network class="h-3 w-3" />
                             Jaringan Internal
                         </span>
                     @endif
+                </div>
+
+                {{-- The status spelled out under the name. The dot beside the heading
+                gives the colour at a glance; this says which status that colour is,
+                and what it means - the two reds in particular are only told apart
+                by their names. --}}
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <x-status-badge :status="$statusKey" />
+                    <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ \App\Models\Website::statusConfig($statusKey)['description'] }}</span>
                 </div>
                 {{-- Truncated, not wrapped: the full URL is one tap away on the link
                 itself, and a wrapped three-line URL pushes the whole header around. --}}

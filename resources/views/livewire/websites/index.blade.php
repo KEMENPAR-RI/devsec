@@ -118,25 +118,58 @@
                                 class="h-4 w-4 shrink-0 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700"
                             >
                         @endcan
-                        
-                        <x-status-dot :status="$website->statusKey(
+                        @php
+                            $statusKey = $website->statusKey(
                                 isset($offlineIds[$website->id]),
-                                $spikeSeverities[$website->id] ?? null,
+                                isset($spikingIds[$website->id]),
                                 isset($attackedIds[$website->id]),
-                            )" />
+                            );
+                        @endphp
+
+                        <x-status-dot :status="$statusKey" />
 
                         <div class="min-w-0 flex-1">
                             <a href="{{ route('situs.show', $website) }}" wire:navigate class="truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
                                 {{ $website->name }}
                             </a>
                             <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">{{ $website->url }}</p>
+
+                            {{-- On a phone the row stacks and the columns to the right
+                            are gone, so the status travels with the name instead of
+                            disappearing. Left-aligned here because it sits under the
+                            URL, not in a column of its own. --}}
+                            <div class="mt-2 flex flex-wrap items-center gap-2 sm:hidden">
+                                <x-status-badge :status="$statusKey" />
+                            </div>
+                            {{-- Uptime rejoins the row at md, so between sm and md it
+                            rides along here rather than being missing from both. --}}
+                            <p class="mt-1 flex flex-wrap items-center gap-2 text-xs md:hidden">
+                                <span class="font-mono text-zinc-400 dark:text-zinc-500">{{ $website->uptimePercentage() }}% uptime</span>
+                                @unless ($website->is_active)
+                                    <span class="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
+                                @endunless
+                            </p>
                         </div>
 
-                        <div class="flex shrink-0 items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
-                            <span class="font-mono">{{ $website->uptimePercentage() }}% uptime</span>
-                            @unless ($website->is_active)
-                                <span class="rounded-full bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
-                            @endunless
+                        {{-- Fixed widths, not intrinsic ones: status names and uptime
+                        figures differ in length from row to row, and left to size
+                        themselves each row lands its columns somewhere slightly
+                        different. Centred within those widths so the column reads as a
+                        column. Hidden below sm, where the row stacks and there is
+                        nothing to line up. --}}
+                        <div class="hidden shrink-0 items-center gap-3 text-xs text-zinc-500 sm:flex dark:text-zinc-400">
+                            <span class="flex w-48 justify-center">
+                                <x-status-badge :status="$statusKey" />
+                            </span>
+                            {{-- Uptime and the inactive pill wait for md: between sm and
+                            md the row still has to fit a name, a status badge and four
+                            action buttons, and the status is the column worth keeping. --}}
+                            <span class="hidden w-28 text-center font-mono md:block">{{ $website->uptimePercentage() }}% uptime</span>
+                            <span class="hidden w-20 text-center md:block">
+                                @unless ($website->is_active)
+                                    <span class="rounded-full bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
+                                @endunless
+                            </span>
                         </div>
 
                         <div class="flex shrink-0 items-center gap-1">

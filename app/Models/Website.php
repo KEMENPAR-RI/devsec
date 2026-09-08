@@ -256,34 +256,36 @@ class Website extends Model
     }
 
     /**
-     * A response-time spike this site is still carrying, as a severity: 'severe'
-     * once the spike incident's own numbers show the site running many times its
-     * normal speed, 'moderate' for a smaller one, null when there is no open spike.
+     * Whether this site is currently carrying an unresolved response-time spike -
+     * running slower than its own baseline while still serving.
      *
      * Read from the incident WebsiteChecker already opens rather than re-measured
      * here, so the dot and the incident list can never disagree about whether a
-     * site is currently degraded.
+     * site is degraded.
+     *
+     * Deliberately one state, not a scale. How far over baseline a site is says
+     * very little on its own - 3x a 50ms baseline and 3x a 2-second one are not
+     * remotely the same situation - and splitting it invited a reading of severity
+     * the measurement cannot support. Either traffic is elevated or it is not; how
+     * bad it is belongs in the incident's own numbers, where the figures are.
      */
-    public function spikeSeverity(): ?string
+    public function hasTrafficSpike(): bool
     {
-        $spike = $this->incidents()
+        return $this->incidents()
             ->where('type', 'attack')
             ->open()
             ->whereJsonContains('meta->reason', 'response_time_spike')
-            ->latest('detected_at')
-            ->first();
-
-        return $spike ? self::severityOfSpike($spike) : null;
+            ->exists();
     }
 
     /**
-     * Bulk version of spikeSeverity() for list views - one query for the whole
+     * Bulk version of hasTrafficSpike() for list views - one query for the whole
      * list rather than one per row, matching offlineIds().
      *
      * @param  iterable<Website>  $websites
-     * @return array<int, string> website id => 'moderate'|'severe'
+     * @return array<int, true> website IDs carrying an open spike
      */
-    public static function spikeSeverities(iterable $websites): array
+    public static function spikingIds(iterable $websites): array
     {
         $rows = $websites instanceof AbstractPaginator ? $websites->getCollection() : collect($websites);
         $ids = $rows->pluck('id');
@@ -296,31 +298,85 @@ class Website extends Model
             ->open()
             ->whereJsonContains('meta->reason', 'response_time_spike')
             ->whereIn('website_id', $ids)
-            // Oldest first so the newest incident per site overwrites the rest.
-            ->oldest('detected_at')
-            ->get(['website_id', 'meta'])
-            ->mapWithKeys(fn (Incident $incident) => [$incident->website_id => self::severityOfSpike($incident)])
+            ->pluck('website_id')
+            ->flip()
+            ->map(fn () => true)
             ->all();
     }
 
     /**
-     * How bad one response-time-spike incident is, from the measurements it stored.
+     * Every display status: its short name, the dot colour, the text colour a badge
+     * uses, and the sentence explaining it.
      *
-     * SEVERE_SPIKE_FACTOR is deliberately well above the 3x that opens the incident
-     * in the first place: 3x a fast baseline is a busy morning, while an order of
-     * magnitude is the site struggling to answer at all.
+     * One table rather than a copy per view. The dot, the list badge and the detail
+     * header all read this, so adding a status or renaming one cannot leave a view
+     * behind showing a colour with no name (or a name in the wrong colour).
+     *
+     * @var array<string, array{label: string, dot: string, text: string, description: string}>
      */
-    protected static function severityOfSpike(Incident $incident): string
+    public const STATUSES = [
+        'up' => [
+            'label' => 'Online',
+            'dot' => 'bg-emerald-500',
+            'text' => 'text-emerald-700 dark:text-emerald-400',
+            'badge' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/30',
+            'description' => 'Situs merespons normal.',
+        ],
+        'spike' => [
+            'label' => 'Trafik Tinggi',
+            'dot' => 'bg-yellow-400',
+            'text' => 'text-yellow-700 dark:text-yellow-500',
+            'badge' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20 dark:bg-yellow-500/10 dark:text-yellow-500 dark:ring-yellow-400/30',
+            'description' => 'Masih online, tapi merespons lebih lambat dari biasanya.',
+        ],
+        'attack' => [
+            'label' => 'Down - Dugaan Serangan',
+            'dot' => 'bg-red-500',
+            'text' => 'text-red-700 dark:text-red-400',
+            'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
+            'description' => 'Melambat lalu berhenti merespons - dugaan kelebihan beban atau serangan DDoS. Perlu konfirmasi access log server.',
+        ],
+        'down' => [
+            'label' => 'Down',
+            'dot' => 'bg-red-500',
+            'text' => 'text-red-700 dark:text-red-400',
+            'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
+            'description' => 'Berhenti merespons tanpa didahului lonjakan.',
+        ],
+        'offline' => [
+            'label' => 'Offline',
+            'dot' => 'bg-zinc-400 dark:bg-zinc-500',
+            'text' => 'text-zinc-500 dark:text-zinc-400',
+            'badge' => 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
+            'description' => 'Sudah down lebih dari 24 jam. Pengecekan otomatis dihentikan sampai ditekan "Cek Sekarang".',
+        ],
+        'internal' => [
+            'label' => 'Jaringan Internal',
+            'dot' => 'bg-amber-500',
+            'text' => 'text-amber-700 dark:text-amber-400',
+            'badge' => 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/30',
+            'description' => 'Kemungkinan hanya bisa diakses dari jaringan internal/instansi.',
+        ],
+        'unknown' => [
+            'label' => 'Belum Diketahui',
+            'dot' => 'bg-zinc-300 dark:bg-zinc-600',
+            'text' => 'text-zinc-500 dark:text-zinc-400',
+            'badge' => 'bg-zinc-100 text-zinc-500 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
+            'description' => 'Belum pernah dicek.',
+        ],
+    ];
+
+    /**
+     * The display config for a status key, falling back to 'unknown' so a status
+     * this table has not caught up with renders as "belum diketahui" rather than
+     * throwing on a live dashboard.
+     *
+     * @return array{label: string, dot: string, text: string, description: string}
+     */
+    public static function statusConfig(string $status): array
     {
-        $meta = $incident->meta ?? [];
-        $baseline = (float) ($meta['baseline_ms'] ?? 0);
-        $actual = (float) ($meta['response_time_ms'] ?? 0);
-
-        return $baseline > 0 && $actual >= $baseline * self::SEVERE_SPIKE_FACTOR ? 'severe' : 'moderate';
+        return self::STATUSES[$status] ?? self::STATUSES['unknown'];
     }
-
-    /** Times over baseline at which a spike stops being "busy" and reads as severe. */
-    protected const SEVERE_SPIKE_FACTOR = 10.0;
 
     /**
      * The status this site should be DISPLAYED as - distinct from last_status
@@ -344,16 +400,15 @@ class Website extends Model
      *
      * @param  bool  $isOffline  pass Website::offlineIds() membership for list views
      *                           (avoids an isOffline() query per row) or $this->isOffline() for a single record
-     * @param  string|null  $spike  'moderate'|'severe' from Website::spikeSeverities()
-     *                              (or spikeSeverity() for a single record)
+     * @param  bool  $spike  pass Website::spikingIds() membership for list views
+     *                       (or hasTrafficSpike() for a single record)
      * @param  bool  $wasAttacked  whether the open downtime incident was diagnosed as
      *                             overload - see App\Services\Monitoring\OutageCause
      */
-    public function statusKey(bool $isOffline = false, ?string $spike = null, bool $wasAttacked = false): string
+    public function statusKey(bool $isOffline = false, bool $spike = false, bool $wasAttacked = false): string
     {
         return match (true) {
-            $this->last_status === 'up' && $spike === 'severe' => 'spike_severe',
-            $this->last_status === 'up' && $spike === 'moderate' => 'spike_moderate',
+            $this->last_status === 'up' && $spike => 'spike',
             $this->last_status === 'up' => 'up',
             $this->last_status === 'down' && $this->is_internal_only => 'internal',
             $this->last_status === 'down' && $isOffline => 'offline',

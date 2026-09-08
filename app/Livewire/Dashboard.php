@@ -126,7 +126,7 @@ class Dashboard extends Component
             // One query each for the whole list instead of one per row - see Website::offlineIds().
             'offlineIds' => Website::offlineIds($websiteStatuses),
             'attackedIds' => Website::attackedIds($websiteStatuses),
-            'spikeSeverities' => Website::spikeSeverities($websiteStatuses),
+            'spikingIds' => Website::spikingIds($websiteStatuses),
             'selectedWebsite' => $selectedWebsite,
             'trafficChecks' => $selectedWebsite
                 ? $selectedWebsite->checks()->latest('checked_at')->limit(50)->get()->reverse()->values()

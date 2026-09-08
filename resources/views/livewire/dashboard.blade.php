@@ -362,7 +362,7 @@
                         <a @if ($siteHref) href="{{ $siteHref }}" wire:navigate @endif class="flex items-center gap-3">
                             <x-status-dot :status="$website->statusKey(
                                 isset($offlineIds[$website->id]),
-                                $spikeSeverities[$website->id] ?? null,
+                                isset($spikingIds[$website->id]),
                                 isset($attackedIds[$website->id]),
                             )" />
                             <div class="min-w-0 flex-1">

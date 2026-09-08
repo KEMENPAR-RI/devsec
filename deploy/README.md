@@ -1,3 +1,93 @@
+# Deploy pembaruan ke server
+
+Untuk pembaruan yang **tidak** menambah migrasi atau dependency (mayoritas
+kasus), urutannya:
+
+```bash
+cd /www/wwwroot/deadsec.apiprs.my.id
+
+php artisan down                     # opsional, aman dilewati untuk perubahan kecil
+git pull origin main
+
+npm ci && npm run build              # WAJIB kalau ada blade yang berubah - lihat catatan
+php artisan migrate --force          # aman dijalankan meski tidak ada migrasi baru
+
+php artisan optimize:clear
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+
+sudo systemctl restart security-worker
+php artisan up
+```
+
+## Kenapa `npm run build` wajib walau tidak ada file CSS yang diubah
+
+`public/build` tidak ikut di-commit (lihat `.gitignore`), jadi CSS di server
+adalah hasil build lama. Tailwind hanya memasukkan kelas yang **ditemukannya di
+dalam blade saat build dijalankan** - kelas yang baru dipakai di blade tidak ada
+di CSS lama, dan elemennya muncul tanpa gaya sama sekali.
+
+Gejalanya menyesatkan: tidak ada error apa pun, halaman tetap terbuka, hanya saja
+elemen barunya tidak berwarna. Titik status lonjakan (kuning/oranye) adalah
+contoh persisnya - tanpa rebuild keduanya jadi transparan dan terbaca seolah
+tidak ada status apa-apa.
+
+Cara memastikan sebuah kelas sudah ada di CSS terbangun:
+
+```bash
+grep -o 'bg-orange-500' public/build/assets/*.css | head -1
+```
+
+## Kenapa worker perlu di-restart
+
+Worker adalah proses PHP yang berumur panjang: ia memuat kode aplikasi sekali
+saat start dan menyimpannya di memori. Tanpa restart, worker terus menjalankan
+**kode versi lama** sampai `--max-time=3600` mendaur-ulang prosesnya sendiri -
+jadi selama sampai satu jam, web menampilkan versi baru sementara pengecekan
+otomatis masih berjalan dengan versi lama.
+
+```bash
+sudo systemctl restart security-worker      # systemd
+sudo supervisorctl restart security-worker:* # supervisor
+```
+
+## Kalau pembaruan menambah migrasi
+
+Cek dulu apa yang akan dijalankan sebelum menjalankannya:
+
+```bash
+php artisan migrate:status
+php artisan migrate --force --pretend       # tampilkan SQL-nya, tanpa mengeksekusi
+```
+
+Backup dulu kalau migrasinya mengubah atau menghapus kolom:
+
+```bash
+php artisan backup:database
+```
+
+## Memastikan deploy berhasil
+
+```bash
+sudo systemctl status security-worker --no-pager    # harus active (running)
+php artisan queue:monitor default                   # harus mendekati 0
+tail -20 storage/logs/laravel.log                   # tidak ada error baru
+```
+
+Lalu buka dashboard dan pastikan halaman Situs tampil normal.
+
+## Kalau ada yang rusak setelah deploy
+
+```bash
+git log --oneline -5
+git reset --hard <commit-sebelumnya>
+npm ci && npm run build
+php artisan optimize:clear && php artisan config:cache
+sudo systemctl restart security-worker
+```
+
+
 # Menjalankan worker antrean
 
 ## Kenapa ini perlu

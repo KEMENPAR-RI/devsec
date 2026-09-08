@@ -178,7 +178,7 @@ class SimulateOutage extends Command
             $this->line('  Bukti      : '.$diagnosis['evidence']);
         }
 
-        $this->line('  Status dot : '.$website->fresh()->statusKey(false, null, $website->fresh()->wasAttacked()));
+        $this->line('  Status dot : '.$website->fresh()->statusKey(false, false, $website->fresh()->wasAttacked()));
         $this->newLine();
         $this->info("Buka halaman situs '{$website->name}' di dashboard untuk melihatnya.");
         $this->comment('Bersihkan dengan: php artisan websites:simulate-outage --clear');

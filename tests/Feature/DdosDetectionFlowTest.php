@@ -100,7 +100,7 @@ class DdosDetectionFlowTest extends TestCase
         $website = $website->fresh();
 
         $this->assertTrue($website->wasAttacked());
-        $this->assertSame('attack', $website->statusKey(false, null, $website->wasAttacked()));
+        $this->assertSame('attack', $website->statusKey(false, false, $website->wasAttacked()));
     }
 
     public function test_the_incident_page_shows_the_diagnosis_to_an_operator(): void
@@ -139,7 +139,7 @@ class DdosDetectionFlowTest extends TestCase
 
         $this->assertArrayNotHasKey('likely_cause', $incident->meta ?? []);
         $this->assertFalse($website->wasAttacked());
-        $this->assertSame('down', $website->statusKey(false, null, $website->wasAttacked()));
+        $this->assertSame('down', $website->statusKey(false, false, $website->wasAttacked()));
     }
 
     public function test_a_prompt_server_error_is_diagnosed_as_an_application_fault(): void
@@ -177,7 +177,7 @@ class DdosDetectionFlowTest extends TestCase
 
         $this->assertSame('down', $website->last_status);
         $this->assertTrue($website->wasAttacked());
-        $this->assertSame('attack', $website->statusKey(false, null, $website->wasAttacked()));
+        $this->assertSame('attack', $website->statusKey(false, false, $website->wasAttacked()));
     }
 
     public function test_the_simulate_command_can_put_the_site_back(): void
