@@ -168,9 +168,14 @@
                             @if ($incident->description)
                                 <p class="mt-1.5 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->description }}</p>
                             @endif
+                            {{-- e() on both halves, not a raw echo of the joined string: a judol
+                            incident's "URL Halaman" is a URL the crawler read off the monitored
+                            site itself (JudolScanner::resolveUrl returns an absolute href
+                            verbatim), so a compromised site - the very thing being watched for
+                            here - can put markup in it. Only the <br> separators are HTML. --}}
                             @if ($lines = $incident->detailLines())
                                 <p class="mt-1 break-words font-mono text-[11px] text-zinc-400">
-                                    {!! collect($lines)->map(fn ($v, $k) => "{$k}: {$v}")->implode('<br>') !!}
+                                    {!! collect($lines)->map(fn ($v, $k) => e($k).': '.e($v))->implode('<br>') !!}
                                 </p>
                             @endif
                         </div>

@@ -29,11 +29,17 @@ return Application::configure(basePath: dirname(__DIR__))
         // in exactly the deployment it exists for, and generate http:// asset URLs
         // on an https:// page.
         //
-        // '*' trusts whatever fronts the app; that is correct only because nothing
-        // but the proxy can reach PHP directly. If the app is ever exposed without
-        // one, narrow this to the proxy's address - a spoofed X-Forwarded-Proto
-        // would otherwise let a client decide it is "secure" on its own say-so.
-        $middleware->trustProxies(at: '*');
+        // Loopback only, NOT '*'. The proxy runs on this same host, so that is the
+        // only address these headers can legitimately arrive from - and trusting
+        // every address means trusting the whole X-Forwarded-For chain, which
+        // leaves request()->ip() equal to the leftmost value the *client* wrote.
+        // That value is what the login and password-reset throttle keys are built
+        // from (App\Livewire\Auth\Login::throttleKey), so under '*' a password
+        // spray walked past the 5-attempt lockout by rotating one header.
+        //
+        // If the app ever moves behind a proxy on a different host, name that
+        // host's address here rather than widening this back to '*'.
+        $middleware->trustProxies(at: ['127.0.0.1', '::1']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

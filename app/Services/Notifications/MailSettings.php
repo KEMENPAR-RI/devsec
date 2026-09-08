@@ -169,7 +169,9 @@ class MailSettings
      */
     public function renderSubject(array $data): string
     {
-        return $this->render($this->subjectTemplate(), $data);
+        // escape: false - a subject line is plain text, where an escaped "&" would
+        // arrive as the literal five characters "&amp;".
+        return $this->render($this->subjectTemplate(), $data, escape: false);
     }
 
     /**
@@ -182,21 +184,22 @@ class MailSettings
 
     /**
      * @param  array<string, mixed>  $data
+     * @param  bool  $escape  whether the plain-text tokens are being dropped into
+     *                        HTML (the body) or into a plain-text subject line
      */
-    protected function render(string $template, array $data): string
+    protected function render(string $template, array $data, bool $escape = true): string
     {
         $actionUrl = (string) ($data['action_url'] ?? '');
         $actionLabel = (string) ($data['action_label'] ?? 'Lihat Detail');
 
-        $tokens = [
+        // Plain text arriving from outside the template. {{title}} and {{message}}
+        // in particular carry data read off a monitored site - JudolContentDetected
+        // builds its message from the domains a hacked page links out to - so they
+        // are escaped here rather than trusted, same as renderDetails() already
+        // does for every row of the details table.
+        $text = [
             '{{title}}' => (string) ($data['title'] ?? ''),
             '{{message}}' => (string) ($data['message'] ?? ''),
-            '{{eyebrow}}' => $this->renderEyebrow((string) ($data['eyebrow'] ?? $data['severity'] ?? '')),
-            // Already-built HTML (renderItemsList / renderDetails escape everything
-            // that came from outside), so these go in raw like every other token.
-            '{{items}}' => (string) ($data['items'] ?? ''),
-            '{{details}}' => (string) ($data['details'] ?? ''),
-            '{{action}}' => $this->renderAction($actionUrl, $actionLabel),
             '{{action_url}}' => $actionUrl,
             '{{action_label}}' => $actionLabel,
             '{{footer}}' => (string) ($data['footer'] ?? 'Email otomatis dari '.config('app.name').'. Mohon tidak membalas email ini.'),
@@ -206,6 +209,17 @@ class MailSettings
             '{{type}}' => (string) ($data['type'] ?? ''),
             '{{detected_at}}' => (string) ($data['detected_at'] ?? ''),
             '{{app_name}}' => (string) config('app.name'),
+        ];
+
+        $tokens = [
+            ...($escape ? array_map(fn (string $value) => e($value), $text) : $text),
+            // Already-built HTML - renderEyebrow / renderAction / renderItemsList /
+            // renderDetails each escape what came from outside before wrapping it in
+            // markup - so these four are the only tokens that go in raw.
+            '{{eyebrow}}' => $this->renderEyebrow((string) ($data['eyebrow'] ?? $data['severity'] ?? '')),
+            '{{items}}' => (string) ($data['items'] ?? ''),
+            '{{details}}' => (string) ($data['details'] ?? ''),
+            '{{action}}' => $this->renderAction($actionUrl, $actionLabel),
         ];
 
         return strtr($template, $tokens);
