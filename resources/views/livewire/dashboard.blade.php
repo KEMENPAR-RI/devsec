@@ -23,7 +23,7 @@
     </div>
 
     {{-- KPI stats --}}
-    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         @foreach ($stats as $i => $stat)
             <div
                 class="enter rounded-2xl border border-zinc-200 bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
@@ -34,7 +34,6 @@
                         'flex h-9 w-9 items-center justify-center rounded-lg',
                         'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' => ($stat['tone'] ?? null) === 'down',
                         'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' => ($stat['tone'] ?? null) === 'up',
-                        'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-500' => ($stat['tone'] ?? null) === 'slow',
                         'bg-accent-50 text-accent-600 dark:bg-accent-500/10 dark:text-accent-400' => empty($stat['tone']),
                     ])>
                         <x-dynamic-component :component="'phosphor-'.$stat['icon']" class="h-4.5 w-4.5" />
@@ -373,7 +372,6 @@
                         <a @if ($siteHref) href="{{ $siteHref }}" wire:navigate @endif class="flex items-center gap-3">
                             <x-status-dot :status="$website->statusKey(
                                 isset($offlineIds[$website->id]),
-                                isset($spikingIds[$website->id]),
                                 isset($attackedIds[$website->id]),
                             )" />
                             <div class="min-w-0 flex-1">

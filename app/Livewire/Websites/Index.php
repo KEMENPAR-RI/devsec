@@ -431,12 +431,10 @@ class Index extends Component
 
         $offline = Website::offlineIds($websites);
         $attacked = Website::attackedIds($websites);
-        $spiking = Website::spikingIds($websites);
 
         return $websites
             ->filter(fn (Website $site) => $site->statusKey(
                 isset($offline[$site->id]),
-                isset($spiking[$site->id]),
                 isset($attacked[$site->id]),
             ) === $this->status)
             ->pluck('id')
@@ -465,7 +463,6 @@ class Index extends Component
             // One query each for the whole page instead of one per row - see Website::offlineIds().
             'offlineIds' => Website::offlineIds($websites),
             'attackedIds' => Website::attackedIds($websites),
-            'spikingIds' => Website::spikingIds($websites),
             'loadLevels' => Website::loadLevels($websites),
             'filteredCount' => $this->filteredQuery()->count(),
         ]);

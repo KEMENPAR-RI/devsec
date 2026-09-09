@@ -27,8 +27,10 @@ class DashboardStatusSyncTest extends TestCase
         return $component->viewData('stats');
     }
 
-    public function test_a_spiking_site_counts_as_slow_not_online(): void
+    public function test_a_spiking_site_still_counts_as_online(): void
     {
+        // A response-time spike is an incident, not a status: the site is answering,
+        // and the card that says how many sites are up has to keep saying so.
         $website = Website::factory()->create(['last_status' => 'up']);
         Incident::create([
             'website_id' => $website->id, 'type' => 'attack', 'severity' => 'warning',
@@ -38,8 +40,8 @@ class DashboardStatusSyncTest extends TestCase
 
         $stats = $this->stats();
 
-        $this->assertSame('1', $this->statCard($stats, 'Slow')['value']);
-        $this->assertSame('0', $this->statCard($stats, 'Online')['value']);
+        $this->assertSame('1', $this->statCard($stats, 'Online')['value']);
+        $this->assertSame('0', $this->statCard($stats, 'Down')['value']);
     }
 
     public function test_offline_and_attacked_sites_are_still_counted_as_down(): void
@@ -66,7 +68,6 @@ class DashboardStatusSyncTest extends TestCase
         $stats = $this->stats();
         $total = (int) $this->statCard($stats, 'Total Situs')['value'];
         $counted = (int) $this->statCard($stats, 'Online')['value']
-            + (int) $this->statCard($stats, 'Slow')['value']
             + (int) $this->statCard($stats, 'Down')['value'];
 
         // The remainder is the never-checked site, which belongs to no card.

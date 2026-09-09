@@ -10,7 +10,7 @@
         $isOffline = $website->isOffline();
         // Computed once and reused by the dot and the badge below, so they cannot
         // drift apart - each call re-queries incidents.
-        $statusKey = $website->statusKey($isOffline, $website->hasTrafficSpike(), $website->wasAttacked());
+        $statusKey = $website->statusKey($isOffline, $website->wasAttacked());
     @endphp
 
     {{-- Automatic probing stops after a full day of failures (Website::isPausedForOffline()).

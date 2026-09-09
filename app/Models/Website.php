@@ -256,55 +256,6 @@ class Website extends Model
     }
 
     /**
-     * Whether this site is currently carrying an unresolved response-time spike -
-     * running slower than its own baseline while still serving.
-     *
-     * Read from the incident WebsiteChecker already opens rather than re-measured
-     * here, so the dot and the incident list can never disagree about whether a
-     * site is degraded.
-     *
-     * Deliberately one state, not a scale. How far over baseline a site is says
-     * very little on its own - 3x a 50ms baseline and 3x a 2-second one are not
-     * remotely the same situation - and splitting it invited a reading of severity
-     * the measurement cannot support. Either traffic is elevated or it is not; how
-     * bad it is belongs in the incident's own numbers, where the figures are.
-     */
-    public function hasTrafficSpike(): bool
-    {
-        return $this->incidents()
-            ->where('type', 'attack')
-            ->open()
-            ->whereJsonContains('meta->reason', 'response_time_spike')
-            ->exists();
-    }
-
-    /**
-     * Bulk version of hasTrafficSpike() for list views - one query for the whole
-     * list rather than one per row, matching offlineIds().
-     *
-     * @param  iterable<Website>  $websites
-     * @return array<int, true> website IDs carrying an open spike
-     */
-    public static function spikingIds(iterable $websites): array
-    {
-        $rows = $websites instanceof AbstractPaginator ? $websites->getCollection() : collect($websites);
-        $ids = $rows->pluck('id');
-
-        if ($ids->isEmpty()) {
-            return [];
-        }
-
-        return Incident::where('type', 'attack')
-            ->open()
-            ->whereJsonContains('meta->reason', 'response_time_spike')
-            ->whereIn('website_id', $ids)
-            ->pluck('website_id')
-            ->flip()
-            ->map(fn () => true)
-            ->all();
-    }
-
-    /**
      * Every display status: its short name, the dot colour, the text colour a badge
      * uses, and the sentence explaining it.
      *
@@ -322,15 +273,8 @@ class Website extends Model
             'badge' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/30',
             'description' => 'Situs merespons normal.',
         ],
-        'spike' => [
-            'label' => 'Slow',
-            'dot' => 'bg-yellow-400',
-            'text' => 'text-yellow-700 dark:text-yellow-500',
-            'badge' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20 dark:bg-yellow-500/10 dark:text-yellow-500 dark:ring-yellow-400/30',
-            'description' => 'Masih online, tapi merespons lebih lambat dari biasanya.',
-        ],
         'attack' => [
-            'label' => 'Down - Dugaan Serangan',
+            'label' => 'Down - Dugaan DDoS',
             'dot' => 'bg-red-500',
             'text' => 'text-red-700 dark:text-red-400',
             'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
@@ -585,21 +529,22 @@ class Website extends Model
      * - 'attack' outranks plain 'down'. Both are red, but a site that degraded
      *   into its outage is a different problem from one that simply stopped
      *   answering, and the dot is where that distinction is cheapest to make.
-     * - spike states only apply while the site is still up: once it is down, the
-     *   outage is the headline and the spike is part of its story, not a
-     *   competing status.
+     *
+     * A site that is still serving has exactly one status here: 'up'. Response-time
+     * degradation is deliberately NOT a status - it is still online, and a separate
+     * colour for it drowned the two states an operator can actually act on. How
+     * hard the server is working belongs in the load column (see LOAD_LEVELS), and
+     * the slow-down itself is still recorded as an incident, where it goes on to
+     * corroborate the DDoS diagnosis in OutageCause.
      *
      * @param  bool  $isOffline  pass Website::offlineIds() membership for list views
      *                           (avoids an isOffline() query per row) or $this->isOffline() for a single record
-     * @param  bool  $spike  pass Website::spikingIds() membership for list views
-     *                       (or hasTrafficSpike() for a single record)
      * @param  bool  $wasAttacked  whether the open downtime incident was diagnosed as
      *                             overload - see App\Services\Monitoring\OutageCause
      */
-    public function statusKey(bool $isOffline = false, bool $spike = false, bool $wasAttacked = false): string
+    public function statusKey(bool $isOffline = false, bool $wasAttacked = false): string
     {
         return match (true) {
-            $this->last_status === 'up' && $spike => 'spike',
             $this->last_status === 'up' => 'up',
             $this->last_status === 'down' && $this->is_internal_only => 'internal',
             $this->last_status === 'down' && $isOffline => 'offline',

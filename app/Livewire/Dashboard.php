@@ -29,12 +29,11 @@ class Dashboard extends Component
      * @param  Collection<int, Website>  $websites
      * @return array<string, int>
      */
-    protected function statusCounts($websites, array $offline, array $spiking, array $attacked): array
+    protected function statusCounts($websites, array $offline, array $attacked): array
     {
         return $websites
             ->countBy(fn (Website $site) => $site->statusKey(
                 isset($offline[$site->id]),
-                isset($spiking[$site->id]),
                 isset($attacked[$site->id]),
             ))
             ->all();
@@ -46,7 +45,6 @@ class Dashboard extends Component
         $newJudol = JudolDetection::where('status', 'new')->count();
 
         $down = ($counts['down'] ?? 0) + ($counts['attack'] ?? 0) + ($counts['offline'] ?? 0) + ($counts['internal'] ?? 0);
-        $slow = $counts['spike'] ?? 0;
 
         return [
             [
@@ -59,12 +57,6 @@ class Dashboard extends Component
                 'value' => (string) ($counts['up'] ?? 0),
                 'icon' => 'check-circle',
                 'tone' => 'up',
-            ],
-            [
-                'label' => 'Slow',
-                'value' => (string) $slow,
-                'icon' => 'gauge',
-                'tone' => $slow > 0 ? 'slow' : null,
             ],
             [
                 'label' => 'Down',
@@ -143,19 +135,17 @@ class Dashboard extends Component
         // One query each for the whole list, shared between the cards and the rows.
         $offlineIds = Website::offlineIds($websiteStatuses);
         $attackedIds = Website::attackedIds($websiteStatuses);
-        $spikingIds = Website::spikingIds($websiteStatuses);
 
         return view('livewire.dashboard', [
             'stats' => $this->stats(
                 $websiteStatuses,
-                $this->statusCounts($websiteStatuses, $offlineIds, $spikingIds, $attackedIds),
+                $this->statusCounts($websiteStatuses, $offlineIds, $attackedIds),
             ),
             'weeklyUptime' => $this->weeklyUptime(),
             'recentIncidents' => $this->recentIncidents(),
             'websiteStatuses' => $websiteStatuses,
             'offlineIds' => $offlineIds,
             'attackedIds' => $attackedIds,
-            'spikingIds' => $spikingIds,
             'selectedWebsite' => $selectedWebsite,
             'responseChecks' => $selectedWebsite
                 ? $selectedWebsite->checks()->latest('checked_at')->limit(50)->get()->reverse()->values()

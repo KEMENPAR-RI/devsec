@@ -157,7 +157,6 @@
                         @php
                             $statusKey = $website->statusKey(
                                 isset($offlineIds[$website->id]),
-                                isset($spikingIds[$website->id]),
                                 isset($attackedIds[$website->id]),
                             );
                             $load = $loadLevels[$website->id] ?? ['level' => 'unknown', 'response_time_ms' => null];
