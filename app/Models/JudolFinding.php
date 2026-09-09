@@ -40,6 +40,7 @@ class JudolFinding extends Model
         'image_urls',
         'evidence_html',
         'dom_path',
+        'evidence_nodes',
         'affected_urls',
         'affected_count',
         'status',
@@ -54,6 +55,7 @@ class JudolFinding extends Model
             'anchor_texts' => 'array',
             'matched_keywords' => 'array',
             'image_urls' => 'array',
+            'evidence_nodes' => 'array',
             'affected_urls' => 'array',
             'affected_count' => 'integer',
             'first_seen_at' => 'datetime',
@@ -156,6 +158,49 @@ class JudolFinding extends Model
         sort($keywords);
 
         return sha1(implode('|', [$this->attack_type, implode(',', $domains), implode(',', $keywords)]));
+    }
+
+    /**
+     * Every place this injection was found, grouped by the markup around it.
+     *
+     * The list is what makes the finding actionable. One example of an eight-item
+     * injection reads as the whole problem, so an operator cleans it, sees the page
+     * flagged again on the next crawl, and stops trusting the report.
+     *
+     * Grouped rather than listed flat because several elements inside one block
+     * resolve to the SAME container markup (see PageRegion::snippet(), which
+     * deliberately returns the container): printing an identical footer eight times
+     * buries the eight paths that are the actual difference between them.
+     *
+     * @return array<int, array{html: string, paths: array<int, string>}>
+     */
+    public function evidenceOccurrences(): array
+    {
+        $nodes = collect($this->evidence_nodes ?? []);
+
+        // Findings recorded before evidence_nodes existed carry their single
+        // sighting in the two older columns. Read here so those rows still show
+        // what they have instead of going blank until the next crawl.
+        if ($nodes->isEmpty() && filled($this->evidence_html)) {
+            $nodes = collect([['path' => $this->dom_path, 'html' => $this->evidence_html]]);
+        }
+
+        return $nodes
+            ->filter(fn ($node) => is_array($node) && filled($node['html'] ?? null))
+            ->groupBy(fn (array $node) => sha1((string) $node['html']))
+            ->map(fn ($group) => [
+                'html' => (string) $group->first()['html'],
+                'paths' => $group->pluck('path')->filter()->unique()->values()->all(),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /** How many distinct elements this finding points at, for the count in the UI. */
+    public function affectedElementCount(): int
+    {
+        return collect($this->evidenceOccurrences())
+            ->sum(fn (array $occurrence) => max(1, count($occurrence['paths'])));
     }
 
     /**

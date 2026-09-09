@@ -351,18 +351,14 @@
                                             @if ($finding->affected_count > 1)
                                                 <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-normal text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ $finding->affected_count }} halaman</span>
                                             @endif
+                                            @if (($elementCount = $finding->affectedElementCount()) > 1)
+                                                <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-normal text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">{{ $elementCount }} elemen</span>
+                                            @endif
                                             @if ($finding->status !== 'new')
                                                 <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-normal text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Sudah ditangani</span>
                                             @endif
                                         </p>
 
-                                        {{-- The route down to the element. region_selector names
-                                        the block; this says which node inside it. --}}
-                                        @if ($finding->dom_path)
-                                            <p class="mt-1 break-all font-mono text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400" title="Jalur elemen di dalam halaman - tempel ke DevTools atau cari di berkas tema">
-                                                {{ $finding->dom_path }}
-                                            </p>
-                                        @endif
                                     </div>
 
                                     @can('deteksi-judol.update')
@@ -411,14 +407,38 @@
                                     @endcan
                                 </div>
 
-                                {{-- The markup itself, escaped, with the injected part marked.
-                                     This is what "letak persisnya" means without a headless
-                                     browser: the node, not a picture of the page. --}}
-                                <x-evidence-snippet
-                                    class="mt-2.5"
-                                    :html="$finding->evidence_html"
-                                    :terms="$finding->highlightTerms()"
-                                />
+                                {{-- Every element this injection touched, each with the route
+                                     down to it and the markup around it, escaped and with the
+                                     injected part marked. This is what "letak persisnya" means
+                                     without a headless browser: the nodes themselves, not a
+                                     picture of the page - and ALL of them, because a list that
+                                     shows one of eight gets seven of them left behind.
+
+                                     Grouped by markup rather than listed flat: sibling elements
+                                     inside one block share a container, so the snippet would
+                                     otherwise repeat identically and bury the paths, which are
+                                     the only thing that differs. See
+                                     JudolFinding::evidenceOccurrences(). --}}
+                                @foreach ($finding->evidenceOccurrences() as $occurrence)
+                                    <div class="mt-2.5">
+                                        @if ($occurrence['paths'])
+                                            <ul class="space-y-0.5" title="Jalur elemen di dalam halaman - tempel ke DevTools atau cari di berkas tema">
+                                                @foreach ($occurrence['paths'] as $path)
+                                                    <li class="flex items-start gap-1.5 break-all font-mono text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                                                        <x-phosphor-arrow-elbow-down-right class="mt-0.5 h-3 w-3 shrink-0 text-zinc-400 dark:text-zinc-600" />
+                                                        <span>{{ $path }}</span>
+                                                    </li>
+                                                @endforeach
+                                            </ul>
+                                        @endif
+
+                                        <x-evidence-snippet
+                                            class="mt-1.5"
+                                            :html="$occurrence['html']"
+                                            :terms="$finding->highlightTerms()"
+                                        />
+                                    </div>
+                                @endforeach
 
                                 @if ($error = ($recheckErrors[$finding->uuid] ?? null))
                                     <p class="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">

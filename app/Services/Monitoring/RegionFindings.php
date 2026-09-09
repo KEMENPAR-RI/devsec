@@ -26,6 +26,15 @@ class RegionFindings
     public const MAX_STORED_IMAGES = 6;
 
     /**
+     * Injection points kept per region.
+     *
+     * Enough to clean from - a spammed footer runs to a handful of list items, not
+     * hundreds - while stopping a page that links a thousand times from turning one
+     * finding into a thousand snippets nobody scrolls through.
+     */
+    public const MAX_STORED_NODES = 20;
+
+    /**
      * @var array<string, array{
      *     region: array{key: string, label: string, selector: ?string},
      *     domains: array<string, true>,
@@ -34,6 +43,7 @@ class RegionFindings
      *     images: array<string, true>,
      *     path: ?string,
      *     snippet: ?string,
+     *     nodes: array<string, array{path: ?string, html: string}>,
      *     urls: array<int, string>,
      *     seen: array<string, true>,
      *     type: string,
@@ -48,9 +58,9 @@ class RegionFindings
      * @param  array<int, string>  $domains
      * @param  array<int, string>  $anchors
      * @param  array<int, string>  $images  promo banners sitting in the same region
-     * @param  array{path: ?string, html: ?string}|null  $evidence  where exactly, and the markup
+     * @param  array<int, array{path: ?string, html: ?string}>  $evidence  every element hit, and the markup around it
      */
-    public function addLinks(string $url, array $region, array $domains, array $anchors, array $images = [], ?array $evidence = null): void
+    public function addLinks(string $url, array $region, array $domains, array $anchors, array $images = [], array $evidence = []): void
     {
         $bucket = &$this->bucket($region, 'backlink_injection');
 
@@ -80,9 +90,9 @@ class RegionFindings
      * @param  array<int, string>  $keywords
      * @param  array{key: string, label: string, selector: ?string}|null  $region
      * @param  array<int, string>  $images
-     * @param  array{path: ?string, html: ?string}|null  $evidence
+     * @param  array<int, array{path: ?string, html: ?string}>  $evidence
      */
-    public function addKeywords(string $url, array $keywords, ?array $region = null, array $images = [], ?array $evidence = null): void
+    public function addKeywords(string $url, array $keywords, ?array $region = null, array $images = [], array $evidence = []): void
     {
         // No keywords, no finding. The scanner calls this for every crawled page,
         // and bucket() below would otherwise open a keyword_injection region on a
@@ -116,9 +126,11 @@ class RegionFindings
      * likewise preserved - it is how long the injection has been up, which is the
      * number that matters when correlating against access logs.
      *
+     * @param  bool  $partial  true when this came from checking ONE url rather than
+     *                         from a full crawl - see the merge below
      * @return array<int, JudolFinding> findings that were newly created
      */
-    public function persist(Website $website): array
+    public function persist(Website $website, bool $partial = false): array
     {
         $created = [];
 
@@ -148,13 +160,26 @@ class RegionFindings
             // Only written when this crawl actually produced them. A crawl that hit
             // the fallback region has no snippet to offer, and blanking a good one
             // recorded earlier would lose the only pointer at the exact node.
-            foreach (['evidence_html' => $bucket['snippet'], 'dom_path' => $bucket['path']] as $column => $value) {
+            foreach ([
+                'evidence_html' => $bucket['snippet'],
+                'dom_path' => $bucket['path'],
+                'evidence_nodes' => array_values($bucket['nodes']) ?: null,
+            ] as $column => $value) {
                 if (filled($value)) {
                     $attributes[$column] = $value;
                 }
             }
 
             if ($existing) {
+                // A full crawl REPLACES: it just looked at every page, so a shorter
+                // list means pages were cleaned and the count should fall. Checking a
+                // single URL saw one page and knows nothing about the rest, so there
+                // it merges - overwriting would drop a sitewide finding to "1 halaman"
+                // the moment somebody re-checked one of its forty pages.
+                if ($partial) {
+                    $attributes = $this->mergedInto($existing, $attributes);
+                }
+
                 $existing->update($attributes);
 
                 continue;
@@ -173,8 +198,47 @@ class RegionFindings
     }
 
     /**
+     * This crawl's attributes folded into what the row already holds, for the
+     * single-URL case.
+     *
+     * Every list column is unioned rather than replaced, and the count never falls:
+     * one page cannot disprove what the other thirty-nine showed.
+     *
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>
+     */
+    protected function mergedInto(JudolFinding $existing, array $attributes): array
+    {
+        foreach (['linked_domains', 'anchor_texts', 'matched_keywords', 'image_urls', 'affected_urls'] as $column) {
+            $attributes[$column] = collect($existing->{$column} ?? [])
+                ->merge($attributes[$column] ?? [])
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        $attributes['affected_urls'] = array_slice($attributes['affected_urls'], 0, JudolFinding::MAX_STORED_URLS);
+        $attributes['affected_count'] = max((int) $existing->affected_count, count($attributes['affected_urls']));
+
+        if (isset($attributes['evidence_nodes'])) {
+            // Keyed on the pair the way rememberEvidence() does, so re-checking a
+            // page adds the elements it found without duplicating the ones already
+            // on record.
+            $attributes['evidence_nodes'] = collect($existing->evidence_nodes ?? [])
+                ->merge($attributes['evidence_nodes'])
+                ->filter(fn ($node) => is_array($node) && filled($node['html'] ?? null))
+                ->keyBy(fn (array $node) => ($node['path'] ?? '').'|'.$node['html'])
+                ->take(self::MAX_STORED_NODES)
+                ->values()
+                ->all();
+        }
+
+        return $attributes;
+    }
+
+    /**
      * @param  array{key: string, label: string, selector: ?string}  $region
-     * @return array{region: array{key: string, label: string, selector: ?string}, domains: array<string, true>, anchors: array<string, true>, keywords: array<string, true>, images: array<string, true>, path: ?string, snippet: ?string, urls: array<int, string>, seen: array<string, true>, type: string}
+     * @return array{region: array{key: string, label: string, selector: ?string}, domains: array<string, true>, anchors: array<string, true>, keywords: array<string, true>, images: array<string, true>, path: ?string, snippet: ?string, nodes: array<string, array{path: ?string, html: string}>, urls: array<int, string>, seen: array<string, true>, type: string}
      */
     protected function &bucket(array $region, string $type): array
     {
@@ -189,6 +253,7 @@ class RegionFindings
                 'images' => [],
                 'path' => null,
                 'snippet' => null,
+                'nodes' => [],
                 'urls' => [],
                 'seen' => [],
                 'type' => $type,
@@ -216,21 +281,41 @@ class RegionFindings
     }
 
     /**
-     * First sighting wins. The same region on forty pages yields forty identical
-     * snippets, and the one from the page the injection was first seen on is as
-     * good as any - while re-deriving it every page would only churn the column.
+     * Records every element this page put in this region, up to the cap.
      *
-     * @param  array{path: ?string, snippet: ?string}  $bucket
-     * @param  array{path: ?string, html: ?string}|null  $evidence
+     * Deduplicated on the (path, markup) pair rather than kept per page: the same
+     * footer on forty pages yields forty identical sightings, and what differs
+     * across them is the URL - which affected_urls already carries. What does have
+     * to accumulate is the elements WITHIN a region, because those are forty
+     * different edits to make.
+     *
+     * path/snippet keep the first sighting, which is what the older single-value
+     * columns still hold - see the evidence_nodes migration.
+     *
+     * @param  array{path: ?string, snippet: ?string, nodes: array<string, array{path: ?string, html: string}>}  $bucket
+     * @param  array<int, array{path: ?string, html: ?string}>  $evidence
      */
-    protected function rememberEvidence(array &$bucket, ?array $evidence): void
+    protected function rememberEvidence(array &$bucket, array $evidence): void
     {
-        if ($evidence === null) {
-            return;
-        }
+        foreach ($evidence as $node) {
+            $html = $node['html'] ?? null;
+            $path = $node['path'] ?? null;
 
-        $bucket['path'] ??= $evidence['path'] ?? null;
-        $bucket['snippet'] ??= $evidence['html'] ?? null;
+            if (! is_string($html) || trim($html) === '') {
+                continue;
+            }
+
+            $bucket['path'] ??= $path;
+            $bucket['snippet'] ??= $html;
+
+            $key = ($path ?? '').'|'.$html;
+
+            if (isset($bucket['nodes'][$key]) || count($bucket['nodes']) >= self::MAX_STORED_NODES) {
+                continue;
+            }
+
+            $bucket['nodes'][$key] = ['path' => $path, 'html' => $html];
+        }
     }
 
     /**

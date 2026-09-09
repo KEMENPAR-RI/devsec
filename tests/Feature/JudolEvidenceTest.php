@@ -197,6 +197,44 @@ class JudolEvidenceTest extends TestCase
         $response->assertSee('<mark', false);
     }
 
+    public function test_the_page_lists_every_injection_point_not_just_one(): void
+    {
+        // The whole point of the list: an operator has to read the page and know
+        // each place to go. Showing one element of three is a fix list that leaves
+        // two behind.
+        $website = Website::factory()->create(['name' => 'Portal Banyak']);
+        $footer = '<footer class="site-footer"><a href="https://gacor88.com">Slot</a></footer>';
+
+        JudolFinding::create([
+            'website_id' => $website->id,
+            'region_key' => 'footer',
+            'region_label' => 'Footer',
+            'attack_type' => 'backlink_injection',
+            'linked_domains' => ['gacor88.com'],
+            'evidence_html' => $footer,
+            'dom_path' => 'body > footer.site-footer > ul > li:nth-child(1) > a',
+            'evidence_nodes' => [
+                ['path' => 'body > footer.site-footer > ul > li:nth-child(1) > a', 'html' => $footer],
+                ['path' => 'body > footer.site-footer > ul > li:nth-child(2) > a', 'html' => $footer],
+                ['path' => 'body > aside.widget > p > a', 'html' => '<aside class="widget"><p><a href="https://gacor88.com">Gacor</a></p></aside>'],
+            ],
+            'affected_urls' => ['http://portal-banyak.example/'],
+            'affected_count' => 1,
+            'status' => 'new',
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+
+        $response = $this->actingAs(User::factory()->create())->get(route('deteksi-judol'));
+
+        $response->assertOk();
+        $response->assertSee('body &gt; footer.site-footer &gt; ul &gt; li:nth-child(1) &gt; a', false);
+        $response->assertSee('body &gt; footer.site-footer &gt; ul &gt; li:nth-child(2) &gt; a', false);
+        $response->assertSee('body &gt; aside.widget &gt; p &gt; a', false);
+        // And the count says how many places there are before anything is read.
+        $response->assertSee('3 elemen');
+    }
+
     /** The proxy addresses an image by index, so an out-of-range one is a 404. */
     public function test_the_image_proxy_refuses_an_index_the_crawler_never_recorded(): void
     {

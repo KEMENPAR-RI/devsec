@@ -171,17 +171,22 @@ class JudolScanner
                 'region' => $link['region'],
                 'domains' => [],
                 'anchors' => [],
-                // Anchored on the FIRST flagged link in this region: that anchor is
-                // what proves the injection, so it is the node worth pointing at.
-                // Later links in the same region resolve to the same container
-                // anyway - the snippet would be identical.
-                'evidence' => [
-                    'path' => $pageRegion->path($link['node']),
-                    'html' => $pageRegion->snippet($link['node']),
-                ],
+                'evidence' => [],
             ];
             $byRegion[$key]['domains'][] = $link['domain'];
             $byRegion[$key]['anchors'][] = $link['text'];
+
+            // EVERY flagged link, not just the first in the region. Later links do
+            // resolve to the same container, so the snippet repeats - but their
+            // paths do not, and those paths are the list of edits to make. Reporting
+            // one of eight injected list items reads as the whole problem, and an
+            // operator who cleans from it leaves seven behind.
+            if (count($byRegion[$key]['evidence']) < RegionFindings::MAX_STORED_NODES) {
+                $byRegion[$key]['evidence'][] = [
+                    'path' => $pageRegion->path($link['node']),
+                    'html' => $pageRegion->snippet($link['node']),
+                ];
+            }
         }
 
         foreach ($byRegion as $key => $group) {
@@ -238,7 +243,7 @@ class JudolScanner
      * Which element carries each matched keyword, grouped by the region around it.
      *
      * @param  array<int, string>  $keywords
-     * @return array{regions: array<int, array{region: array{key: string, label: string, selector: ?string}, keywords: array<int, string>, evidence: array{path: ?string, html: ?string}}>, unlocated: array<int, string>}
+     * @return array{regions: array<int, array{region: array{key: string, label: string, selector: ?string}, keywords: array<int, string>, evidence: array<int, array{path: ?string, html: ?string}>}>, unlocated: array<int, string>}
      */
     protected function locateKeywords(string $html, array $keywords): array
     {
@@ -298,13 +303,20 @@ class JudolScanner
             $groups[$key] ??= [
                 'region' => $region,
                 'keywords' => [],
-                'evidence' => [
-                    'path' => $pageRegion->path($candidate['node']),
-                    'html' => $pageRegion->snippet($candidate['node']),
-                ],
+                'evidence' => [],
             ];
 
             $groups[$key]['keywords'] = array_merge($groups[$key]['keywords'], $hits);
+
+            // One entry per element that carried a phrase, not just the first in the
+            // region: spam dropped into a widget usually lands in several sibling
+            // nodes, and each is its own place to go and delete.
+            if (count($groups[$key]['evidence']) < RegionFindings::MAX_STORED_NODES) {
+                $groups[$key]['evidence'][] = [
+                    'path' => $pageRegion->path($candidate['node']),
+                    'html' => $pageRegion->snippet($candidate['node']),
+                ];
+            }
         }
 
         return ['regions' => array_values($groups), 'unlocated' => array_values($pending)];
@@ -459,6 +471,21 @@ class JudolScanner
         // automatic crawl (scan()) mails/notifies, so re-checking the same page ten
         // times in a row can't turn into ten emails.
         $detection = $this->evaluateAndStore($website, $url, $result['body'], force: true, lastModified: $result['last_modified']);
+
+        // The manual check has to leave the same trail the crawl does. Without this
+        // it wrote a per-page detection and no finding at all - so the page showed
+        // as dirty on the site's own screen while Deteksi Judol, which lists
+        // findings, stayed empty for that site and the operator had nothing to act on.
+        //
+        // Persisted as partial: this looked at one page, so it may only ever add to
+        // what a full crawl established - see RegionFindings::persist().
+        $regions = new RegionFindings;
+        $this->recordRegions($website, $regions, $url, $result['body']);
+        $this->recordKeywordRegions($regions, $url, $result['body'], $detection?->matched_keywords ?? []);
+
+        if (! $regions->isEmpty()) {
+            $regions->persist($website, partial: true);
+        }
 
         return $detection?->matched_keywords ?? [];
     }

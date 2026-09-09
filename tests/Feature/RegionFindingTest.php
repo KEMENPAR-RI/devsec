@@ -117,6 +117,148 @@ class RegionFindingTest extends TestCase
         $this->assertSame('Penyisipan backlink', $finding->attackLabel());
     }
 
+    public function test_the_finding_points_at_every_injected_element_not_just_the_first(): void
+    {
+        // Regression: the scanner anchored on the FIRST flagged link in a region and
+        // rememberEvidence() kept the first sighting, so a footer carrying four
+        // injected links reported one. An operator cleaning from that list deletes
+        // one, and the next crawl flags the site again.
+        Http::fake([
+            'manylinks.example/sitemap.xml' => Http::response('', 404),
+            'manylinks.example' => Http::response(
+                '<html><body><footer class="site-footer"><ul>'
+                .'<li id="a"><a href="https://gacor88.com">Slot Gacor</a></li>'
+                .'<li id="b"><a href="https://slot4d.net">Live Draw</a></li>'
+                .'<li id="c"><a href="https://gacor77.org">Maxwin</a></li>'
+                .'</ul></footer></body></html>',
+                200
+            ),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://manylinks.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+
+        $finding = JudolFinding::where('website_id', $website->id)->firstOrFail();
+
+        $paths = collect($finding->evidence_nodes)->pluck('path');
+
+        $this->assertCount(3, $paths, 'every flagged link is its own place to go and clean');
+        $this->assertSame(3, $paths->unique()->count(), 'and each points somewhere different');
+        $this->assertSame(3, $finding->affectedElementCount());
+
+        // The older single-value columns still hold the first sighting, so a row
+        // written before evidence_nodes existed keeps rendering.
+        $this->assertNotNull($finding->evidence_html);
+        $this->assertSame($paths->first(), $finding->dom_path);
+    }
+
+    public function test_checking_one_url_also_files_a_finding(): void
+    {
+        // Regression: scanUrlNow() only wrote a per-page JudolDetection, so a site
+        // checked that way showed as dirty on its own page - which reads detections -
+        // while Deteksi Judol, which lists FINDINGS, stayed empty for it. The
+        // operator saw the problem and had nowhere to act on it.
+        Http::fake([
+            'manual.example/kontak' => Http::response(
+                '<html><body><footer class="site-footer"><a href="https://gacor88.com">Slot Gacor</a></footer></body></html>',
+                200
+            ),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://manual.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scanUrlNow($website, 'http://manual.example/kontak');
+
+        $finding = JudolFinding::where('website_id', $website->id)->firstOrFail();
+
+        $this->assertSame('footer', $finding->region_key);
+        $this->assertContains('gacor88.com', $finding->linked_domains);
+        $this->assertContains('http://manual.example/kontak', $finding->affected_urls);
+    }
+
+    public function test_checking_one_url_cannot_shrink_a_sitewide_finding(): void
+    {
+        // One page knows nothing about the other thirty-nine, so re-checking it may
+        // only ever ADD. Replacing would drop "muncul di 40 halaman" to 1 the moment
+        // somebody verified a single URL - the headline number, quietly wrong.
+        $footer = '<footer class="site-footer"><a href="https://gacor88.com">Slot Gacor</a></footer>';
+
+        Http::fake([
+            'shrink.example/sitemap.xml' => Http::response('', 404),
+            'shrink.example' => Http::response(
+                '<html><body><a href="/berita">Berita</a><a href="/kontak">Kontak</a>'.$footer.'</body></html>',
+                200
+            ),
+            'shrink.example/*' => Http::response('<html><body><p>Isi biasa.</p>'.$footer.'</body></html>', 200),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://shrink.example', 'last_status' => 'up']);
+        $scanner = app(JudolScanner::class);
+
+        $scanner->scan($website);
+        $before = JudolFinding::where('website_id', $website->id)->firstOrFail()->affected_count;
+        $this->assertGreaterThan(1, $before);
+
+        $scanner->scanUrlNow($website, 'http://shrink.example/kontak');
+
+        $after = JudolFinding::where('website_id', $website->id)->firstOrFail();
+
+        $this->assertSame($before, $after->affected_count);
+        $this->assertContains('gacor88.com', $after->linked_domains);
+    }
+
+    public function test_elements_sharing_one_block_are_listed_under_a_single_snippet(): void
+    {
+        // PageRegion::snippet() deliberately returns the CONTAINER, so siblings in
+        // one footer all carry identical markup. Printing it once per element would
+        // bury the paths, which are the only thing that differs between them.
+        Http::fake([
+            'grouped.example/sitemap.xml' => Http::response('', 404),
+            'grouped.example' => Http::response(
+                '<html><body><footer class="site-footer">'
+                .'<a href="https://gacor88.com">Slot Gacor</a>'
+                .'<a href="https://slot4d.net">Live Draw</a>'
+                .'</footer></body></html>',
+                200
+            ),
+        ]);
+
+        $website = Website::factory()->create(['url' => 'http://grouped.example', 'last_status' => 'up']);
+
+        app(JudolScanner::class)->scan($website);
+
+        $occurrences = JudolFinding::where('website_id', $website->id)->firstOrFail()->evidenceOccurrences();
+
+        $this->assertCount(1, $occurrences, 'one shared container, one snippet');
+        $this->assertCount(2, $occurrences[0]['paths'], 'both elements still listed');
+    }
+
+    public function test_a_finding_recorded_before_evidence_nodes_existed_still_renders(): void
+    {
+        $website = Website::factory()->create();
+
+        $finding = JudolFinding::create([
+            'website_id' => $website->id,
+            'region_key' => 'footer',
+            'region_label' => 'Footer',
+            'attack_type' => 'backlink_injection',
+            'evidence_html' => '<footer><a href="https://gacor88.com">Slot</a></footer>',
+            'dom_path' => 'body > footer > a',
+            'affected_urls' => ['http://old.example'],
+            'affected_count' => 1,
+            'status' => 'new',
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+
+        $occurrences = $finding->evidenceOccurrences();
+
+        $this->assertCount(1, $occurrences);
+        $this->assertSame('body > footer > a', $occurrences[0]['paths'][0]);
+        $this->assertSame(1, $finding->affectedElementCount());
+    }
+
     /**
      * The other half of the same idea: promo TEXT stuffed into a shared template
      * is one edit too, and reads as one finding filed under the page body.
