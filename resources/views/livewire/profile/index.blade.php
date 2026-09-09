@@ -60,9 +60,7 @@
                     wire:target="updateProfile"
                     class="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                    <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="updateProfile" />
-                    <span wire:loading.remove wire:target="updateProfile">Simpan Perubahan</span>
-                    <span wire:loading wire:target="updateProfile">Menyimpan...</span>
+                    <x-loading-label target="updateProfile" loading="Menyimpan...">Simpan Perubahan</x-loading-label>
                 </button>
             </div>
         </form>
@@ -116,9 +114,7 @@
                     wire:target="updatePassword"
                     class="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                    <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="updatePassword" />
-                    <span wire:loading.remove wire:target="updatePassword">Ubah Kata Sandi</span>
-                    <span wire:loading wire:target="updatePassword">Menyimpan...</span>
+                    <x-loading-label target="updatePassword" loading="Menyimpan...">Ubah Kata Sandi</x-loading-label>
                 </button>
             </div>
         </form>

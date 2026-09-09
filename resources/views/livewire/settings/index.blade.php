@@ -114,9 +114,10 @@
                     </span>
                 @endif
                 <button type="button" wire:click="testConnection" wire:loading.attr="disabled" wire:target="testConnection" class="ml-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-2.5 py-1 font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
-                    <x-phosphor-plug-charging class="h-3.5 w-3.5" wire:loading.remove wire:target="testConnection" />
-                    <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="testConnection" />
-                    Tes Koneksi
+                    <x-loading-label target="testConnection" loading="Menguji..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                        <x-phosphor-plug-charging class="h-3.5 w-3.5 shrink-0" />
+                        <span>Tes Koneksi</span>
+                    </x-loading-label>
                 </button>
             </div>
 
@@ -245,9 +246,10 @@
                 wire:target="save"
                 class="flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
-                <x-phosphor-floppy-disk class="h-4 w-4" wire:loading.remove wire:target="save" />
-                <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="save" />
-                Simpan Pengaturan
+                <x-loading-label target="save" loading="Menyimpan...">
+                    <x-phosphor-floppy-disk class="h-4 w-4 shrink-0" />
+                    <span>Simpan Pengaturan</span>
+                </x-loading-label>
             </button>
         </div>
 
@@ -401,9 +403,10 @@
 
         <div class="flex items-center justify-end gap-3">
             <button type="button" wire:click="testEmail" wire:loading.attr="disabled" wire:target="testEmail" class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
-                <x-phosphor-paper-plane-tilt class="h-3.5 w-3.5" wire:loading.remove wire:target="testEmail" />
-                <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="testEmail" />
-                Kirim Email Tes
+                <x-loading-label target="testEmail" loading="Mengirim..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                    <x-phosphor-paper-plane-tilt class="h-3.5 w-3.5 shrink-0" />
+                    <span>Kirim Email Tes</span>
+                </x-loading-label>
             </button>
         </div>
 
@@ -480,9 +483,10 @@
                 wire:target="save"
                 class="flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
-                <x-phosphor-floppy-disk class="h-4 w-4" wire:loading.remove wire:target="save" />
-                <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="save" />
-                Simpan Pengaturan
+                <x-loading-label target="save" loading="Menyimpan...">
+                    <x-phosphor-floppy-disk class="h-4 w-4 shrink-0" />
+                    <span>Simpan Pengaturan</span>
+                </x-loading-label>
             </button>
         </div>
     </div>
@@ -789,10 +793,10 @@
                 wire:target="backupNow"
                 class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-                <x-phosphor-download-simple class="h-3.5 w-3.5" wire:loading.remove wire:target="backupNow" />
-                <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="backupNow" />
-                <span wire:loading.remove wire:target="backupNow">Backup Sekarang</span>
-                <span wire:loading wire:target="backupNow">Membuat backup...</span>
+                <x-loading-label target="backupNow" loading="Membuat backup..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                    <x-phosphor-download-simple class="h-3.5 w-3.5 shrink-0" />
+                    <span>Backup Sekarang</span>
+                </x-loading-label>
             </button>
         </div>
         <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">
@@ -966,9 +970,10 @@
                 wire:target="save"
                 class="flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
-                <x-phosphor-floppy-disk class="h-4 w-4" wire:loading.remove wire:target="save" />
-                <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="save" />
-                Simpan Pengaturan
+                <x-loading-label target="save" loading="Menyimpan...">
+                    <x-phosphor-floppy-disk class="h-4 w-4 shrink-0" />
+                    <span>Simpan Pengaturan</span>
+                </x-loading-label>
             </button>
         </div>
     </div>

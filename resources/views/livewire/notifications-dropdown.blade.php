@@ -27,10 +27,11 @@
                     wire:click="markAllAsRead"
                     wire:loading.attr="disabled"
                     wire:target="markAllAsRead"
-                    class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-medium text-accent-600 transition hover:text-accent-700 disabled:opacity-60 dark:text-accent-400 dark:hover:text-accent-300"
+                    class="inline-flex shrink-0 items-center whitespace-nowrap text-xs font-medium text-accent-600 transition hover:text-accent-700 disabled:opacity-60 dark:text-accent-400 dark:hover:text-accent-300"
                 >
-                    <x-phosphor-spinner class="h-3 w-3 animate-spin" wire:loading wire:target="markAllAsRead" />
-                    Tandai semua dibaca
+                    <x-loading-label target="markAllAsRead" spinner="h-3 w-3" gap="gap-1.5">
+                        Tandai semua dibaca
+                    </x-loading-label>
                 </button>
             @endif
         </div>
@@ -76,7 +77,11 @@
                         </span>
                     </span>
 
-                    <x-phosphor-spinner class="mt-1 h-3.5 w-3.5 shrink-0 animate-spin text-zinc-400" wire:loading wire:target="open('{{ $notification->id }}')" />
+                    {{-- Reserved, not inserted: growing a column here would reflow the
+                    notification's own text just as it is being opened. --}}
+                    <span class="mt-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                        <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin text-zinc-400" wire:loading wire:target="open('{{ $notification->id }}')" />
+                    </span>
                 </button>
             @empty
                 <p class="px-4 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400">Belum ada notifikasi.</p>

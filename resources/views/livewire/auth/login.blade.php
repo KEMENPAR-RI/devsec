@@ -81,14 +81,10 @@
             wire:target="login"
             class="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-600 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-700 focus:outline-none focus:ring-2 focus:ring-accent-500/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
         >
-            <div wire:loading.remove.flex wire:target="login" class="flex items-center leading-none gap-2">
-                <x-phosphor-sign-in class="h-4 w-4" />
-                <span class="inline-flex items-center leading-none">Masuk</span>
-            </div>
-            <div wire:loading.flex wire:target="login" class="flex items-center leading-none gap-2">
-                <x-phosphor-spinner class="animate-spin h-4 w-4" />
-                <span class="inline-flex items-center leading-none">Loading...</span>
-            </div>
+            <x-loading-label target="login" loading="Memproses...">
+                <x-phosphor-sign-in class="h-4 w-4 shrink-0" />
+                <span>Masuk</span>
+            </x-loading-label>
         </button>
     </form>
 

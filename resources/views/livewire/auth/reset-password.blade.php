@@ -84,14 +84,10 @@
             wire:target="resetPassword"
             class="flex w-full items-center justify-center gap-2 rounded-lg bg-accent-600 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-700 focus:outline-none focus:ring-2 focus:ring-accent-500/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
         >
-            <div wire:loading.remove.flex wire:target="resetPassword" class="flex items-center gap-2 leading-none">
-                <x-phosphor-check class="h-4 w-4" />
-                <span class="inline-flex items-center leading-none">Simpan Kata Sandi Baru</span>
-            </div>
-            <div wire:loading.flex wire:target="resetPassword" class="flex items-center gap-2 leading-none">
-                <x-phosphor-spinner class="h-4 w-4 animate-spin" />
-                <span class="inline-flex items-center leading-none">Menyimpan...</span>
-            </div>
+            <x-loading-label target="resetPassword" loading="Menyimpan...">
+                <x-phosphor-check class="h-4 w-4 shrink-0" />
+                <span>Simpan Kata Sandi Baru</span>
+            </x-loading-label>
         </button>
     </form>
 

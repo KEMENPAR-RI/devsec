@@ -243,9 +243,7 @@
                             wire:target="save"
                             class="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
                         >
-                            <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="save" />
-                            <span wire:loading.remove wire:target="save">Simpan</span>
-                            <span wire:loading wire:target="save">Menyimpan...</span>
+                            <x-loading-label target="save" loading="Menyimpan...">Simpan</x-loading-label>
                         </button>
                     </div>
                 </form>

@@ -93,8 +93,9 @@
                         wire:target="saveThreshold"
                         class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
-                        <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="saveThreshold" />
-                        Simpan Ambang Batas
+                        <x-loading-label target="saveThreshold" spinner="h-3.5 w-3.5" gap="gap-1.5">
+                            Simpan Ambang Batas
+                        </x-loading-label>
                     </button>
                 @endcan
                 @error('threshold')
@@ -122,10 +123,10 @@
                         wire:target="addKeyword"
                         class="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-70"
                     >
-                        <x-phosphor-plus class="h-3.5 w-3.5" wire:loading.remove wire:target="addKeyword" />
-                        <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="addKeyword" />
-                        <span wire:loading.remove wire:target="addKeyword">Tambah</span>
-                        <span wire:loading wire:target="addKeyword">Menambahkan...</span>
+                        <x-loading-label target="addKeyword" loading="Menambahkan..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                            <x-phosphor-plus class="h-3.5 w-3.5 shrink-0" />
+                            <span>Tambah</span>
+                        </x-loading-label>
                     </button>
                     {{-- A new spam wave arrives as a list, not as one phrase at a time. --}}
                     <button
@@ -374,8 +375,9 @@
                                                     wire:target="markFindingReviewed('{{ $finding->uuid }}')"
                                                     class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                                                 >
-                                                    <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markFindingReviewed('{{ $finding->uuid }}')" />
-                                                    Sudah Ditangani
+                                                    <x-loading-label target="markFindingReviewed('{{ $finding->uuid }}')" spinner="h-3.5 w-3.5" gap="gap-1.5">
+                                                        Sudah Ditangani
+                                                    </x-loading-label>
                                                 </button>
                                                 <button
                                                     type="button"
@@ -384,8 +386,9 @@
                                                     wire:target="markFindingIgnored('{{ $finding->uuid }}')"
                                                     class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                                                 >
-                                                    <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="markFindingIgnored('{{ $finding->uuid }}')" />
-                                                    Abaikan
+                                                    <x-loading-label target="markFindingIgnored('{{ $finding->uuid }}')" spinner="h-3.5 w-3.5" gap="gap-1.5">
+                                                        Abaikan
+                                                    </x-loading-label>
                                                 </button>
                                             @endif
                                             @can('deteksi-judol.delete')
@@ -546,9 +549,7 @@
                             wire:target="bulkAddKeywords"
                             class="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
                         >
-                            <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="bulkAddKeywords" />
-                            <span wire:loading.remove wire:target="bulkAddKeywords">Tambahkan</span>
-                            <span wire:loading wire:target="bulkAddKeywords">Memproses...</span>
+                            <x-loading-label target="bulkAddKeywords" loading="Memproses...">Tambahkan</x-loading-label>
                         </button>
                     </div>
                 </form>

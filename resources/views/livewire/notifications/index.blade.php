@@ -18,10 +18,11 @@
                     wire:click="markAllAsRead"
                     wire:loading.attr="disabled"
                     wire:target="markAllAsRead"
-                    class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    class="inline-flex items-center whitespace-nowrap rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 >
-                    <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="markAllAsRead" />
-                    Tandai semua dibaca
+                    <x-loading-label target="markAllAsRead" gap="gap-1.5">
+                        Tandai semua dibaca
+                    </x-loading-label>
                 </button>
             @endcan
             @can('notifikasi.delete')

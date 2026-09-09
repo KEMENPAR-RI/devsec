@@ -167,12 +167,12 @@
                                                 wire:click="investigate('{{ $incident->uuid }}')"
                                                 wire:loading.attr="disabled"
                                                 wire:target="investigate('{{ $incident->uuid }}')"
-                                                class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-zinc-500 transition hover:text-zinc-700 disabled:opacity-60 dark:text-zinc-400 dark:hover:text-zinc-200"
+                                                class="inline-flex items-center whitespace-nowrap text-xs font-medium text-zinc-500 transition hover:text-zinc-700 disabled:opacity-60 dark:text-zinc-400 dark:hover:text-zinc-200"
                                             >
-                                                <x-phosphor-sparkle class="h-3.5 w-3.5" wire:loading.remove wire:target="investigate('{{ $incident->uuid }}')" />
-                                                <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="investigate('{{ $incident->uuid }}')" />
-                                                <span wire:loading.remove wire:target="investigate('{{ $incident->uuid }}')">{{ $incident->ai_analysis ? 'Selidiki Ulang' : 'Selidiki Penyebab' }}</span>
-                                                <span wire:loading wire:target="investigate('{{ $incident->uuid }}')">Menganalisis...</span>
+                                                <x-loading-label target="investigate('{{ $incident->uuid }}')" loading="Menganalisis..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                                                    <x-phosphor-sparkle class="h-3.5 w-3.5 shrink-0" />
+                                                    <span>{{ $incident->ai_analysis ? 'Selidiki Ulang' : 'Selidiki Penyebab' }}</span>
+                                                </x-loading-label>
                                             </button>
                                             @if ($incident->status === 'open')
                                                 <span class="text-zinc-300 dark:text-zinc-700">&middot;</span>
@@ -181,11 +181,11 @@
                                                     wire:click="resolve('{{ $incident->uuid }}')"
                                                     wire:loading.attr="disabled"
                                                     wire:target="resolve('{{ $incident->uuid }}')"
-                                                    class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-zinc-500 transition hover:text-zinc-700 disabled:opacity-60 dark:text-zinc-400 dark:hover:text-zinc-200"
+                                                    class="inline-flex items-center whitespace-nowrap text-xs font-medium text-zinc-500 transition hover:text-zinc-700 disabled:opacity-60 dark:text-zinc-400 dark:hover:text-zinc-200"
                                                 >
-                                                    <x-phosphor-spinner class="h-3.5 w-3.5 animate-spin" wire:loading wire:target="resolve('{{ $incident->uuid }}')" />
-                                                    <span wire:loading.remove wire:target="resolve('{{ $incident->uuid }}')">Tandai Selesai</span>
-                                                    <span wire:loading wire:target="resolve('{{ $incident->uuid }}')">Menandai...</span>
+                                                    <x-loading-label target="resolve('{{ $incident->uuid }}')" loading="Menandai..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                                                        Tandai Selesai
+                                                    </x-loading-label>
                                                 </button>
                                             @endif
                                         @endcan

@@ -44,10 +44,11 @@ class DashboardStatusSyncTest extends TestCase
         $this->assertSame('0', $this->statCard($stats, 'Down')['value']);
     }
 
-    public function test_offline_and_attacked_sites_are_still_counted_as_down(): void
+    public function test_each_outage_flavour_gets_its_own_card(): void
     {
-        // They are separate dots, but an operator reading "Down: 2" expects every
-        // site that is not serving to be in that number.
+        // They are separate dots for a reason, so they are separate cards too: a
+        // site dark for three days and one that stopped answering a minute ago need
+        // different responses, and a single "Down: 2" total hid that.
         foreach ([now(), now()->subDays(3)] as $detectedAt) {
             $website = Website::factory()->create(['last_status' => 'down']);
             Incident::create([
@@ -56,10 +57,13 @@ class DashboardStatusSyncTest extends TestCase
             ]);
         }
 
-        $this->assertSame('2', $this->statCard($this->stats(), 'Down')['value']);
+        $stats = $this->stats();
+
+        $this->assertSame('1', $this->statCard($stats, 'Down')['value']);
+        $this->assertSame('1', $this->statCard($stats, 'Offline')['value']);
     }
 
-    public function test_the_cards_add_up_to_the_total(): void
+    public function test_the_status_cards_add_up_to_the_total(): void
     {
         Website::factory()->count(2)->create(['last_status' => 'up']);
         Website::factory()->create(['last_status' => 'down']);
@@ -67,12 +71,30 @@ class DashboardStatusSyncTest extends TestCase
 
         $stats = $this->stats();
         $total = (int) $this->statCard($stats, 'Total Situs')['value'];
-        $counted = (int) $this->statCard($stats, 'Online')['value']
-            + (int) $this->statCard($stats, 'Down')['value'];
 
-        // The remainder is the never-checked site, which belongs to no card.
+        // Every site lands on exactly one status card now that none of them are
+        // folded into a shared total, so these have to account for all of them.
+        $counted = collect(['Online', 'Down - Dugaan DDoS', 'Down', 'Offline', 'Jaringan Internal', 'Belum Diketahui'])
+            ->sum(fn (string $label) => (int) $this->statCard($stats, $label)['value']);
+
         $this->assertSame(4, $total);
-        $this->assertSame(3, $counted);
+        $this->assertSame($total, $counted);
+    }
+
+    public function test_the_load_level_cards_count_the_sites_that_answered(): void
+    {
+        // 3x its own baseline reads as heavy - the same grading the list view's
+        // "Beban" column shows, so the card and the column cannot disagree.
+        $website = Website::factory()->create(['last_status' => 'up']);
+
+        foreach ([200, 200, 200, 200, 3000] as $i => $ms) {
+            $website->checks()->create([
+                'is_up' => true, 'status_code' => 200, 'response_time_ms' => $ms,
+                'checked_at' => now()->subMinutes(10 - $i),
+            ]);
+        }
+
+        $this->assertSame('1', $this->statCard($this->stats(), 'Beban Berat')['value']);
     }
 
     public function test_a_judol_incident_links_to_the_judol_page(): void

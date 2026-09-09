@@ -70,16 +70,16 @@
         <div class="flex shrink-0 flex-wrap items-center gap-2">
             @can('situs.update')
                 <button type="button" wire:click="scanJudolNow" wire:loading.attr="disabled" wire:target="scanJudolNow" class="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
-                    <x-phosphor-shield-warning class="h-4 w-4" wire:loading.remove wire:target="scanJudolNow" />
-                    <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="scanJudolNow" />
-                    <span wire:loading.remove wire:target="scanJudolNow">Cek Judol</span>
-                    <span wire:loading wire:target="scanJudolNow">Memindai...</span>
+                    <x-loading-label target="scanJudolNow" loading="Memindai...">
+                        <x-phosphor-shield-warning class="h-4 w-4 shrink-0" />
+                        <span>Cek Judol</span>
+                    </x-loading-label>
                 </button>
                 <button type="button" wire:click="checkNow" wire:loading.attr="disabled" wire:target="checkNow" class="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70">
-                    <x-phosphor-arrows-clockwise class="h-4 w-4" wire:loading.remove wire:target="checkNow" />
-                    <x-phosphor-spinner class="h-4 w-4 animate-spin" wire:loading wire:target="checkNow" />
-                    <span wire:loading.remove wire:target="checkNow">Cek Sekarang</span>
-                    <span wire:loading wire:target="checkNow">Mengecek...</span>
+                    <x-loading-label target="checkNow" loading="Mengecek...">
+                        <x-phosphor-arrows-clockwise class="h-4 w-4 shrink-0" />
+                        <span>Cek Sekarang</span>
+                    </x-loading-label>
                 </button>
             @endcan
         </div>

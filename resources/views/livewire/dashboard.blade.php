@@ -23,24 +23,24 @@
     </div>
 
     {{-- KPI stats --}}
-    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         @foreach ($stats as $i => $stat)
             <div
-                class="enter rounded-2xl border border-zinc-200 bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
-                style="animation-delay: {{ $i * 60 }}ms"
+                class="enter rounded-2xl border border-zinc-200 bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+                style="animation-delay: {{ $i * 40 }}ms"
             >
-                <div class="flex items-center gap-3">
-                    <span @class([
-                        'flex h-9 w-9 items-center justify-center rounded-lg',
-                        'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' => ($stat['tone'] ?? null) === 'down',
-                        'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400' => ($stat['tone'] ?? null) === 'up',
-                        'bg-accent-50 text-accent-600 dark:bg-accent-500/10 dark:text-accent-400' => empty($stat['tone']),
-                    ])>
-                        <x-dynamic-component :component="'phosphor-'.$stat['icon']" class="h-4.5 w-4.5" />
+                {{-- The colour arrives as a whole class string from Dashboard::TONES,
+                so adding a card colour is one entry there rather than another branch
+                here - and Tailwind still sees every class spelled out. --}}
+                <div class="flex items-center gap-2.5">
+                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg {{ $stat['accent'] }}">
+                        <x-dynamic-component :component="'phosphor-'.$stat['icon']" class="h-4 w-4" />
                     </span>
-                    <span class="text-sm text-zinc-500 dark:text-zinc-400">{{ $stat['label'] }}</span>
+                    {{-- Six columns leave no room for "Down - Dugaan DDoS" to wrap onto
+                    three lines, so it truncates and carries the full text on hover. --}}
+                    <span class="min-w-0 truncate text-xs text-zinc-500 dark:text-zinc-400" title="{{ $stat['label'] }}">{{ $stat['label'] }}</span>
                 </div>
-                <div class="mt-4 flex items-baseline gap-2">
+                <div class="mt-3">
                     <span class="font-mono text-2xl font-semibold text-zinc-900 dark:text-white">{{ $stat['value'] }}</span>
                 </div>
             </div>
@@ -119,13 +119,13 @@
             </div>
         </div>
 
-        @if (! $selectedWebsite)
+        @if ($responseSeries->isEmpty())
             <div class="flex flex-col items-center gap-2 px-5 py-14 text-center">
                 <x-phosphor-chart-line class="h-7 w-7 text-zinc-300 dark:text-zinc-600" />
-                <p class="text-sm text-zinc-500 dark:text-zinc-400">Pilih situs di atas untuk melihat grafik response time-nya.</p>
+                <p class="text-sm text-zinc-500 dark:text-zinc-400">
+                    {{ $selectedWebsite ? "Belum ada data pengecekan untuk {$selectedWebsite->name}." : 'Belum ada data pengecekan.' }}
+                </p>
             </div>
-        @elseif ($responseChecks->isEmpty())
-            <p class="mt-6 text-sm text-zinc-500 dark:text-zinc-400">Belum ada data pengecekan untuk {{ $selectedWebsite->name }}.</p>
         @else
             @php
                 $chartWidth = 1000;
@@ -134,24 +134,24 @@
                 $padBottom = 30;
                 $plotBottom = $chartHeight - $padBottom;
                 $plotHeight = $plotBottom - $padTop;
-                $maxMs = max(50, $responseChecks->max('response_time_ms'), $selectedWebsite->response_time_threshold_ms);
-                $n = $responseChecks->count();
+                $maxMs = max(50, $responseSeries->max('ms'), $responseThresholdMs ?? 0);
+                $n = $responseSeries->count();
 
                 $toY = fn (int $ms) => $padTop + $plotHeight - (min($ms, $maxMs) / $maxMs) * $plotHeight;
 
-                $points = $responseChecks->values()->map(fn ($check, $i) => [
+                $points = $responseSeries->values()->map(fn (array $point, int $i) => [
+                    ...$point,
                     'x' => round($n > 1 ? ($i / ($n - 1)) * $chartWidth : $chartWidth / 2, 1),
-                    'y' => round($toY($check->response_time_ms), 1),
-                    'check' => $check,
+                    'y' => round($toY($point['ms']), 1),
                 ]);
 
                 $linePath = $points->map(fn ($p) => "{$p['x']},{$p['y']}")->implode(' ');
                 $areaPath = "0,{$plotBottom} {$linePath} {$chartWidth},{$plotBottom}";
-                $thresholdY = round($toY($selectedWebsite->response_time_threshold_ms), 1);
+                $thresholdY = $responseThresholdMs ? round($toY($responseThresholdMs), 1) : null;
                 $last = $points->last();
             @endphp
 
-            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ $selectedWebsite->url }} &middot; {{ $n }} pengecekan terakhir</p>
+            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ $responseCaption }}</p>
 
             {{-- Hover tooltip: finds the nearest point to the pointer's X and shows its
             time + response time + status. All in Alpine (no chart library) - the point
@@ -162,9 +162,9 @@
                     points: @js($points->map(fn ($p) => [
                         'x' => $p['x'],
                         'y' => $p['y'],
-                        'time' => $p['check']->checked_at->format('d M Y, H:i'),
-                        'ms' => $p['check']->response_time_ms,
-                        'up' => $p['check']->is_up,
+                        'time' => $p['label'],
+                        'ms' => $p['ms'],
+                        'up' => $p['up'],
                     ])),
                     chartWidth: {{ $chartWidth }},
                     chartHeight: {{ $chartHeight }},
@@ -189,9 +189,13 @@
                     <text x="4" y="{{ $plotBottom - 4 }}" class="text-[10px] fill-zinc-400 dark:fill-zinc-500">0ms</text>
                     <text x="4" y="{{ $padTop + 9 }}" class="text-[10px] fill-zinc-400 dark:fill-zinc-500">{{ number_format($maxMs) }}ms</text>
 
-                    {{-- Threshold reference line --}}
-                    <line x1="0" y1="{{ $thresholdY }}" x2="{{ $chartWidth }}" y2="{{ $thresholdY }}" class="stroke-amber-400/70 dark:stroke-amber-500/60" stroke-width="1" />
-                    <text x="{{ $chartWidth - 4 }}" y="{{ $thresholdY - 4 }}" text-anchor="end" class="text-[10px] fill-amber-600 dark:fill-amber-400">Ambang batas {{ number_format($selectedWebsite->response_time_threshold_ms) }}ms</text>
+                    {{-- Threshold reference line. Only one site has a single threshold
+                    to draw against; the all-sites overview averages across sites that
+                    each set their own, so a line there would compare nothing. --}}
+                    @if ($thresholdY !== null)
+                        <line x1="0" y1="{{ $thresholdY }}" x2="{{ $chartWidth }}" y2="{{ $thresholdY }}" class="stroke-amber-400/70 dark:stroke-amber-500/60" stroke-width="1" />
+                        <text x="{{ $chartWidth - 4 }}" y="{{ $thresholdY - 4 }}" text-anchor="end" class="text-[10px] fill-amber-600 dark:fill-amber-400">Ambang batas {{ number_format($responseThresholdMs) }}ms</text>
+                    @endif
 
                     {{-- Area wash under the line --}}
                     <polygon points="{{ $areaPath }}" class="fill-accent-500/10 dark:fill-accent-400/10" />
@@ -212,11 +216,13 @@
                         class="stroke-white dark:stroke-zinc-900"
                     />
 
-                    {{-- Per-check dots: red when that check counted as down (incl. over-threshold, see WebsiteChecker) --}}
+                    {{-- Per-point dots: red when a check there counted as down (incl.
+                    over-threshold, see WebsiteChecker). In the all-sites view a single
+                    failure anywhere in that hour is enough - see Dashboard::overviewSeries(). --}}
                     @foreach ($points as $p)
                         <circle
                             cx="{{ $p['x'] }}" cy="{{ $p['y'] }}" r="3"
-                            @class(['fill-red-500' => ! $p['check']->is_up, 'fill-accent-500 dark:fill-accent-400' => $p['check']->is_up])
+                            @class(['fill-red-500' => ! $p['up'], 'fill-accent-500 dark:fill-accent-400' => $p['up']])
                         />
                     @endforeach
 
@@ -224,12 +230,12 @@
                     @if ($last)
                         <circle
                             cx="{{ $last['x'] }}" cy="{{ $last['y'] }}" r="5" stroke-width="2"
-                            class="stroke-white dark:stroke-zinc-900 {{ $last['check']->is_up ? 'fill-accent-500 dark:fill-accent-400' : 'fill-red-500' }}"
+                            class="stroke-white dark:stroke-zinc-900 {{ $last['up'] ? 'fill-accent-500 dark:fill-accent-400' : 'fill-red-500' }}"
                         />
                         <text
                             x="{{ $last['x'] - 8 }}" y="{{ max(10, $last['y'] - 10) }}" text-anchor="end"
-                            @class(['text-[11px] font-semibold', 'fill-red-600 dark:fill-red-400' => ! $last['check']->is_up, 'fill-zinc-900 dark:fill-white' => $last['check']->is_up])
-                        >{{ $last['check']->response_time_ms }}ms</text>
+                            @class(['text-[11px] font-semibold', 'fill-red-600 dark:fill-red-400' => ! $last['up'], 'fill-zinc-900 dark:fill-white' => $last['up']])
+                        >{{ $last['ms'] }}ms</text>
                     @endif
                 </svg>
 
@@ -254,8 +260,8 @@
             </div>
 
             <div class="mt-1 flex justify-between text-[11px] text-zinc-400">
-                <span>{{ $responseChecks->first()->checked_at->format('d M H:i') }}</span>
-                <span>{{ $responseChecks->last()->checked_at->format('d M H:i') }}</span>
+                <span>{{ $responseSeries->first()['label'] }}</span>
+                <span>{{ $responseSeries->last()['label'] }}</span>
             </div>
         @endif
     </div>

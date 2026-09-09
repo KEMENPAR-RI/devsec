@@ -51,15 +51,50 @@ class DashboardTrafficChartTest extends TestCase
         $this->assertSame(100, $emptyDayEntry['value']);
     }
 
-    public function test_no_website_selected_shows_the_picker_prompt(): void
+    public function test_the_chart_opens_on_the_all_sites_average(): void
+    {
+        // No pick, but the panel still carries something: the dashboard's own
+        // question is "how is everything doing", and the per-site view is the
+        // drill-down. Waiting on a combobox left the largest panel on the page blank.
+        $user = User::factory()->create();
+        $website = Website::factory()->create();
+        $website->checks()->create([
+            'is_up' => true, 'status_code' => 200, 'response_time_ms' => 420, 'checked_at' => now()->subHour(),
+        ]);
+
+        Livewire::actingAs($user)
+            ->test(Dashboard::class)
+            ->assertSee('Semua situs')
+            ->assertSee('420ms')
+            // Each site sets its own threshold, so the averaged view has no single
+            // line to draw against.
+            ->assertDontSee('Ambang batas');
+    }
+
+    public function test_the_all_sites_average_marks_an_hour_that_carried_a_failure(): void
+    {
+        // The mean alone would bury one site's outage under every other site that
+        // answered fine, so the point is coloured from the failures, not the average.
+        $user = User::factory()->create();
+        $website = Website::factory()->create();
+        $website->checks()->createMany([
+            ['is_up' => true, 'status_code' => 200, 'response_time_ms' => 200, 'checked_at' => now()->subMinutes(20)],
+            ['is_up' => false, 'status_code' => 500, 'response_time_ms' => 200, 'checked_at' => now()->subMinutes(10)],
+        ]);
+
+        $html = Livewire::actingAs($user)->test(Dashboard::class)->html();
+
+        $this->assertStringContainsString('fill-red-500', $html);
+    }
+
+    public function test_the_chart_shows_an_empty_state_when_nothing_has_been_checked(): void
     {
         $user = User::factory()->create();
         Website::factory()->create();
 
         Livewire::actingAs($user)
             ->test(Dashboard::class)
-            ->assertSee('Pilih situs di atas')
-            ->assertDontSee('Ambang batas');
+            ->assertSee('Belum ada data pengecekan.');
     }
 
     public function test_selecting_a_website_renders_its_traffic_chart(): void
@@ -119,7 +154,7 @@ class DashboardTrafficChartTest extends TestCase
             ->assertSet('selectedWebsiteUuid', $website->uuid)
             ->call('selectWebsite', '')
             ->assertSet('selectedWebsiteUuid', null)
-            ->assertSee('Pilih situs di atas');
+            ->assertSee('Semua situs');
     }
 
     public function test_the_picker_is_disabled_when_there_are_no_websites(): void
