@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasUuid;
+use App\Services\Monitoring\JudolScanner;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -140,10 +141,35 @@ class Website extends Model
      *
      * Mirrors the existing "only when up" gate around SSL inspection in
      * WebsiteChecker::maybeCheckSsl().
+     *
+     * 'down' is not automatically excluded, because the uptime probe calls a site
+     * down for two different reasons. A host that never answers has nothing to
+     * crawl, as above. But a host answering 403 - a WAF refusing the probe while
+     * the site itself serves normally - is up in every sense that matters here,
+     * and skipping it is how a compromised site ends up with judol incidents but
+     * an empty findings list: manual URL checks kept flagging pages, while the
+     * crawl that builds findings was never allowed to run. See
+     * JudolScanner::crawl(), which stops on its own if nothing is reachable.
      */
     public function isScannable(): bool
     {
-        return $this->last_status === 'up';
+        if ($this->last_status === 'up') {
+            return true;
+        }
+
+        if ($this->last_status !== 'down') {
+            return false;
+        }
+
+        // Only an access refusal, not any answer at all: a server erroring 5xx on
+        // its own homepage is failing, and its other pages will fail the same way.
+        // The absence of a status means the request never got that far (timeout,
+        // DNS, refused connection) - genuinely nothing to crawl.
+        return in_array(
+            (int) $this->checks()->latest('checked_at')->value('status_code'),
+            JudolScanner::ACCESS_REFUSED_STATUSES,
+            true
+        );
     }
 
     /**

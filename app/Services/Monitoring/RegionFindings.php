@@ -4,6 +4,8 @@ namespace App\Services\Monitoring;
 
 use App\Models\JudolFinding;
 use App\Models\Website;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Collects per-region evidence across a whole crawl, then writes it out as one
@@ -135,66 +137,93 @@ class RegionFindings
         $created = [];
 
         foreach ($this->regions as $bucket) {
-            $urls = $bucket['urls'];
-            // count($seen), not count($urls): the stored list is capped, the count
-            // must still be the real one - "muncul di 40 halaman" is the headline.
-            $count = count($bucket['seen']);
-
-            $existing = $website->judolFindings()
-                ->where('region_key', $bucket['region']['key'])
-                ->where('attack_type', $bucket['type'])
-                ->first();
-
-            $attributes = [
-                'region_label' => $bucket['region']['label'],
-                'region_selector' => $bucket['region']['selector'],
-                'linked_domains' => array_keys($bucket['domains']),
-                'anchor_texts' => array_keys($bucket['anchors']),
-                'matched_keywords' => array_keys($bucket['keywords']),
-                'image_urls' => array_keys($bucket['images']),
-                'affected_urls' => array_slice($urls, 0, JudolFinding::MAX_STORED_URLS),
-                'affected_count' => $count,
-                'last_seen_at' => now(),
-            ];
-
-            // Only written when this crawl actually produced them. A crawl that hit
-            // the fallback region has no snippet to offer, and blanking a good one
-            // recorded earlier would lose the only pointer at the exact node.
-            foreach ([
-                'evidence_html' => $bucket['snippet'],
-                'dom_path' => $bucket['path'],
-                'evidence_nodes' => array_values($bucket['nodes']) ?: null,
-            ] as $column => $value) {
-                if (filled($value)) {
-                    $attributes[$column] = $value;
-                }
+            // Per region, not around the whole loop: these rows are independent
+            // findings, and one that will not store - overlong evidence, a column
+            // that cannot hold what a compromised page produced - must cost only
+            // itself. Wrapping the loop instead is how a single oversized dom_path
+            // wiped out every finding for a site, leaving it with dozens of
+            // detections and an empty Deteksi Judol list.
+            try {
+                $created = [...$created, ...$this->persistRegion($website, $bucket, $partial)];
+            } catch (Throwable $e) {
+                Log::error(sprintf(
+                    'RegionFindings: gagal menyimpan temuan %s/%s untuk %s: %s',
+                    $bucket['region']['key'],
+                    $bucket['type'],
+                    $website->url,
+                    $e->getMessage()
+                ));
             }
-
-            if ($existing) {
-                // A full crawl REPLACES: it just looked at every page, so a shorter
-                // list means pages were cleaned and the count should fall. Checking a
-                // single URL saw one page and knows nothing about the rest, so there
-                // it merges - overwriting would drop a sitewide finding to "1 halaman"
-                // the moment somebody re-checked one of its forty pages.
-                if ($partial) {
-                    $attributes = $this->mergedInto($existing, $attributes);
-                }
-
-                $existing->update($attributes);
-
-                continue;
-            }
-
-            $created[] = $website->judolFindings()->create([
-                ...$attributes,
-                'region_key' => $bucket['region']['key'],
-                'attack_type' => $bucket['type'],
-                'status' => 'new',
-                'first_seen_at' => now(),
-            ]);
         }
 
         return $created;
+    }
+
+    /**
+     * Writes one accumulated region, creating or refreshing its row.
+     *
+     * @param  array<string, mixed>  $bucket
+     * @return array<int, JudolFinding> the finding if it was newly created
+     */
+    protected function persistRegion(Website $website, array $bucket, bool $partial): array
+    {
+        $urls = $bucket['urls'];
+        // count($seen), not count($urls): the stored list is capped, the count
+        // must still be the real one - "muncul di 40 halaman" is the headline.
+        $count = count($bucket['seen']);
+
+        $existing = $website->judolFindings()
+            ->where('region_key', $bucket['region']['key'])
+            ->where('attack_type', $bucket['type'])
+            ->first();
+
+        $attributes = [
+            'region_label' => $bucket['region']['label'],
+            'region_selector' => $bucket['region']['selector'],
+            'linked_domains' => array_keys($bucket['domains']),
+            'anchor_texts' => array_keys($bucket['anchors']),
+            'matched_keywords' => array_keys($bucket['keywords']),
+            'image_urls' => array_keys($bucket['images']),
+            'affected_urls' => array_slice($urls, 0, JudolFinding::MAX_STORED_URLS),
+            'affected_count' => $count,
+            'last_seen_at' => now(),
+        ];
+
+        // Only written when this crawl actually produced them. A crawl that hit
+        // the fallback region has no snippet to offer, and blanking a good one
+        // recorded earlier would lose the only pointer at the exact node.
+        foreach ([
+            'evidence_html' => $bucket['snippet'],
+            'dom_path' => $bucket['path'],
+            'evidence_nodes' => array_values($bucket['nodes']) ?: null,
+        ] as $column => $value) {
+            if (filled($value)) {
+                $attributes[$column] = $value;
+            }
+        }
+
+        if ($existing) {
+            // A full crawl REPLACES: it just looked at every page, so a shorter
+            // list means pages were cleaned and the count should fall. Checking a
+            // single URL saw one page and knows nothing about the rest, so there
+            // it merges - overwriting would drop a sitewide finding to "1 halaman"
+            // the moment somebody re-checked one of its forty pages.
+            if ($partial) {
+                $attributes = $this->mergedInto($existing, $attributes);
+            }
+
+            $existing->update($attributes);
+
+            return [];
+        }
+
+        return [$website->judolFindings()->create([
+            ...$attributes,
+            'region_key' => $bucket['region']['key'],
+            'attack_type' => $bucket['type'],
+            'status' => 'new',
+            'first_seen_at' => now(),
+        ])];
     }
 
     /**

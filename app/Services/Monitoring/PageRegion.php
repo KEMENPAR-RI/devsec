@@ -73,6 +73,19 @@ class PageRegion
     protected const MAX_SNIPPET = 2000;
 
     /**
+     * Characters of breadcrumb kept. A deeply nested theme - a WordPress footer
+     * widget sits ten wrappers down, each with its own class - produces a path well
+     * past this, and judol_findings.dom_path is a bounded column. An unbounded path
+     * did not truncate there, it threw, and the whole persist() failed: the site
+     * showed per-page detections while Deteksi Judol stayed empty for it.
+     *
+     * Trimmed from the LEFT, because the specific end is the useful end: the outer
+     * wrappers are the part a reader can infer, while the final selectors are what
+     * they paste into devtools.
+     */
+    protected const MAX_PATH = 500;
+
+    /**
      * A stable key for the region containing this element, plus a label an
      * operator can act on.
      *
@@ -121,7 +134,31 @@ class PageRegion
             $depth++;
         }
 
-        return implode(' > ', array_reverse($segments));
+        return $this->trimPath(implode(' > ', array_reverse($segments)));
+    }
+
+    /**
+     * Keeps a breadcrumb within MAX_PATH, dropping whole segments off the front
+     * rather than cutting mid-selector - a half-written selector is not pasteable,
+     * and pasteable is the entire point of this string. The leading ellipsis says
+     * the route continues upward.
+     */
+    protected function trimPath(string $path): string
+    {
+        if (mb_strlen($path) <= self::MAX_PATH) {
+            return $path;
+        }
+
+        $segments = explode(' > ', $path);
+
+        while (count($segments) > 1 && mb_strlen('... > '.implode(' > ', $segments)) > self::MAX_PATH) {
+            array_shift($segments);
+        }
+
+        // A single segment longer than the cap on its own (a pathological class
+        // list) still has to fit, so it is cut outright - there is nothing left to
+        // drop.
+        return mb_strimwidth('... > '.implode(' > ', $segments), 0, self::MAX_PATH, '');
     }
 
     /**

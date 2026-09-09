@@ -125,7 +125,7 @@ class JudolScanner
 
         // One notification for the whole crawl, not one per flagged page - see
         // JudolContentDetected.
-        $this->notifyFindings($website, $found);
+        $this->notifyFindings($website, $found, $newFindings);
 
         return $found->count();
     }
@@ -525,17 +525,30 @@ class JudolScanner
         $visited[$homepage] = true;
         $root = $this->fetchWithError($homepage);
 
+        // A homepage that fails does NOT always mean a dead site. A WAF answering
+        // 403 to the crawler - while every article underneath it still serves
+        // fine - is the common shape of exactly the site this scanner exists for:
+        // compromised, and now shielding its front door. Returning here left those
+        // sites with per-page detections from manual checks (which fetch one URL
+        // directly) but no findings at all, because findings are only ever built
+        // from a crawl. So a responding server keeps going by way of the sitemap
+        // and the pages already on record; only a server that does not answer at
+        // all is still treated as nothing to crawl.
         if ($root['body'] === null) {
-            Log::warning("JudolScanner: menghentikan crawl {$website->url} - halaman utama tidak dapat diambil: {$root['error']}");
+            if (! $this->accessRefused($root['error'])) {
+                Log::warning("JudolScanner: menghentikan crawl {$website->url} - halaman utama tidak dapat diambil: {$root['error']}");
 
-            return;
+                return;
+            }
+
+            Log::info("JudolScanner: halaman utama {$website->url} ditolak ({$root['error']}), melanjutkan lewat sitemap dan URL yang sudah terdeteksi.");
+        } else {
+            yield $homepage => ['html' => $root['body'], 'last_modified' => $root['last_modified']];
         }
-
-        yield $homepage => ['html' => $root['body'], 'last_modified' => $root['last_modified']];
 
         $queue = [];
 
-        if ($maxDepth > 0) {
+        if ($maxDepth > 0 && $root['body'] !== null) {
             foreach ($this->extractLinks($root['body'], $homepage, $host) as $link) {
                 if (! isset($visited[$link])) {
                     $queue[] = [$link, 1];
@@ -545,6 +558,14 @@ class JudolScanner
 
         foreach ($this->sitemapUrls($website) as $sitemapUrl) {
             $queue[] = [$sitemapUrl, 0];
+        }
+
+        // URLs this site was already flagged on, as a seed of last resort. When the
+        // homepage is blocked and the sitemap is missing or blocked too, these are
+        // the only addresses known to exist - and they are the ones that matter,
+        // since each is a page that previously matched.
+        foreach ($website->judolDetections()->pluck('url') as $knownUrl) {
+            $queue[] = [$knownUrl, 0];
         }
 
         while ($queue && count($visited) < $maxPages) {
@@ -690,6 +711,35 @@ class JudolScanner
         }
 
         return ['body' => $response->body(), 'error' => null, 'last_modified' => $this->parseLastModified($response->header('Last-Modified'))];
+    }
+
+    /**
+     * HTTP statuses that mean "this request was refused", not "this site is broken".
+     *
+     * A WAF shielding the homepage answers one of these while every article behind
+     * it still serves normally - which is exactly the site this scanner exists for.
+     * 5xx is deliberately absent: a server erroring on its own homepage is failing,
+     * and the rest of its pages will fail the same way, so crawling on would burn
+     * the job's whole timeout budget to learn nothing.
+     */
+    public const ACCESS_REFUSED_STATUSES = [401, 403, 405, 406, 409, 418, 429];
+
+    /**
+     * Whether a failed homepage fetch is a locked door rather than a dead site.
+     *
+     * fetchWithError() reports an HTTP status ("HTTP 403") when the server answered
+     * and refused, and a transport message (timeout, DNS failure, connection
+     * refused) when nothing answered at all. Only a refusal is worth crawling past:
+     * it says the host is up and serving, it just does not like this particular
+     * request.
+     */
+    protected function accessRefused(?string $error): bool
+    {
+        if ($error === null || ! preg_match('/^HTTP (\d{3})$/', $error, $m)) {
+            return false;
+        }
+
+        return in_array((int) $m[1], self::ACCESS_REFUSED_STATUSES, true);
     }
 
     /**
@@ -1498,12 +1548,25 @@ class JudolScanner
      * news, so it must never generate another email or dropdown entry; only a
      * brand-new detection or a page that genuinely changed since last time does.
      *
+     * A newly recorded INJECTION SITE counts as news too, even when every page it
+     * covers was already flagged. Those are two different discoveries: the pages
+     * said "these are dirty", the finding says "and here is the one block they all
+     * render". It also covers the case where findings could not be written at all
+     * for a while - a site then has its whole injection reported for the first time
+     * on the crawl that finally stores it, and staying silent there is how a real
+     * discovery reaches nobody.
+     *
      * @param  Collection<int, JudolDetection>  $found
+     * @param  array<int, JudolFinding>  $newFindings  injection sites recorded for the first time
      */
-    protected function notifyFindings(Website $website, Collection $found): void
+    protected function notifyFindings(Website $website, Collection $found, array $newFindings = []): void
     {
         $found = $found->filter(fn (JudolDetection $detection) => $detection->wasRecentlyCreated
             || $detection->wasChanged('content_hash'))->values();
+
+        if ($found->isEmpty() && $newFindings !== []) {
+            $found = $this->detectionsBehind($website, $newFindings);
+        }
 
         if ($found->isEmpty()) {
             return;
@@ -1511,6 +1574,35 @@ class JudolScanner
 
         app(MailSettings::class)->applyToRuntime();
         Notification::send(User::all(), new JudolContentDetected($website, $found->values()));
+    }
+
+    /**
+     * The stored detections for the pages a set of new findings covers.
+     *
+     * The notification speaks in detections - URLs, keywords, the incident to open -
+     * so a finding-driven alert is expressed through the rows its pages already
+     * have. Capped at the notification's own listing limit plus enough to make its
+     * "dan N lainnya" honest, rather than loading a sitewide injection's every page.
+     *
+     * @param  array<int, JudolFinding>  $newFindings
+     * @return Collection<int, JudolDetection>
+     */
+    protected function detectionsBehind(Website $website, array $newFindings): Collection
+    {
+        $urls = collect($newFindings)
+            ->flatMap(fn (JudolFinding $finding) => $finding->affected_urls ?? [])
+            ->unique()
+            ->take(JudolFinding::MAX_STORED_URLS)
+            ->values();
+
+        if ($urls->isEmpty()) {
+            return collect();
+        }
+
+        return $website->judolDetections()
+            ->whereIn('url', $urls->all())
+            ->orderBy('detected_at')
+            ->get();
     }
 
     /**

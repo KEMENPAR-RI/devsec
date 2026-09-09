@@ -239,12 +239,6 @@
                     @endif
                 </svg>
 
-                {{-- Floating tooltip, positioned over the hovered point --}}
-                {{-- Clamped to 12%-88%: centred on the point via -translate-x-1/2, so
-                without a clamp a hover near either end leaves half the tooltip
-                hanging outside the chart. That overflow is what let the dashboard
-                be dragged sideways on a phone, and it left the page offset after
-                the tooltip disappeared. --}}
                 <div
                     x-show="hovered" x-cloak
                     class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow-lg dark:bg-zinc-700"
