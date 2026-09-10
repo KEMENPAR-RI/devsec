@@ -15,6 +15,11 @@
     sequential loop re-scans markup it just inserted, so a term like "mark" or a
     domain sharing a substring with a Tailwind class would start matching the
     highlighter's own output.
+
+    Order matters: escape, then lay out, then highlight. Laying out escaped text
+    keeps EvidenceMarkup working on inert characters, and doing it before the
+    highlight keeps our own <mark> tags - the only real HTML here - out of the
+    indenter's reach.
 --}}
 @php
     $snippet = trim((string) $html);
@@ -27,7 +32,10 @@
         ->map(fn (string $term) => preg_quote(e(trim($term)), '/'))
         ->all();
 
-    $rendered = e($snippet);
+    // Stored squished onto one line by PageRegion::snippet(), which is right for a
+    // database column and unreadable on screen - a spammed widget arrives as two
+    // thousand unbroken characters with its nesting invisible.
+    $rendered = \App\Support\EvidenceMarkup::format(e($snippet));
 
     if ($needles !== []) {
         $rendered = preg_replace(
@@ -39,5 +47,5 @@
 @endphp
 
 @if ($snippet !== '')
-    <pre {{ $attributes->merge(['class' => 'max-h-52 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-zinc-900/95 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-zinc-200 dark:bg-zinc-950']) }}><code>{!! $rendered !!}</code></pre>
+    <pre {{ $attributes->merge(['class' => 'max-h-72 overflow-auto whitespace-pre rounded-lg bg-zinc-900/95 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-zinc-200 dark:bg-zinc-950']) }}><code>{!! $rendered !!}</code></pre>
 @endif
