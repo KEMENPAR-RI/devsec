@@ -197,11 +197,16 @@ class JudolEvidenceTest extends TestCase
         $response->assertSee('<mark', false);
     }
 
-    public function test_the_page_lists_every_injection_point_not_just_one(): void
+    public function test_the_page_accounts_for_every_injection_point_not_just_one(): void
     {
         // The whole point of the list: an operator has to read the page and know
         // each place to go. Showing one element of three is a fix list that leaves
         // two behind.
+        //
+        // The DevTools breadcrumbs themselves are no longer rendered - twenty lines
+        // of them per finding buried the markup that identifies the injection. What
+        // still has to hold is the accounting: the element count, and one snippet
+        // per distinct piece of markup.
         $website = Website::factory()->create(['name' => 'Portal Banyak']);
         $footer = '<footer class="site-footer"><a href="https://gacor88.com">Slot</a></footer>';
 
@@ -228,11 +233,49 @@ class JudolEvidenceTest extends TestCase
         $response = $this->actingAs(User::factory()->create())->get(route('deteksi-judol'));
 
         $response->assertOk();
-        $response->assertSee('body &gt; footer.site-footer &gt; ul &gt; li:nth-child(1) &gt; a', false);
-        $response->assertSee('body &gt; footer.site-footer &gt; ul &gt; li:nth-child(2) &gt; a', false);
-        $response->assertSee('body &gt; aside.widget &gt; p &gt; a', false);
-        // And the count says how many places there are before anything is read.
+        // The count says how many places there are before anything is read - the
+        // two footer siblings plus the sidebar.
         $response->assertSee('3 elemen');
+        // Both distinct pieces of markup are shown; the two siblings sharing a
+        // container are grouped into one snippet rather than repeating it.
+        $response->assertSee('&lt;footer class=&quot;site-footer&quot;&gt;', false);
+        $response->assertSee('&lt;aside class=&quot;widget&quot;&gt;', false);
+        // Two occurrences means the toggle carries a count of its own.
+        $response->assertSee('cuplikan HTML');
+    }
+
+    public function test_the_markup_is_collapsed_once_a_finding_has_been_triaged(): void
+    {
+        // A finding still waiting on a decision opens with its markup visible; one
+        // already reviewed is settled, and its two thousand characters only get in
+        // the way of the findings that are not.
+        $website = Website::factory()->create(['name' => 'Portal Beres']);
+
+        $finding = JudolFinding::create([
+            'website_id' => $website->id,
+            'region_key' => 'footer',
+            'region_label' => 'Footer',
+            'attack_type' => 'backlink_injection',
+            'linked_domains' => ['gacor88.com'],
+            'evidence_html' => '<footer class="site-footer"><a href="https://gacor88.com">Slot</a></footer>',
+            'affected_urls' => ['http://portal-beres.example/'],
+            'affected_count' => 1,
+            'status' => 'new',
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->get(route('deteksi-judol'))
+            ->assertOk()
+            ->assertSee('x-data="{ open: true }"', false);
+
+        $finding->update(['status' => 'reviewed']);
+
+        $this->actingAs($user)->get(route('deteksi-judol'))
+            ->assertOk()
+            ->assertDontSee('x-data="{ open: true }"', false);
     }
 
     /** The proxy addresses an image by index, so an out-of-range one is a 404. */

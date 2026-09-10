@@ -191,14 +191,6 @@
             : 'Belum ada konten judi online yang terdeteksi.';
     @endphp
 
-    {{-- Hasil deteksi, dikelompokkan per bukti temuan.
-
-         Grouped on the EVIDENCE rather than on the page. One edit by an attacker
-         lands in several regions and shows up on dozens of URLs, and reporting that
-         as dozens of rows buries the only fact worth acting on. So the evidence is
-         stated once, already open - an operator should not have to click to find out
-         what was found - and what hangs underneath it is the list of places to go
-         and clean, each with the exact node it sits on. --}}
     <x-list-card
         :is-empty="$groups->isEmpty()"
         empty-icon="phosphor-shield-check"
@@ -257,9 +249,6 @@
                         </a>
                     @endif
 
-                    {{-- Detail temuan. Deliberately not behind a disclosure: this is the
-                         answer to "apa yang ditemukan", and it is the reason the row is
-                         on screen at all. --}}
                     <div class="mt-3 space-y-3 rounded-xl bg-zinc-50 px-4 py-3.5 dark:bg-zinc-800/40">
                         @if ($group['keywords'])
                             <div>
@@ -275,18 +264,13 @@
                         @if ($group['domains'])
                             <div>
                                 <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Tautan ke situs judi</p>
-                                {{-- The domains, not the full URLs: the same site is usually
-                                linked from several paths, and the domain is what has to be
-                                searched for in the source and stripped out. --}}
+                                
                                 <div class="mt-1.5 flex flex-wrap gap-1.5">
                                     @foreach ($group['domains'] as $domain)
                                         <span class="rounded-md bg-red-50 px-2 py-1 font-mono text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $domain }}</span>
                                     @endforeach
                                 </div>
 
-                                {{-- The anchor text is often the only thing that gives an
-                                     injection away: a domain like wicc2024.com reads as a
-                                     conference until you see it sits under "Live Draw Macau". --}}
                                 @if ($group['anchors'])
                                     <div class="mt-1.5 flex flex-wrap gap-1.5">
                                         @foreach (array_slice($group['anchors'], 0, 6) as $anchor)
@@ -407,38 +391,46 @@
                                     @endcan
                                 </div>
 
-                                {{-- Every element this injection touched, each with the route
-                                     down to it and the markup around it, escaped and with the
-                                     injected part marked. This is what "letak persisnya" means
-                                     without a headless browser: the nodes themselves, not a
-                                     picture of the page - and ALL of them, because a list that
-                                     shows one of eight gets seven of them left behind.
+                                {{-- The injected markup itself, escaped and with the incriminating
+                                     parts marked - grouped by markup, so sibling elements sharing
+                                     one container are shown once rather than repeating identically.
+                                     See JudolFinding::evidenceOccurrences().
 
-                                     Grouped by markup rather than listed flat: sibling elements
-                                     inside one block share a container, so the snippet would
-                                     otherwise repeat identically and bury the paths, which are
-                                     the only thing that differs. See
-                                     JudolFinding::evidenceOccurrences(). --}}
-                                @foreach ($finding->evidenceOccurrences() as $occurrence)
-                                    <div class="mt-2.5">
-                                        @if ($occurrence['paths'])
-                                            <ul class="space-y-0.5" title="Jalur elemen di dalam halaman - tempel ke DevTools atau cari di berkas tema">
-                                                @foreach ($occurrence['paths'] as $path)
-                                                    <li class="flex items-start gap-1.5 break-all font-mono text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                                        <x-phosphor-arrow-elbow-down-right class="mt-0.5 h-3 w-3 shrink-0 text-zinc-400 dark:text-zinc-600" />
-                                                        <span>{{ $path }}</span>
-                                                    </li>
-                                                @endforeach
-                                            </ul>
-                                        @endif
+                                     Collapsed behind a toggle, and only the markup is shown: a
+                                     single injected footer runs to two thousand characters, and a
+                                     page listing every finding open at once was unreadable before
+                                     the operator could even find the one to act on. Open by default
+                                     while the finding is still 'new' - that is the one still
+                                     waiting on a decision; anything already triaged stays shut. --}}
+                                @php($occurrences = $finding->evidenceOccurrences())
 
-                                        <x-evidence-snippet
-                                            class="mt-1.5"
-                                            :html="$occurrence['html']"
-                                            :terms="$finding->highlightTerms()"
-                                        />
+                                @if ($occurrences)
+                                    <div class="mt-2.5" x-data="{ open: @js($finding->status === 'new') }">
+                                        <button
+                                            type="button"
+                                            @click="open = !open"
+                                            class="inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 -ml-1.5 text-xs font-medium text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                                        >
+                                            <x-phosphor-caret-down class="h-3.5 w-3.5 transition" x-bind:class="open ? 'rotate-180' : ''" />
+                                            {{-- The fallback text matches the initial open state, so the
+                                                 label is already correct on the first paint rather than
+                                                 flipping once Alpine takes over. --}}
+                                            <span x-text="open ? 'Sembunyikan cuplikan HTML' : 'Lihat cuplikan HTML'">{{ $finding->status === 'new' ? 'Sembunyikan cuplikan HTML' : 'Lihat cuplikan HTML' }}</span>
+                                            @if (count($occurrences) > 1)
+                                                <span class="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-normal text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ count($occurrences) }}</span>
+                                            @endif
+                                        </button>
+
+                                        <div x-show="open" x-cloak class="mt-1.5 space-y-1.5">
+                                            @foreach ($occurrences as $occurrence)
+                                                <x-evidence-snippet
+                                                    :html="$occurrence['html']"
+                                                    :terms="$finding->highlightTerms()"
+                                                />
+                                            @endforeach
+                                        </div>
                                     </div>
-                                @endforeach
+                                @endif
 
                                 @if ($error = ($recheckErrors[$finding->uuid] ?? null))
                                     <p class="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
