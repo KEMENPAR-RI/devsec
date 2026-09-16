@@ -2,20 +2,27 @@
 
 use App\Http\Controllers\JudolEvidenceController;
 use App\Http\Controllers\PwaController;
+use App\Livewire\Audit\Index as AuditIndex;
 use App\Livewire\Auth\ForgotPassword;
 use App\Livewire\Auth\Login;
 use App\Livewire\Auth\ResetPassword;
+use App\Livewire\Auth\TwoFactorChallenge;
 use App\Livewire\Dashboard;
 use App\Livewire\Incidents\Index as IncidentsIndex;
 use App\Livewire\JudolDetections\Index as JudolDetectionsIndex;
 use App\Livewire\Notifications\Index as NotificationsIndex;
 use App\Livewire\Profile\Index as ProfileIndex;
+use App\Livewire\Reports\Index as ReportsIndex;
 use App\Livewire\Roles\Index as RolesIndex;
 use App\Livewire\Settings\Index as SettingsIndex;
 use App\Livewire\Users\Index as UsersIndex;
 use App\Livewire\Websites\Index as WebsitesIndex;
 use App\Livewire\Websites\Show as WebsiteShow;
+use App\Models\AuditLog;
+use App\Models\Website;
 use App\Services\Backup\DatabaseBackup;
+use App\Services\Reporting\MonthlyReport;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -42,11 +49,18 @@ Route::middleware('guest')->group(function () {
 
     // Self-service password reset. The name 'password.reset' is what Laravel's
     // built-in ResetPassword notification builds its link from, so it must stay.
+    // Step two of signing in. Sits in the guest group because nobody is
+    // authenticated until the code checks out - all the page has is a short-lived
+    // ticket in the session (see TwoFactorChallenge).
+    Route::get('/verifikasi-dua-faktor', TwoFactorChallenge::class)->name('two-factor.challenge');
+
     Route::get('/lupa-kata-sandi', ForgotPassword::class)->name('password.request');
     Route::get('/atur-ulang-kata-sandi/{token}', ResetPassword::class)->name('password.reset');
 });
 
 Route::post('/logout', function () {
+    AuditLog::record('logout', Auth::user()?->email);
+
     Auth::logout();
     request()->session()->invalidate();
     request()->session()->regenerateToken();
@@ -84,6 +98,30 @@ Route::middleware('auth')->group(function () {
     });
     Route::get('/notifikasi', NotificationsIndex::class)->middleware('can:notifikasi.view')->name('notifikasi');
 
+    Route::middleware('can:laporan.view')->group(function () {
+        Route::get('/laporan', ReportsIndex::class)->name('laporan');
+
+        // Streamed rather than written to disk: the report is derived data, and a
+        // file on the server would be one more copy of it to keep in step.
+        Route::get('/laporan/unduh', function (MonthlyReport $report) {
+            $month = Carbon::createFromFormat('Y-m', request()->query('bulan', now()->subMonthNoOverflow()->format('Y-m')))->startOfMonth();
+            $site = request()->query('situs') ? Website::where('uuid', request()->query('situs'))->first() : null;
+
+            $built = $report->build($month, $month->copy()->endOfMonth(), $site);
+            $csv = $report->toCsv($built['rows']);
+
+            AuditLog::record('laporan.diunduh', $month->format('Y-m'));
+
+            return response()->streamDownload(
+                fn () => print ($csv),
+                'laporan-'.$month->format('Y-m').'.csv',
+                ['Content-Type' => 'text/csv; charset=UTF-8'],
+            );
+        })->name('laporan.unduh');
+    });
+
+    Route::get('/audit', AuditIndex::class)->middleware('can:audit.view')->name('audit');
+
     Route::get('/roles', RolesIndex::class)->middleware('can:roles.view')->name('roles');
     Route::get('/users', UsersIndex::class)->middleware('can:users.view')->name('users');
 
@@ -92,8 +130,18 @@ Route::middleware('auth')->group(function () {
     // Backups are served through PHP, never as static files: a dump holds every
     // account's password hash, so it must never sit under the public root.
     Route::get('/pengaturan/backup/{filename}', function (string $filename, DatabaseBackup $backup) {
-        abort_unless($path = $backup->pathFor($filename), 404);
+        // Streamed rather than sent from disk: dumps are encrypted at rest (see
+        // BackupCipher), so what the operator downloads is decrypted on the way out.
+        abort_unless(($contents = $backup->contents($filename)) !== null, 404);
 
-        return response()->download($path);
+        // A dump holds every account's password hash, so who took a copy is exactly
+        // the kind of thing the trail exists to answer.
+        AuditLog::record('pengaturan.backup-diunduh', $filename);
+
+        return response()->streamDownload(
+            fn () => print ($contents),
+            $backup->downloadName($filename),
+            ['Content-Type' => 'application/gzip'],
+        );
     })->middleware('can:pengaturan.update')->name('pengaturan.backup.download');
 });

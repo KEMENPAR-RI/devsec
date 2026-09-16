@@ -373,6 +373,7 @@
                             <x-status-dot :status="$website->statusKey(
                                 isset($offlineIds[$website->id]),
                                 isset($attackedIds[$website->id]),
+                                isset($maintenanceIds[$website->id]),
                             )" />
                             <div class="min-w-0 flex-1">
                                 <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ $website->name }}</p>

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Auditable;
 use App\Models\Concerns\HasUuid;
 use App\Support\Permissions;
 use Database\Factories\RoleFactory;
@@ -18,7 +19,7 @@ use Illuminate\Support\Str;
 class Role extends Model
 {
     /** @use HasFactory<RoleFactory> */
-    use HasFactory, HasUuid;
+    use Auditable, HasFactory, HasUuid;
 
     protected $fillable = [
         'uuid',
@@ -29,6 +30,11 @@ class Role extends Model
         'is_superadmin',
         'is_locked',
     ];
+
+    public function auditEventPrefix(): string
+    {
+        return 'roles';
+    }
 
     protected function casts(): array
     {

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureUserIsNotBanned;
+use App\Http\Middleware\RequireTwoFactor;
 use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -16,6 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // Runs on every web request so a ban applied mid-session takes effect on
         // that session's very next click, not whenever it happens to expire.
         $middleware->appendToGroup('web', EnsureUserIsNotBanned::class);
+
+        // Runs after the ban check, so a banned account is turned away before it is
+        // ever asked to enrol. Only does anything when Pengaturan says 2FA is
+        // mandatory - see RequireTwoFactor.
+        $middleware->appendToGroup('web', RequireTwoFactor::class);
 
         // Global rather than web-only: the PWA manifest and icon routes sit outside
         // the web group, and a response without these headers is exactly the kind

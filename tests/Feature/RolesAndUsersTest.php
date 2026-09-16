@@ -258,16 +258,16 @@ class RolesAndUsersTest extends TestCase
             ->set('name', 'Budi Operator')
             ->set('email', 'budi@instansi.go.id')
             ->set('roleUuid', $role->uuid)
-            ->set('password', 'rahasia-sekali')
-            ->set('passwordConfirmation', 'rahasia-sekali')
+            ->set('password', 'RahasiaSekali9x')
+            ->set('passwordConfirmation', 'RahasiaSekali9x')
             ->call('save')
             ->assertHasNoErrors();
 
         $user = User::where('email', 'budi@instansi.go.id')->firstOrFail();
 
         $this->assertSame($role->id, $user->role_id);
-        $this->assertNotSame('rahasia-sekali', $user->password);
-        $this->assertTrue(Hash::check('rahasia-sekali', $user->password));
+        $this->assertNotSame('RahasiaSekali9x', $user->password);
+        $this->assertTrue(Hash::check('RahasiaSekali9x', $user->password));
     }
 
     public function test_a_mismatched_confirmation_is_rejected(): void
@@ -277,7 +277,7 @@ class RolesAndUsersTest extends TestCase
             ->call('openCreate')
             ->set('name', 'Budi')
             ->set('email', 'budi2@instansi.go.id')
-            ->set('password', 'rahasia-sekali')
+            ->set('password', 'RahasiaSekali9x')
             ->set('passwordConfirmation', 'salah-ketik')
             ->call('save')
             ->assertHasErrors('password');
@@ -351,8 +351,8 @@ class RolesAndUsersTest extends TestCase
         Livewire::actingAs($user)
             ->test(ProfileIndex::class)
             ->set('currentPassword', 'tebakan-salah')
-            ->set('password', 'kata-sandi-baru')
-            ->set('passwordConfirmation', 'kata-sandi-baru')
+            ->set('password', 'KataSandiBaru9x')
+            ->set('passwordConfirmation', 'KataSandiBaru9x')
             ->call('updatePassword')
             ->assertHasErrors('currentPassword');
 
@@ -366,14 +366,14 @@ class RolesAndUsersTest extends TestCase
         Livewire::actingAs($user)
             ->test(ProfileIndex::class)
             ->set('currentPassword', 'kata-sandi-lama')
-            ->set('password', 'kata-sandi-baru')
-            ->set('passwordConfirmation', 'kata-sandi-baru')
+            ->set('password', 'KataSandiBaru9x')
+            ->set('passwordConfirmation', 'KataSandiBaru9x')
             ->call('updatePassword')
             ->assertHasNoErrors()
             // Cleared so the new password isn't left sitting in the component state.
             ->assertSet('password', '');
 
-        $this->assertTrue(Hash::check('kata-sandi-baru', $user->fresh()->password));
+        $this->assertTrue(Hash::check('KataSandiBaru9x', $user->fresh()->password));
     }
 
     protected function userWith(string $slug): User

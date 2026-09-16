@@ -41,7 +41,7 @@ class DatabaseBackup
 
     public const DIRECTORY = 'backups';
 
-    public const EXTENSION = '.sql.gz';
+    public const EXTENSION = '.sql.gz.enc';
 
     /**
      * Extensions listed by all(): the current one, plus the shapes earlier releases
@@ -49,7 +49,7 @@ class DatabaseBackup
      * and, just as importantly, stay prunable: a file this list forgets is a file
      * that sits on the disk forever.
      */
-    protected const LISTED_EXTENSIONS = [self::EXTENSION, '.sql', '.tar.gz'];
+    protected const LISTED_EXTENSIONS = [self::EXTENSION, '.sql.gz', '.sql', '.tar.gz'];
 
     /**
      * Hard ceiling on stored dumps. Backups are big and grow with the data; keeping
@@ -81,7 +81,11 @@ class DatabaseBackup
         // downstream needs it any more.
         unset($sql);
 
-        Storage::disk(self::DISK)->put(self::DIRECTORY.'/'.$filename, $gzipped);
+        // Compressed first, then encrypted - ciphertext does not compress.
+        $payload = app(BackupCipher::class)->encrypt($gzipped);
+        unset($gzipped);
+
+        Storage::disk(self::DISK)->put(self::DIRECTORY.'/'.$filename, $payload);
 
         $this->prune();
 
@@ -119,13 +123,42 @@ class DatabaseBackup
         Storage::disk(self::DISK)->delete(self::DIRECTORY.'/'.$this->safeName($filename));
     }
 
-    /** Absolute path for a download response; null when the file isn't there. */
+    /** Absolute path on disk; null when the file isn't there. */
     public function pathFor(string $filename): ?string
     {
         $path = self::DIRECTORY.'/'.$this->safeName($filename);
         $disk = Storage::disk(self::DISK);
 
         return $disk->exists($path) ? $disk->path($path) : null;
+    }
+
+    /**
+     * The dump as the operator should receive it: decrypted when it was written
+     * encrypted, untouched when it is one of the older plaintext files.
+     *
+     * Returns null when the file is gone; throws when it is there but cannot be
+     * decrypted, because "APP_KEY has changed" is a different problem from "that
+     * backup does not exist" and must not look like one.
+     */
+    public function contents(string $filename): ?string
+    {
+        $path = self::DIRECTORY.'/'.$this->safeName($filename);
+        $disk = Storage::disk(self::DISK);
+
+        if (! $disk->exists($path)) {
+            return null;
+        }
+
+        $payload = (string) $disk->get($path);
+        $cipher = app(BackupCipher::class);
+
+        return $cipher->looksEncrypted($payload) ? $cipher->decrypt($payload) : $payload;
+    }
+
+    /** What the downloaded file should be called - the .enc is an at-rest detail. */
+    public function downloadName(string $filename): string
+    {
+        return Str::before($this->safeName($filename), '.enc');
     }
 
     /** Keeps only the newest N dumps, so backups can't fill the disk unattended. */

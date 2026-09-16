@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Auditable;
 use App\Models\Concerns\HasUuid;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -15,9 +16,19 @@ use Illuminate\Support\Facades\Cache;
  */
 class JudolKeyword extends Model
 {
-    use HasUuid;
+    use Auditable, HasUuid;
 
     protected $fillable = ['keyword', 'is_active'];
+
+    public function auditEventPrefix(): string
+    {
+        return 'kata-kunci';
+    }
+
+    public function auditSubject(): string
+    {
+        return (string) $this->keyword;
+    }
 
     protected function casts(): array
     {

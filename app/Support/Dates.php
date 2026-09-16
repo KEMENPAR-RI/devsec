@@ -80,6 +80,29 @@ class Dates
     }
 
     /**
+     * A Carbon instance as the value a <input type="datetime-local"> expects,
+     * in the app's timezone - the zone the operator is reading the page in.
+     */
+    public static function toLocalInput(CarbonInterface|string|null $value): string
+    {
+        return blank($value)
+            ? ''
+            : Carbon::parse($value)->timezone(static::timezone())->format('Y-m-d\TH:i');
+    }
+
+    /**
+     * The reverse: a datetime-local value back into a Carbon.
+     *
+     * The browser sends wall-clock with no zone attached, so it has to be read as
+     * app-timezone and not as UTC - otherwise a window scheduled for 02:00 WIB
+     * would start at 09:00 WIB and cover nothing anyone meant.
+     */
+    public static function fromLocalInput(string $value): Carbon
+    {
+        return Carbon::parse($value, static::timezone());
+    }
+
+    /**
      * "3 menit yang lalu" alongside the exact time, e.g. for a tooltip - relative
      * time is easy to scan, but an incident report needs the real clock reading.
      */

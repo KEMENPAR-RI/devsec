@@ -285,7 +285,7 @@
                             @endif
                         </label>
                         <input
-                            id="userPassword" type="password" wire:model="password" autocomplete="new-password" placeholder="Minimal 8 karakter"
+                            id="userPassword" type="password" wire:model="password" autocomplete="new-password" placeholder="Minimal 12 karakter, huruf besar-kecil & angka"
                             class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
                         >
                         @error('password') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror

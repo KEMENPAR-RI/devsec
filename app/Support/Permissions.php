@@ -51,7 +51,7 @@ class Permissions
                 // Incidents are raised by the monitor, never created by hand;
                 // "update" covers menandai selesai & menyelidiki penyebab.
                 'abilities' => ['view', 'update', 'delete'],
-                'description' => 'Down time, anomali serangan, dan SSL.',
+                'description' => 'Down time, anomali serangan, SSL, DNS, dan masa berlaku domain.',
             ],
             'deteksi-judol' => [
                 'label' => 'Deteksi Judol',
@@ -73,6 +73,22 @@ class Permissions
                 // Nothing to create or delete - the settings rows already exist.
                 'abilities' => ['view', 'update'],
                 'description' => 'Kredensial AI, SMTP, dan ambang batas global.',
+            ],
+            'laporan' => [
+                'label' => 'Laporan',
+                'icon' => 'chart-bar',
+                // View only: a report is derived from data that lives elsewhere,
+                // so there is nothing here to create, edit, or delete.
+                'abilities' => ['view'],
+                'description' => 'Rekap bulanan uptime, insiden, dan temuan per situs.',
+            ],
+            'audit' => [
+                'label' => 'Log Audit',
+                'icon' => 'clock-counter-clockwise',
+                // View only, by design: a trail an operator can edit or clear is
+                // not a trail. Old rows are dropped by the audit:prune schedule.
+                'abilities' => ['view'],
+                'description' => 'Jejak siapa mengubah apa, kapan, dan dari alamat IP mana.',
             ],
             'roles' => [
                 'label' => 'Roles',

@@ -2,6 +2,8 @@
 
 namespace App\Livewire\Auth;
 
+use App\Models\AuditLog;
+use App\Services\Security\AccountAlerts;
 use App\Services\Security\Recaptcha;
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Support\Facades\Auth;
@@ -44,6 +46,11 @@ class Login extends Component
         if (! Auth::attempt(['email' => $this->email, 'password' => $this->password])) {
             RateLimiter::hit($this->throttleKey());
 
+            // Attributed to nobody on purpose - the credentials did not identify
+            // anyone. The attempted address and the IP are the whole point here:
+            // a spray shows up as many lines from one IP across many addresses.
+            AuditLog::record('login.gagal', $this->email);
+
             throw ValidationException::withMessages([
                 'email' => 'Email atau kata sandi tidak cocok dengan data kami.',
             ]);
@@ -53,6 +60,7 @@ class Login extends Component
         // banned" to a wrong password would confirm the address exists.
         if (Auth::user()->isBanned()) {
             $reason = Auth::user()->banned_reason;
+            AuditLog::record('login.ditolak', Auth::user()->email, ['alasan' => $reason ?: 'diblokir']);
             Auth::logout();
 
             throw ValidationException::withMessages([
@@ -63,6 +71,29 @@ class Login extends Component
         }
 
         RateLimiter::clear($this->throttleKey());
+
+        // The password was right, but it is only the first factor. Sign the user
+        // straight back out and hand a short-lived ticket to the challenge page -
+        // an authenticated session must not exist until both factors are in.
+        if (Auth::user()->hasTwoFactorEnabled()) {
+            $pendingId = Auth::id();
+            Auth::logout();
+
+            session()->put([
+                'auth.2fa.user_id' => $pendingId,
+                'auth.2fa.started_at' => now()->timestamp,
+            ]);
+
+            $this->redirectRoute('two-factor.challenge');
+
+            return;
+        }
+
+        // Before the audit line, or this address would already look familiar.
+        app(AccountAlerts::class)->notifyIfNewDevice(Auth::user());
+
+        AuditLog::record('login.berhasil', Auth::user()->email);
+
         // session() rather than request()->session(): the helper resolves the
         // shared store, which is there whether or not a session store was bound
         // onto this particular request object.

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Auditable;
 use App\Models\Concerns\HasUuid;
 use App\Services\Monitoring\JudolScanner;
 use Illuminate\Database\Eloquent\Builder;
@@ -12,7 +13,7 @@ use Illuminate\Pagination\AbstractPaginator;
 
 class Website extends Model
 {
-    use HasFactory, HasUuid;
+    use Auditable, HasFactory, HasUuid;
 
     protected $fillable = [
         'name',
@@ -28,7 +29,41 @@ class Website extends Model
         'last_checked_at',
         'judol_scanned_at',
         'ssl_checked_at',
+        'dns_records',
+        'dns_checked_at',
+        'domain_expires_at',
+        'domain_checked_at',
+        'security_score',
+        'security_grade',
+        'security_findings',
+        'security_checked_at',
+        'reputation_status',
+        'reputation_threats',
+        'reputation_checked_at',
     ];
+
+    public function auditEventPrefix(): string
+    {
+        return 'situs';
+    }
+
+    /** The monitor rewrites these on every probe; only operator edits are news. */
+    public function auditIgnored(): array
+    {
+        return [
+            'id', 'uuid', 'created_at', 'updated_at',
+            'last_status', 'consecutive_failures', 'last_checked_at',
+            'judol_scanned_at', 'ssl_checked_at',
+            // DNS drift is reported as its own incident, with a readable diff -
+            // dumping the raw record set into the audit log too would bury the
+            // operator edits this log exists for.
+            'dns_records', 'dns_checked_at', 'domain_checked_at',
+            // The grade is measured, not decided by anyone - it belongs on the
+            // site page, not in the who-changed-what trail.
+            'security_score', 'security_grade', 'security_findings', 'security_checked_at',
+            'reputation_status', 'reputation_threats', 'reputation_checked_at',
+        ];
+    }
 
     protected function casts(): array
     {
@@ -38,6 +73,15 @@ class Website extends Model
             'last_checked_at' => 'datetime',
             'judol_scanned_at' => 'datetime',
             'ssl_checked_at' => 'datetime',
+            'dns_records' => 'array',
+            'dns_checked_at' => 'datetime',
+            'domain_expires_at' => 'date',
+            'domain_checked_at' => 'datetime',
+            'security_score' => 'integer',
+            'security_findings' => 'array',
+            'security_checked_at' => 'datetime',
+            'reputation_threats' => 'array',
+            'reputation_checked_at' => 'datetime',
         ];
     }
 
@@ -243,6 +287,58 @@ class Website extends Model
             ->contains(fn (Incident $incident) => self::isOverloadCause($incident));
     }
 
+    public function maintenanceWindows(): HasMany
+    {
+        return $this->hasMany(MaintenanceWindow::class);
+    }
+
+    /**
+     * Whether a scheduled maintenance window covers this site right now.
+     *
+     * Includes the all-sites windows (website_id null), because that is what a
+     * server migration looks like and the point of the feature is that nobody has
+     * to remember to list every site by hand at 2am.
+     */
+    public function isUnderMaintenance(): bool
+    {
+        return MaintenanceWindow::query()->forWebsite($this->id)->covering()->exists();
+    }
+
+    public function activeMaintenance(): ?MaintenanceWindow
+    {
+        return MaintenanceWindow::query()->forWebsite($this->id)->covering()->latest('starts_at')->first();
+    }
+
+    /**
+     * Bulk version of isUnderMaintenance() for list views, matching offlineIds().
+     *
+     * @param  iterable<Website>  $websites
+     * @return array<int, true> website IDs currently under maintenance, keyed by id
+     */
+    public static function maintenanceIds(iterable $websites): array
+    {
+        $rows = $websites instanceof AbstractPaginator ? $websites->getCollection() : collect($websites);
+        $ids = $rows->pluck('id');
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        $windows = MaintenanceWindow::query()->covering()->get(['website_id']);
+
+        // One all-sites window covers the whole page, so it short-circuits the
+        // per-id matching entirely.
+        if ($windows->contains(fn (MaintenanceWindow $window) => $window->website_id === null)) {
+            return $ids->flip()->map(fn () => true)->all();
+        }
+
+        return $windows->pluck('website_id')
+            ->intersect($ids)
+            ->flip()
+            ->map(fn () => true)
+            ->all();
+    }
+
     /**
      * Bulk version of wasAttacked() for list views, matching offlineIds().
      *
@@ -319,6 +415,13 @@ class Website extends Model
             'text' => 'text-zinc-500 dark:text-zinc-400',
             'badge' => 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
             'description' => 'Sudah down lebih dari 24 jam. Pengecekan otomatis dihentikan sampai ditekan "Cek Sekarang".',
+        ],
+        'maintenance' => [
+            'label' => 'Pemeliharaan',
+            'dot' => 'bg-sky-500',
+            'text' => 'text-sky-700 dark:text-sky-400',
+            'badge' => 'bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-400/30',
+            'description' => 'Sedang dalam jendela pemeliharaan terjadwal - insiden dan notifikasi dihentikan sementara.',
         ],
         'internal' => [
             'label' => 'Jaringan Internal',
@@ -567,10 +670,13 @@ class Website extends Model
      *                           (avoids an isOffline() query per row) or $this->isOffline() for a single record
      * @param  bool  $wasAttacked  whether the open downtime incident was diagnosed as
      *                             overload - see App\Services\Monitoring\OutageCause
+     * @param  bool  $underMaintenance  pass Website::maintenanceIds() membership for list
+     *                                  views, or $this->isUnderMaintenance() for one record
      */
-    public function statusKey(bool $isOffline = false, bool $wasAttacked = false): string
+    public function statusKey(bool $isOffline = false, bool $wasAttacked = false, bool $underMaintenance = false): string
     {
         return match (true) {
+            $underMaintenance => 'maintenance',
             $this->last_status === 'up' => 'up',
             $this->last_status === 'down' && $this->is_internal_only => 'internal',
             $this->last_status === 'down' && $isOffline => 'offline',

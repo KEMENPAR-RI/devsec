@@ -2,12 +2,16 @@
 
 namespace App\Livewire\Settings;
 
+use App\Console\Commands\EscalateIncidents;
 use App\Mail\IncidentEmail;
 use App\Models\Setting;
 use App\Services\AppSettings;
 use App\Services\Backup\DatabaseBackup;
 use App\Services\Monitoring\JudolAiSettings;
+use App\Services\Monitoring\ReputationChecker;
 use App\Services\Notifications\MailSettings;
+use App\Services\Notifications\WebhookNotifier;
+use App\Services\Notifications\WebhookSettings;
 use App\Services\Security\Recaptcha;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Mail;
@@ -78,6 +82,29 @@ class Index extends Component
     /** @var array{success: bool, message: string}|null */
     public ?array $mailTestResult = null;
 
+    // --- Push channel (Telegram / Slack / WhatsApp gateway) ----------------
+
+    public bool $webhookEnabled = false;
+
+    public string $webhookToken = '';
+
+    public bool $webhookTokenIsSet = false;
+
+    public string $webhookTarget = '';
+
+    /** @var array<int, string> */
+    public array $webhookSeverities = ['critical', 'warning'];
+
+    public ?array $webhookTestResult = null;
+
+    public string $safeBrowsingKey = '';
+
+    public bool $safeBrowsingKeyIsSet = false;
+
+    public bool $escalationEnabled = false;
+
+    public int $escalationMinutes = 30;
+
     public string $appName = '';
 
     public string $appTimezone = 'Asia/Jakarta';
@@ -89,6 +116,9 @@ class Index extends Component
     public int $defaultDownThresholdFailures = 3;
 
     public int $defaultResponseTimeThresholdMs = 15000;
+
+    /** When on, nobody may use the app until they have enrolled a second factor. */
+    public bool $twoFactorRequired = false;
 
     public bool $recaptchaEnabled = false;
 
@@ -145,6 +175,21 @@ class Index extends Component
         $this->defaultJudolScanIntervalMinutes = $appSettings->defaultJudolScanIntervalMinutes();
         $this->defaultDownThresholdFailures = $appSettings->defaultDownThresholdFailures();
         $this->defaultResponseTimeThresholdMs = $appSettings->defaultResponseTimeThresholdMs();
+
+        $webhook = app(WebhookSettings::class);
+        $this->webhookEnabled = $webhook->enabled();
+        // Never echoed back into the form - a stored secret is shown as "sudah
+        // diisi" and only replaced when something new is typed.
+        $this->webhookTokenIsSet = $webhook->hasToken();
+        $this->webhookTarget = (string) $webhook->target();
+        $this->webhookSeverities = $webhook->severities();
+
+        $this->safeBrowsingKeyIsSet = app(ReputationChecker::class)->isConfigured();
+
+        $this->escalationEnabled = Setting::get('escalation_enabled') === '1';
+        $this->escalationMinutes = (int) (Setting::get('escalation_minutes') ?: EscalateIncidents::DEFAULT_MINUTES);
+
+        $this->twoFactorRequired = Setting::get('two_factor_required') === '1';
 
         $this->recaptchaEnabled = Setting::get('recaptcha_enabled') === '1';
         $this->recaptchaSiteKey = (string) $recaptcha->siteKey();
@@ -272,6 +317,22 @@ class Index extends Component
         session()->flash('status', 'Berkas backup dihapus.');
     }
 
+    /**
+     * Sends a sample message to the configured channel.
+     *
+     * Saves first, deliberately: testing against what is on screen rather than
+     * what is stored is how somebody "tests successfully" and then finds the
+     * channel silent during a real outage.
+     */
+    public function testWebhook(): void
+    {
+        $this->authorize('pengaturan.update');
+
+        $this->save();
+
+        $this->webhookTestResult = app(WebhookNotifier::class)->test();
+    }
+
     public function save(): void
     {
         $this->authorize('pengaturan.update');
@@ -298,6 +359,16 @@ class Index extends Component
             'defaultJudolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'defaultDownThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
             'defaultResponseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:60000'],
+            'twoFactorRequired' => ['boolean'],
+            'webhookEnabled' => ['boolean'],
+            'webhookToken' => ['nullable', 'string', 'max:500'],
+            // A Telegram chat id: digits, optionally negative for a group.
+            'webhookTarget' => ['nullable', 'string', 'max:255', 'regex:/^-?\d+$/'],
+            'webhookSeverities' => ['array'],
+            'webhookSeverities.*' => [Rule::in(['critical', 'warning', 'info'])],
+            'safeBrowsingKey' => ['nullable', 'string', 'max:255'],
+            'escalationEnabled' => ['boolean'],
+            'escalationMinutes' => ['required', 'integer', 'min:5', 'max:1440'],
             'recaptchaEnabled' => ['boolean'],
             // Required only when switching it on, and only when nothing is stored
             // yet - otherwise the blank box means "keep the saved secret".
@@ -356,6 +427,29 @@ class Index extends Component
         Setting::set('default_judol_scan_interval_minutes', (string) $this->defaultJudolScanIntervalMinutes);
         Setting::set('default_down_threshold_failures', (string) $this->defaultDownThresholdFailures);
         Setting::set('default_response_time_threshold_ms', (string) $this->defaultResponseTimeThresholdMs);
+
+        if (filled($this->safeBrowsingKey)) {
+            Setting::set('safebrowsing_api_key', Crypt::encryptString(trim($this->safeBrowsingKey)));
+            $this->safeBrowsingKeyIsSet = true;
+            $this->reset('safeBrowsingKey');
+        }
+
+        Setting::set('escalation_enabled', $this->escalationEnabled ? '1' : '0');
+        Setting::set('escalation_minutes', (string) $this->escalationMinutes);
+
+        Setting::set('webhook_enabled', $this->webhookEnabled ? '1' : '0');
+        Setting::set('webhook_target', trim($this->webhookTarget) ?: null);
+        Setting::set('webhook_severities', implode(',', $this->webhookSeverities ?: ['critical']));
+
+        // Blank means "leave what is stored alone", so saving the page for an
+        // unrelated reason cannot wipe a secret nobody retyped.
+        if (filled($this->webhookToken)) {
+            Setting::set('webhook_token', Crypt::encryptString(trim($this->webhookToken)));
+            $this->webhookTokenIsSet = true;
+            $this->reset('webhookToken');
+        }
+
+        Setting::set('two_factor_required', $this->twoFactorRequired ? '1' : '0');
 
         Setting::set('recaptcha_enabled', $this->recaptchaEnabled ? '1' : '0');
         Setting::set('recaptcha_site_key', trim($this->recaptchaSiteKey) ?: null);

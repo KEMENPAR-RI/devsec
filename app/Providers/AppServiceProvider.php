@@ -13,6 +13,7 @@ use App\View\Composers\BrandingComposer;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 use Throwable;
 
 class AppServiceProvider extends ServiceProvider
@@ -54,6 +55,7 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->applyRuntimeAppSettings();
         $this->composeViews();
+        $this->definePasswordPolicy();
 
         // Every permission in the registry becomes a Gate of the same name, so one
         // list drives @can() in Blade, the `can:` route middleware, and
@@ -62,6 +64,25 @@ class AppServiceProvider extends ServiceProvider
         foreach (Permissions::all() as $permission) {
             Gate::define($permission, fn (User $user) => $user->hasPermission($permission));
         }
+    }
+
+    /**
+     * One password policy for every place a password is set: the profile page, the
+     * user form, and the reset-link page.
+     *
+     * uncompromised() is production-only because it asks haveibeenpwned.com over
+     * the network. Leaving it on in tests would make the suite depend on an
+     * outside service, and in development it would fail whenever the machine is
+     * offline - both of which teach people to work around the policy rather than
+     * with it. The structural rules stay on everywhere, so they are actually tested.
+     */
+    protected function definePasswordPolicy(): void
+    {
+        Password::defaults(function () {
+            $rule = Password::min(12)->mixedCase()->numbers();
+
+            return $this->app->isProduction() ? $rule->uncompromised() : $rule;
+        });
     }
 
     /**

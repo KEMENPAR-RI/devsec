@@ -38,7 +38,7 @@ class ResetPassword extends Component
     {
         $this->validate([
             'email' => ['required', 'string', 'email'],
-            'password' => ['required', PasswordRule::min(8), 'same:passwordConfirmation'],
+            'password' => ['required', PasswordRule::defaults(), 'same:passwordConfirmation'],
             'passwordConfirmation' => ['required', 'string'],
         ], [
             'password.same' => 'Konfirmasi kata sandi tidak cocok.',

@@ -91,8 +91,13 @@
                             Notifikasi
                         </x-nav-link>
                     @endcan
+                    @can('laporan.view')
+                        <x-nav-link :href="route('laporan')" :active="request()->routeIs('laporan')" icon="chart-bar">
+                            Laporan
+                        </x-nav-link>
+                    @endcan
 
-                    @canany(['roles.view', 'users.view'])
+                    @canany(['roles.view', 'users.view', 'audit.view'])
                         <div class="my-3 border-t border-zinc-200 dark:border-zinc-800"></div>
                         <p class="px-3 pb-1 text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Manajemen Akses</p>
                         @can('roles.view')
@@ -103,6 +108,11 @@
                         @can('users.view')
                             <x-nav-link :href="route('users')" :active="request()->routeIs('users')" icon="users">
                                 Users
+                            </x-nav-link>
+                        @endcan
+                        @can('audit.view')
+                            <x-nav-link :href="route('audit')" :active="request()->routeIs('audit')" icon="clock-counter-clockwise">
+                                Log Audit
                             </x-nav-link>
                         @endcan
                     @endcanany

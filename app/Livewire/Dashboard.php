@@ -51,12 +51,13 @@ class Dashboard extends Component
      * @param  Collection<int, Website>  $websites
      * @return array<string, int>
      */
-    protected function statusCounts($websites, array $offline, array $attacked): array
+    protected function statusCounts($websites, array $offline, array $attacked, array $maintenance): array
     {
         return $websites
             ->countBy(fn (Website $site) => $site->statusKey(
                 isset($offline[$site->id]),
                 isset($attacked[$site->id]),
+                isset($maintenance[$site->id]),
             ))
             ->all();
     }
@@ -108,6 +109,7 @@ class Dashboard extends Component
             $card('Down - Dugaan DDoS', $counts['attack'] ?? 0, 'lightning', 'down'),
             $card('Down', $counts['down'] ?? 0, 'warning-circle', 'down'),
             $card('Offline', $counts['offline'] ?? 0, 'power', 'muted'),
+            $card('Pemeliharaan', $counts['maintenance'] ?? 0, 'wrench', 'accent'),
             $card('Jaringan Internal', $counts['internal'] ?? 0, 'buildings', 'warning'),
             $card('Belum Diketahui', $counts['unknown'] ?? 0, 'question', 'muted'),
             $card('Beban Ringan', $loads['light'] ?? 0, 'gauge', 'up'),
@@ -234,6 +236,7 @@ class Dashboard extends Component
         // One query each for the whole list, shared between the cards and the rows.
         $offlineIds = Website::offlineIds($websiteStatuses);
         $attackedIds = Website::attackedIds($websiteStatuses);
+        $maintenanceIds = Website::maintenanceIds($websiteStatuses);
 
         $responseSeries = $selectedWebsite
             ? $this->websiteSeries($selectedWebsite)
@@ -242,7 +245,7 @@ class Dashboard extends Component
         return view('livewire.dashboard', [
             'stats' => $this->stats(
                 $websiteStatuses,
-                $this->statusCounts($websiteStatuses, $offlineIds, $attackedIds),
+                $this->statusCounts($websiteStatuses, $offlineIds, $attackedIds, $maintenanceIds),
                 $this->loadCounts($websiteStatuses),
             ),
             'weeklyUptime' => $this->weeklyUptime(),
@@ -250,6 +253,7 @@ class Dashboard extends Component
             'websiteStatuses' => $websiteStatuses,
             'offlineIds' => $offlineIds,
             'attackedIds' => $attackedIds,
+            'maintenanceIds' => $maintenanceIds,
             'selectedWebsite' => $selectedWebsite,
             'responseSeries' => $responseSeries,
             // Only a single site has one threshold to draw; the overview spans sites

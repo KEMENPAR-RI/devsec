@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Livewire\Auth\ForgotPassword;
 use App\Livewire\Auth\Login;
 use App\Livewire\Auth\ResetPassword;
+use App\Livewire\Profile\Index;
 use App\Livewire\Users\Index as UsersIndex;
 use App\Models\Role;
 use App\Models\Setting;
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class AccountSecurityTest extends TestCase
@@ -198,14 +200,14 @@ class AccountSecurityTest extends TestCase
 
         Livewire::test(ResetPassword::class, ['token' => $token])
             ->set('email', 'ganti@example.com')
-            ->set('password', 'kata-sandi-baru')
-            ->set('passwordConfirmation', 'kata-sandi-baru')
+            ->set('password', 'KataSandiBaru9x')
+            ->set('passwordConfirmation', 'KataSandiBaru9x')
             ->call('resetPassword')
             ->assertHasNoErrors()
             ->assertRedirect(route('login'));
 
-        $this->assertTrue(Hash::check('kata-sandi-baru', $user->fresh()->password));
-        $this->assertTrue(Auth::validate(['email' => 'ganti@example.com', 'password' => 'kata-sandi-baru']));
+        $this->assertTrue(Hash::check('KataSandiBaru9x', $user->fresh()->password));
+        $this->assertTrue(Auth::validate(['email' => 'ganti@example.com', 'password' => 'KataSandiBaru9x']));
     }
 
     public function test_a_bogus_token_is_refused_and_the_password_stands(): void
@@ -214,8 +216,8 @@ class AccountSecurityTest extends TestCase
 
         Livewire::test(ResetPassword::class, ['token' => 'token-karangan'])
             ->set('email', 'aman@example.com')
-            ->set('password', 'kata-sandi-baru')
-            ->set('passwordConfirmation', 'kata-sandi-baru')
+            ->set('password', 'KataSandiBaru9x')
+            ->set('passwordConfirmation', 'KataSandiBaru9x')
             ->call('resetPassword')
             ->assertHasErrors('email');
 
@@ -229,7 +231,7 @@ class AccountSecurityTest extends TestCase
 
         Livewire::test(ResetPassword::class, ['token' => $token])
             ->set('email', $user->email)
-            ->set('password', 'kata-sandi-baru')
+            ->set('password', 'KataSandiBaru9x')
             ->set('passwordConfirmation', 'salah-ketik')
             ->call('resetPassword')
             ->assertHasErrors('password');
@@ -273,5 +275,51 @@ class AccountSecurityTest extends TestCase
     protected function superadmin(): User
     {
         return User::factory()->create(['role_id' => Role::where('slug', 'superadmin')->value('id')]);
+    }
+
+    // --- Password policy ---------------------------------------------------
+
+    public static function weakPasswords(): array
+    {
+        return [
+            'too short' => ['Pendek9a'],
+            'no uppercase' => ['kata sandi panjang 9'],
+            'no digits' => ['KataSandiPanjangSekali'],
+        ];
+    }
+
+    /**
+     * One policy, defined once in AppServiceProvider, so the profile page, the
+     * user form and the reset-link page cannot drift apart.
+     */
+    #[DataProvider('weakPasswords')]
+    public function test_a_weak_password_is_refused_everywhere(string $weak): void
+    {
+        $user = User::factory()->create(['password' => Hash::make('KataSandiLama9x')]);
+
+        Livewire::actingAs($user)
+            ->test(Index::class)
+            ->set('currentPassword', 'KataSandiLama9x')
+            ->set('password', $weak)
+            ->set('passwordConfirmation', $weak)
+            ->call('updatePassword')
+            ->assertHasErrors('password');
+
+        $this->assertTrue(Hash::check('KataSandiLama9x', $user->fresh()->password));
+    }
+
+    public function test_a_password_meeting_the_policy_is_accepted(): void
+    {
+        $user = User::factory()->create(['password' => Hash::make('KataSandiLama9x')]);
+
+        Livewire::actingAs($user)
+            ->test(Index::class)
+            ->set('currentPassword', 'KataSandiLama9x')
+            ->set('password', 'KataSandiBaru9x')
+            ->set('passwordConfirmation', 'KataSandiBaru9x')
+            ->call('updatePassword')
+            ->assertHasNoErrors();
+
+        $this->assertTrue(Hash::check('KataSandiBaru9x', $user->fresh()->password));
     }
 }

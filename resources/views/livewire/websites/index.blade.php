@@ -158,6 +158,7 @@
                             $statusKey = $website->statusKey(
                                 isset($offlineIds[$website->id]),
                                 isset($attackedIds[$website->id]),
+                                isset($maintenanceIds[$website->id]),
                             );
                             $load = $loadLevels[$website->id] ?? ['level' => 'unknown', 'response_time_ms' => null];
                         @endphp
@@ -324,6 +325,16 @@
                             class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
                         >
                         @error('responseTimeThresholdMs') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                    </div>
+
+                    <div class="flex flex-col gap-1.5">
+                        <label for="domainExpiresAt" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Masa Berlaku Domain <span class="font-normal text-zinc-400">(opsional)</span></label>
+                        <input
+                            id="domainExpiresAt" type="date" wire:model="domainExpiresAt"
+                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white @error('domainExpiresAt') border-red-400 @enderror"
+                        >
+                        <p class="text-xs text-zinc-400 dark:text-zinc-500">Terisi otomatis bila registri domainnya menyediakan RDAP. Registri .id belum, jadi untuk domain .go.id isikan manual - peringatan dikirim 45 hari sebelum tanggal ini.</p>
+                        @error('domainExpiresAt') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
                     </div>
 
                     <label class="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">

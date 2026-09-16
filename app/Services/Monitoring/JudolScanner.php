@@ -11,6 +11,8 @@ use App\Models\Website;
 use App\Notifications\JudolContentDetected;
 use App\Services\AppSettings;
 use App\Services\Notifications\MailSettings;
+use App\Services\Notifications\WebhookNotifier;
+use App\Services\Security\OutboundUrlGuard;
 use DOMDocument;
 use DOMText;
 use Generator;
@@ -684,6 +686,14 @@ class JudolScanner
      */
     protected function fetchWithError(string $url): array
     {
+        // Crawled links come from the site's own markup, which on a hacked site is
+        // attacker-controlled - so every address is re-checked, not just the seed.
+        if ($reason = OutboundUrlGuard::reason($url)) {
+            Log::warning("JudolScanner: {$url} ditolak: {$reason}");
+
+            return ['body' => null, 'error' => $reason, 'last_modified' => null];
+        }
+
         try {
             $response = $this->httpClient()->get($url);
         } catch (Throwable $e) {
@@ -774,7 +784,7 @@ class JudolScanner
             'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language' => 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
         ])
-            ->withOptions(['verify' => $verifySsl])
+            ->withOptions(['verify' => $verifySsl] + OutboundUrlGuard::httpOptions())
             ->timeout(15)
             // 10s, matching WebsiteChecker: the same shared-hosting sites are being
             // fetched, and at 5s their TLS handshake was being cut off. Here that
@@ -1572,8 +1582,23 @@ class JudolScanner
             return;
         }
 
+        // Findings and detections are still written during a window - a page that
+        // got injected while the site was being worked on is exactly the kind of
+        // thing that must not be lost. Only the alert waits, and the page is
+        // already on the Deteksi Judol list when the operator looks.
+        if ($website->isUnderMaintenance()) {
+            Log::info("JudolScanner: notifikasi untuk {$website->name} ditahan, situs sedang dalam jendela pemeliharaan.");
+
+            return;
+        }
+
+        $admins = User::all();
+        $notification = new JudolContentDetected($website, $found->values());
+
         app(MailSettings::class)->applyToRuntime();
-        Notification::send(User::all(), new JudolContentDetected($website, $found->values()));
+        Notification::send($admins, $notification);
+
+        app(WebhookNotifier::class)->sendNotification($notification, $admins->first());
     }
 
     /**

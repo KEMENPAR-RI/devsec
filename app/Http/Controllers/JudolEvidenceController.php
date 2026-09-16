@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\JudolFinding;
 use App\Services\Monitoring\JudolScanner;
+use App\Services\Security\OutboundUrlGuard;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Http;
@@ -149,22 +150,10 @@ class JudolEvidenceController extends Controller
      */
     private function isPubliclyRoutable(string $url): bool
     {
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (! $host) {
-            return false;
-        }
-
-        $isLiteral = (bool) filter_var($host, FILTER_VALIDATE_IP);
-        $ip = $isLiteral ? $host : gethostbyname($host);
-
-        // gethostbyname() hands the hostname straight back when it cannot resolve,
-        // which is a failure, not an address.
-        if (! $isLiteral && $ip === $host) {
-            return false;
-        }
-
-        return (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        // One behaviour change: a host that does not resolve now passes, because
+        // the fetch then simply fails on its own. Everything that does resolve is
+        // checked over IPv6 as well as IPv4.
+        return OutboundUrlGuard::allows($url);
     }
 
     /**

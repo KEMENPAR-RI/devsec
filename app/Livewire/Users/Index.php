@@ -152,7 +152,7 @@ class Index extends Component
             // Required when creating; on edit, an empty box just leaves the password
             // alone. 'confirmed' expects a "password_confirmation" field, which a
             // camelCase Livewire property isn't - so the pair is matched with 'same'.
-            'password' => [$this->editing ? 'nullable' : 'required', Password::min(8), 'same:passwordConfirmation'],
+            'password' => [$this->editing ? 'nullable' : 'required', Password::defaults(), 'same:passwordConfirmation'],
             'passwordConfirmation' => ['nullable', 'string'],
             'roleUuid' => ['nullable', 'string', Rule::exists('roles', 'uuid')],
         ];

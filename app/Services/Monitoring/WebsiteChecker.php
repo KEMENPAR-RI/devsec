@@ -7,10 +7,14 @@ use App\Models\User;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Notifications\AttackAnomalyDetected;
+use App\Notifications\DnsChangedNotification;
+use App\Notifications\DomainExpiringNotification;
 use App\Notifications\SslExpiringNotification;
 use App\Notifications\WebsiteDownNotification;
 use App\Notifications\WebsiteRecoveredNotification;
 use App\Services\Notifications\MailSettings;
+use App\Services\Notifications\WebhookNotifier;
+use App\Services\Security\OutboundUrlGuard;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Notifications\Notification as NotificationClass;
 use Illuminate\Support\Carbon;
@@ -18,6 +22,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -26,6 +31,15 @@ use Throwable;
  */
 class WebsiteChecker
 {
+    /**
+     * How far ahead a domain expiry is worth shouting about.
+     *
+     * Longer than the 14 days used for TLS, on purpose: a certificate can be
+     * reissued in minutes, while renewing a .go.id domain runs through a
+     * procurement process that does not move in a fortnight.
+     */
+    public const DOMAIN_WARNING_DAYS = 45;
+
     public function check(Website $website): WebsiteCheck
     {
         $start = microtime(true);
@@ -63,6 +77,11 @@ class WebsiteChecker
             $errorMessage = "Response time {$responseTimeMs}ms melebihi ambang batas {$website->response_time_threshold_ms}ms";
         }
 
+        // Recorded either way: the uptime history has to stay honest through a
+        // maintenance window, otherwise a planned outage quietly flatters the
+        // monthly figures. Only the incidents and the emails stop - see below.
+        $underMaintenance = $website->isUnderMaintenance();
+
         $check = $website->checks()->create([
             'is_up' => $isUp,
             'status_code' => $statusCode,
@@ -73,9 +92,11 @@ class WebsiteChecker
             'checked_at' => now(),
         ]);
 
-        $this->handleUpDown($website, $check);
+        // last_status still tracks reality during a window, so the moment it ends
+        // the site is already in the right state rather than one check behind.
+        $this->handleUpDown($website, $check, $underMaintenance);
 
-        if ($isUp) {
+        if ($isUp && ! $underMaintenance) {
             $this->detectResponseTimeAnomaly($website, $check);
             $this->detectContentAnomaly($website, $check);
             $this->maybeCheckSsl($website);
@@ -98,6 +119,12 @@ class WebsiteChecker
      */
     protected function fetchWithSslFallback(string $url)
     {
+        // Refused before the socket opens: a stored URL can point somewhere it was
+        // never allowed to (added before this guard existed, or repointed by DNS).
+        if ($reason = OutboundUrlGuard::reason($url)) {
+            throw new RuntimeException($reason);
+        }
+
         try {
             return $this->httpClient()->get($url);
         } catch (Throwable $e) {
@@ -125,7 +152,9 @@ class WebsiteChecker
             'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language' => 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
         ])
-            ->withOptions(['verify' => $verifySsl])
+            // httpOptions() caps redirects and re-checks each hop's address, so a
+            // 302 cannot land somewhere the guard above already refused.
+            ->withOptions(['verify' => $verifySsl] + OutboundUrlGuard::httpOptions())
             // 20s hard ceiling - comfortably above the 15s default response_time_threshold_ms
             // (see the websites table default) so a legitimately slow-but-reachable site
             // (common for shared-hosting government/institutional sites) gets counted as a
@@ -148,7 +177,7 @@ class WebsiteChecker
             ->retry(2, 300, throw: false);
     }
 
-    protected function handleUpDown(Website $website, WebsiteCheck $check): void
+    protected function handleUpDown(Website $website, WebsiteCheck $check, bool $underMaintenance = false): void
     {
         if (! $check->is_up) {
             $website->increment('consecutive_failures');
@@ -156,6 +185,12 @@ class WebsiteChecker
 
             if ($website->last_status !== 'down' && $website->consecutive_failures >= $website->down_threshold_failures) {
                 $website->update(['last_status' => 'down']);
+
+                // Scheduled: the state is recorded, but nobody is woken up for an
+                // outage they arranged themselves.
+                if ($underMaintenance) {
+                    return;
+                }
 
                 // What the run-up looked like, recorded at the moment the incident
                 // opens - the checks it reads are pruned over time, so diagnosing
@@ -199,7 +234,10 @@ class WebsiteChecker
             $incident = $website->incidents()->open()->where('type', 'downtime')->latest('detected_at')->first();
             $incident?->resolve();
 
-            $this->notifyAdmins(new WebsiteRecoveredNotification($website, $incident));
+            // A "pulih" email for an outage nobody was told about is just noise.
+            if (! $underMaintenance) {
+                $this->notifyAdmins(new WebsiteRecoveredNotification($website, $incident));
+            }
         } elseif ($website->consecutive_failures > 0) {
             $website->update(['consecutive_failures' => 0, 'last_status' => 'up']);
         } elseif ($website->last_status === 'unknown') {
@@ -316,6 +354,113 @@ class WebsiteChecker
         }
     }
 
+    /**
+     * Compares today's DNS answer against the last one recorded.
+     *
+     * Driven by the daily websites:check-domains command rather than by check():
+     * zone records change on the order of years, so four extra lookups a minute
+     * per site would be a resolver flood for nothing.
+     *
+     * Deliberately not gated on the site being up - a hijacked domain answers 200
+     * from somebody else's server, and an expired one stops resolving entirely,
+     * so the check that would explain a dead site must not be skipped precisely
+     * when the site is dead.
+     */
+    public function checkDns(Website $website): void
+    {
+        if ($website->dns_checked_at && $website->dns_checked_at->isAfter(now()->subDay())) {
+            return;
+        }
+
+        $host = parse_url($website->url, PHP_URL_HOST);
+
+        if (! $host) {
+            return;
+        }
+
+        $monitor = app(DnsMonitor::class);
+        $current = $monitor->lookUp($host);
+
+        // Nothing resolved at all: a resolver problem or an already-dead domain,
+        // neither of which should overwrite a good baseline with an empty one.
+        if ($current === []) {
+            return;
+        }
+
+        $previous = $website->dns_records ?? [];
+
+        $website->update(['dns_records' => $current, 'dns_checked_at' => now()]);
+
+        // First sighting - there is nothing to have changed from.
+        if ($previous === []) {
+            return;
+        }
+
+        $changes = $monitor->diff($previous, $current);
+
+        if ($changes === [] || $this->hasRecentOpenIncident($website, 'dns', null)) {
+            return;
+        }
+
+        $incident = Incident::create([
+            'website_id' => $website->id,
+            'type' => 'dns',
+            'severity' => $monitor->severityFor($changes),
+            'title' => "Record DNS {$website->name} berubah",
+            'description' => 'Record '.implode(', ', array_keys($changes)).' berbeda dari yang terakhir tercatat.',
+            'meta' => ['changes' => $changes],
+            'status' => 'open',
+            'detected_at' => now(),
+        ]);
+
+        $this->notifyAdmins(new DnsChangedNotification($website, $incident));
+    }
+
+    /**
+     * Warns while there is still time to renew.
+     *
+     * A date typed in by an operator is never cleared by a lookup that came back
+     * empty - plenty of ccTLDs (.id among them) publish no RDAP at all, and
+     * wiping a known-good date because a registry is silent would be worse than
+     * not looking.
+     */
+    public function checkDomainExpiry(Website $website): void
+    {
+        if ($website->domain_checked_at && $website->domain_checked_at->isAfter(now()->subDay())) {
+            return;
+        }
+
+        $website->update(['domain_checked_at' => now()]);
+
+        if ($found = app(DomainExpiry::class)->lookUp($website->url)) {
+            $website->update(['domain_expires_at' => $found]);
+        }
+
+        $expiresAt = $website->fresh()->domain_expires_at;
+
+        if (! $expiresAt || $expiresAt->isAfter(now()->addDays(self::DOMAIN_WARNING_DAYS))) {
+            return;
+        }
+
+        if ($this->hasRecentOpenIncident($website, 'domain', null)) {
+            return;
+        }
+
+        $incident = Incident::create([
+            'website_id' => $website->id,
+            'type' => 'domain',
+            // Past the date is not a warning any more - the domain is gone.
+            'severity' => $expiresAt->isPast() ? 'critical' : 'warning',
+            'title' => "Domain {$website->name} akan kedaluwarsa",
+            'description' => 'Registrasi domain berakhir pada '.$expiresAt->translatedFormat('d F Y').'.',
+            'meta' => ['expires_at' => $expiresAt->toIso8601String()],
+            'status' => 'open',
+            'detected_at' => now(),
+        ]);
+
+        $this->notifyAdmins(new DomainExpiringNotification($website, $incident));
+    }
+
     protected function certificateExpiryDate(string $url): ?Carbon
     {
         $host = parse_url($url, PHP_URL_HOST);
@@ -361,8 +506,15 @@ class WebsiteChecker
      */
     protected function notifyAdmins(NotificationClass $notification): void
     {
+        $admins = User::all();
+
         app(MailSettings::class)->applyToRuntime();
 
-        Notification::send(User::all(), $notification);
+        Notification::send($admins, $notification);
+
+        // Once for the event, not once per admin: the webhook points at a shared
+        // channel, and six identical Telegram messages for one outage is how a
+        // channel gets muted.
+        app(WebhookNotifier::class)->sendNotification($notification, $admins->first());
     }
 }

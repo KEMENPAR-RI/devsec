@@ -399,11 +399,19 @@ class ListsAndToolingTest extends TestCase
         $filename = $backup->create();
         $stored = Storage::disk(DatabaseBackup::DISK)->get(DatabaseBackup::DIRECTORY.'/'.$filename);
 
-        $this->assertStringEndsWith('.sql.gz', $filename);
+        $this->assertStringEndsWith('.sql.gz.enc', $filename);
+
+        // At rest the file is encrypted, so it is deliberately not a readable
+        // gzip any more - that is the whole point of BackupCipher.
+        $this->assertStringNotContainsString('INSERT INTO', $stored);
+
+        // What the operator actually receives is still the importable .sql.gz.
+        $delivered = $backup->contents($filename);
+        $this->assertStringEndsWith('.sql.gz', $backup->downloadName($filename));
         // The gzip magic number: what gunzip, mysql and phpMyAdmin sniff for.
-        $this->assertSame("\x1f\x8b", substr($stored, 0, 2));
-        $this->assertSame($sql, gzdecode($stored));
-        $this->assertLessThan(strlen($sql), strlen($stored));
+        $this->assertSame("\x1f\x8b", substr($delivered, 0, 2));
+        $this->assertSame($sql, gzdecode($delivered));
+        $this->assertLessThan(strlen($sql), strlen($delivered));
     }
 
     public function test_dumps_written_before_compression_are_still_listed(): void

@@ -10,7 +10,7 @@
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
             <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Insiden</h1>
-            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Down time, anomali serangan, dan SSL - dikelompokkan per situs per hari. Temuan judol ada di halaman Deteksi Judol.</p>
+            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Down time, anomali serangan, SSL, perubahan DNS, dan masa berlaku domain - dikelompokkan per situs per hari. Temuan judol ada di halaman Deteksi Judol.</p>
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
@@ -47,6 +47,9 @@
                     <option value="downtime">Down Time</option>
                     <option value="attack">Serangan</option>
                     <option value="ssl">SSL</option>
+                    <option value="dns">DNS</option>
+                    <option value="domain">Masa Berlaku Domain</option>
+                    <option value="reputation">Reputasi Domain</option>
                 </select>
                 <select wire:model.live="status" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
                     <option value="">Semua Status</option>

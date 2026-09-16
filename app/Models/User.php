@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Models\Concerns\Auditable;
 use App\Models\Concerns\HasUuid;
 use App\Notifications\ResetPasswordNotification;
 use Database\Factories\UserFactory;
@@ -15,10 +16,10 @@ use Illuminate\Support\Str;
 
 class User extends Authenticatable
 {
+    use Auditable, HasUuid;
+
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
-
-    use HasUuid;
 
     /**
      * The attributes that are mass assignable.
@@ -42,6 +43,8 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
     ];
 
     /**
@@ -55,6 +58,33 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'banned_at' => 'datetime',
             'password' => 'hashed',
+            // Encrypted at rest: the TOTP secret is a second password, and the
+            // recovery codes are eight more. A database dump must not hand over
+            // the factor that exists because the first one might leak.
+            'two_factor_secret' => 'encrypted',
+            'two_factor_recovery_codes' => 'encrypted:array',
+            'two_factor_confirmed_at' => 'datetime',
+        ];
+    }
+
+    public function auditEventPrefix(): string
+    {
+        return 'users';
+    }
+
+    public function auditSubject(): string
+    {
+        return "{$this->name} ({$this->email})";
+    }
+
+    /** The password value is redacted by AuditLog; the fact that it changed is kept. */
+    public function auditIgnored(): array
+    {
+        return [
+            'id', 'uuid', 'created_at', 'updated_at', 'remember_token', 'email_verified_at',
+            // 2FA changes are audited explicitly with a readable event name, so
+            // the raw ciphertext never needs to reach the log.
+            'two_factor_secret', 'two_factor_recovery_codes', 'two_factor_confirmed_at',
         ];
     }
 
@@ -90,6 +120,54 @@ class User extends Authenticatable
     public function isBanned(): bool
     {
         return $this->banned_at !== null;
+    }
+
+    /**
+     * Whether this account actually has a working second factor.
+     *
+     * A secret with no confirmed_at means somebody started enrolling and stopped;
+     * enforcing that at login would lock them out with a code nobody can produce.
+     */
+    public function hasTwoFactorEnabled(): bool
+    {
+        return $this->two_factor_confirmed_at !== null && filled($this->two_factor_secret);
+    }
+
+    /** @return array<int, string> */
+    public function recoveryCodes(): array
+    {
+        return $this->two_factor_recovery_codes ?? [];
+    }
+
+    /**
+     * Spends one recovery code, returning whether it was valid.
+     *
+     * Removed rather than marked used: a code that can be replayed is not a
+     * one-time code, and the list is short enough that "how many are left" is
+     * better read as a count than as a status per row.
+     */
+    public function consumeRecoveryCode(string $code): bool
+    {
+        $code = Str::lower(trim($code));
+        $remaining = collect($this->recoveryCodes())->reject(fn (string $stored) => hash_equals($stored, $code));
+
+        if ($remaining->count() === count($this->recoveryCodes())) {
+            return false;
+        }
+
+        $this->forceFill(['two_factor_recovery_codes' => $remaining->values()->all()])->save();
+
+        return true;
+    }
+
+    /** Clears every trace of an enrolment - used when disabling, and by 2fa:disable. */
+    public function disableTwoFactor(): void
+    {
+        $this->forceFill([
+            'two_factor_secret' => null,
+            'two_factor_recovery_codes' => null,
+            'two_factor_confirmed_at' => null,
+        ])->save();
     }
 
     /**

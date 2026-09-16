@@ -1,4 +1,4 @@
-<div class="mx-auto flex max-w-3xl flex-col gap-6">
+<div class="mx-auto flex max-w-5xl flex-col gap-6">
     {{-- Header --}}
     <div class="enter">
         <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Pengaturan</h1>
@@ -29,10 +29,10 @@
             select(name) { this.tab = name; localStorage.setItem('settingsTab', name); },
         }"
         x-init="if (!{{ \Illuminate\Support\Js::from(array_keys($tabs)) }}.includes(tab)) select('ai')"
-        class="enter flex flex-col gap-6"
+        class="enter grid grid-cols-1 items-start gap-6 md:grid-cols-[13.5rem_minmax(0,1fr)]"
     >
-        {{-- Tab bar --}}
-        <div class="flex gap-1 overflow-x-auto rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900" role="tablist">
+        {{-- Side tab bar: sticky on desktop so it stays reachable while a long panel scrolls --}}
+        <div class="flex flex-row gap-1 overflow-x-auto rounded-xl border border-zinc-200 bg-white p-1 md:sticky md:top-6 md:flex-col md:overflow-visible dark:border-zinc-800 dark:bg-zinc-900" role="tablist">
             @foreach ($tabs as $key => $meta)
                 @php $tabHasErrors = collect($meta['errors'])->contains(fn ($field) => $errors->has($field)); @endphp
                 <button
@@ -43,10 +43,10 @@
                     :class="tab === '{{ $key }}'
                         ? 'bg-accent-50 text-accent-700 dark:bg-accent-500/10 dark:text-accent-400'
                         : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'"
-                    class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition"
+                    class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition md:w-full md:flex-none md:justify-start md:text-left"
                 >
                     <x-dynamic-component :component="'phosphor-' . $meta['icon']" class="h-4 w-4 shrink-0" />
-                    {{ $meta['label'] }}
+                    <span class="md:flex-1">{{ $meta['label'] }}</span>
                     @if ($tabHasErrors)
                         {{-- A hidden tab's validation errors would otherwise be invisible. --}}
                         <span title="Ada isian yang perlu diperbaiki di tab ini" class="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"></span>
@@ -55,10 +55,14 @@
             @endforeach
         </div>
 
+        {{-- Panels --}}
+        <div class="flex min-w-0 flex-col gap-6">
+
     {{-- Plain div, not <form> - the "Hapus API key" confirm dialog below needs its
     own <form> in its slot, and forms can't nest. "Simpan Pengaturan" uses wire:click
     instead of wire:submit accordingly. --}}
-    <div x-show="tab === 'ai'" x-cloak class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+    <div x-show="tab === 'ai'" x-cloak class="flex flex-col gap-5">
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
             <x-phosphor-robot class="h-4.5 w-4.5 text-accent-500" />
             Klasifikasi AI (Judol)
@@ -161,7 +165,9 @@
             @enderror
         </div>
 
-        <div class="border-t border-zinc-100 dark:border-zinc-800"></div>
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
 
         {{-- Toggle aktif --}}
         <div class="flex items-center justify-between gap-4">
@@ -238,7 +244,9 @@
             </div>
         </div>
 
-        <div class="flex justify-end border-t border-zinc-100 pt-5 dark:border-zinc-800">
+        </div>
+
+        <div class="flex justify-end rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <button
                 type="button"
                 wire:click="save"
@@ -259,7 +267,8 @@
     </div>
 
     {{-- Email notifications --}}
-    <div x-show="tab === 'email'" x-cloak class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+    <div x-show="tab === 'email'" x-cloak class="flex flex-col gap-5">
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <div class="flex items-center justify-between gap-4">
             <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
                 <x-phosphor-envelope-simple class="h-4.5 w-4.5 text-accent-500" />
@@ -421,7 +430,9 @@
             </div>
         @endif
 
-        <div class="border-t border-zinc-100 dark:border-zinc-800"></div>
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
 
         {{-- Template: collapsed by default so the SMTP fields above stay the focus,
         but still here rather than on a tab of its own - it is email configuration. --}}
@@ -475,7 +486,9 @@
             </div>
         </div>
 
-        <div class="flex justify-end border-t border-zinc-100 pt-5 dark:border-zinc-800">
+        </div>
+
+        <div class="flex justify-end rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <button
                 type="button"
                 wire:click="save"
@@ -492,7 +505,8 @@
     </div>
 
     {{-- Application configuration --}}
-    <div x-show="tab === 'app'" x-cloak class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+    <div x-show="tab === 'app'" x-cloak class="flex flex-col gap-5">
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
             <x-phosphor-sliders-horizontal class="h-4.5 w-4.5 text-accent-500" />
             Konfigurasi Aplikasi
@@ -619,7 +633,9 @@
             </div>
         </div>
 
-        <div class="border-t border-zinc-100 dark:border-zinc-800"></div>
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
 
         <div>
             <div class="text-sm font-semibold text-zinc-900 dark:text-white">Bawaan Situs Baru</div>
@@ -666,7 +682,214 @@
             </div>
         </div>
 
-        <div class="border-t border-zinc-100 dark:border-zinc-800"></div>
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
+
+        {{-- Push channel: where a critical incident lands within seconds --}}
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                <x-phosphor-telegram-logo class="h-4.5 w-4.5 text-accent-500" />
+                Notifikasi Cepat (Telegram)
+            </div>
+            <button
+                type="button"
+                role="switch"
+                :aria-checked="$wire.webhookEnabled"
+                wire:click="$toggle('webhookEnabled')"
+                @class([
+                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition',
+                    'bg-accent-600' => $webhookEnabled,
+                    'bg-zinc-200 dark:bg-zinc-700' => ! $webhookEnabled,
+                ])
+            >
+                <span @class([
+                    'inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow transition',
+                    'translate-x-6' => $webhookEnabled,
+                    'translate-x-1' => ! $webhookEnabled,
+                ])></span>
+            </button>
+        </div>
+        <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">
+            Email selalu dibaca <em>nanti</em>; kanal ini dibaca <em>sekarang</em>. Insiden dikirim satu kali per kejadian ke kanal bersama, bukan satu per admin.
+        </p>
+
+        @if ($webhookEnabled)
+            <div class="flex flex-col gap-4 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="flex flex-col gap-2">
+                        <label for="webhookToken" class="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            Token Bot
+                            @if ($webhookTokenIsSet)
+                                <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Sudah diisi</span>
+                            @endif
+                        </label>
+                        <input
+                            wire:model="webhookToken" id="webhookToken" type="password" autocomplete="off"
+                            placeholder="{{ $webhookTokenIsSet ? 'Biarkan kosong untuk mempertahankan' : 'Token dari @BotFather' }}"
+                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('webhookToken') border-red-400 @enderror"
+                        >
+                        @error('webhookToken') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                        <label for="webhookTarget" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Chat ID</label>
+                        <input
+                            wire:model="webhookTarget" id="webhookTarget" type="text" inputmode="numeric" autocomplete="off"
+                            placeholder="1037569409"
+                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('webhookTarget') border-red-400 @enderror"
+                        >
+                        @error('webhookTarget') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                    </div>
+                </div>
+
+                <p class="text-xs text-zinc-500 dark:text-zinc-400">
+                    Buat bot lewat <span class="font-medium">@BotFather</span> untuk mendapatkan token. Chat ID bukan nomor telepon:
+                    kirim <span class="font-mono">/start</span> ke bot Anda, lalu buka
+                    <span class="font-mono">api.telegram.org/bot&lt;token&gt;/getUpdates</span> dan salin nilai <span class="font-mono">chat.id</span>.
+                    Untuk grup, ID diawali <span class="font-mono">-100</span> dan bot harus sudah menjadi anggota grup.
+                </p>
+
+                <div class="flex flex-col gap-2">
+                    <span class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Kirim untuk tingkat</span>
+                    <div class="flex flex-wrap gap-4">
+                        @foreach (['critical' => 'Kritis', 'warning' => 'Peringatan', 'info' => 'Info'] as $value => $label)
+                            <label class="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                                <input type="checkbox" value="{{ $value }}" wire:model="webhookSeverities" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                {{ $label }}
+                            </label>
+                        @endforeach
+                    </div>
+                    <p class="text-xs text-zinc-500 dark:text-zinc-400">Biarkan "Info" mati kecuali memang ingin dibunyikan untuk kejadian ringan - kanal yang terlalu berisik akan dibisukan orang.</p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" wire:click="testWebhook" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                        <x-loading-label target="testWebhook" loading="Mengirim...">
+                            <x-phosphor-paper-plane-tilt class="h-4 w-4" />
+                            <span>Simpan & Kirim Uji</span>
+                        </x-loading-label>
+                    </button>
+
+                    @if ($webhookTestResult)
+                        <div @class([
+                            'flex items-start gap-1.5 rounded-lg px-3 py-2 text-xs',
+                            'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' => $webhookTestResult['success'],
+                            'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => ! $webhookTestResult['success'],
+                        ])>
+                            <x-dynamic-component :component="$webhookTestResult['success'] ? 'phosphor-check-circle' : 'phosphor-x-circle'" class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            {{ $webhookTestResult['message'] }}
+                        </div>
+                    @endif
+                </div>
+            </div>
+        @endif
+
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
+
+        {{-- Domain reputation --}}
+        <div class="flex flex-col gap-2">
+            <label for="safeBrowsingKey" class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                <x-phosphor-shield-warning class="h-4.5 w-4.5 text-accent-500" />
+                Google Safe Browsing API Key
+                @if ($safeBrowsingKeyIsSet)
+                    <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Sudah diisi</span>
+                @endif
+            </label>
+            <input
+                wire:model="safeBrowsingKey" id="safeBrowsingKey" type="password" autocomplete="off"
+                placeholder="{{ $safeBrowsingKeyIsSet ? 'Biarkan kosong untuk mempertahankan yang tersimpan' : 'Kosongkan bila tidak dipakai' }}"
+                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
+            >
+            <p class="text-xs text-zinc-500 dark:text-zinc-400">
+                Mengecek setiap hari apakah domain yang dipantau masuk daftar blokir Google. Situs yang terblokir praktis sama tidak terjangkaunya dengan situs yang down - Chrome memasang halaman peringatan merah di depannya - padahal servernya menjawab normal, jadi tidak ada pemeriksaan lain di sini yang bisa menangkapnya.
+                Buat key gratis di Google Cloud Console (aktifkan Safe Browsing API). Tanpa key, pemeriksaan ini tidak dijalankan sama sekali.
+            </p>
+        </div>
+
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
+
+        {{-- Escalation: the reminder for an incident nobody closed --}}
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                <x-phosphor-bell-ringing class="h-4.5 w-4.5 text-accent-500" />
+                Eskalasi Insiden Kritis
+            </div>
+            <button
+                type="button"
+                role="switch"
+                :aria-checked="$wire.escalationEnabled"
+                wire:click="$toggle('escalationEnabled')"
+                @class([
+                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition',
+                    'bg-accent-600' => $escalationEnabled,
+                    'bg-zinc-200 dark:bg-zinc-700' => ! $escalationEnabled,
+                ])
+            >
+                <span @class([
+                    'inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow transition',
+                    'translate-x-6' => $escalationEnabled,
+                    'translate-x-1' => ! $escalationEnabled,
+                ])></span>
+            </button>
+        </div>
+        <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">
+            Mengirim satu pengingat untuk insiden kritis yang belum ditandai selesai. Bukan untuk mendeteksi - peringatan pertama sudah dikirim - melainkan untuk kasus yang jauh lebih sering terjadi: semua orang mengira sudah ada yang menangani.
+        </p>
+
+        @if ($escalationEnabled)
+            <div class="flex flex-col gap-2 sm:max-w-xs">
+                <label for="escalationMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ingatkan setelah (menit)</label>
+                <input
+                    wire:model="escalationMinutes" id="escalationMinutes" type="number" min="5" max="1440"
+                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('escalationMinutes') border-red-400 @enderror"
+                >
+                <p class="text-xs text-zinc-500 dark:text-zinc-400">Tepat satu pengingat per insiden - alarm yang berulang justru dibisukan orang.</p>
+                @error('escalationMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+            </div>
+        @endif
+
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
+
+        {{-- Mandatory second factor --}}
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                <x-phosphor-device-mobile class="h-4.5 w-4.5 text-accent-500" />
+                Wajibkan Verifikasi Dua Faktor
+            </div>
+            <button
+                type="button"
+                role="switch"
+                :aria-checked="$wire.twoFactorRequired"
+                wire:click="$toggle('twoFactorRequired')"
+                @class([
+                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition',
+                    'bg-accent-600' => $twoFactorRequired,
+                    'bg-zinc-200 dark:bg-zinc-700' => ! $twoFactorRequired,
+                ])
+            >
+                <span @class([
+                    'inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow transition',
+                    'translate-x-6' => $twoFactorRequired,
+                    'translate-x-1' => ! $twoFactorRequired,
+                ])></span>
+            </button>
+        </div>
+        <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">
+            Setiap pengguna - termasuk Anda sendiri - hanya bisa membuka halaman Profil sampai mengaktifkan verifikasi dua faktor.
+            Tidak ada yang terkunci: halaman Profil dan tombol Keluar tetap terbuka, dan bila kode serta kode pemulihan sama-sama hilang, jalankan
+            <code class="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] dark:bg-zinc-800">php artisan two-factor:disable email@anda</code> di server.
+        </p>
+
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
 
         {{-- Google reCAPTCHA v3 --}}
         <div class="flex items-center justify-between gap-4">
@@ -778,7 +1001,9 @@
             @error('recaptchaMinScore') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
         </div>
 
-        <div class="border-t border-zinc-100 dark:border-zinc-800"></div>
+        </div>
+
+        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
 
         {{-- Database backup --}}
         <div class="flex items-center justify-between gap-4">
@@ -819,6 +1044,16 @@
                 {{ $backupResult['message'] }}
             </div>
         @endif
+
+        <div class="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <x-phosphor-lock-key class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+                Berkas backup disimpan dalam keadaan terenkripsi (AES-256-GCM) dengan kunci yang diturunkan dari <code class="font-mono">APP_KEY</code>, karena satu dump memuat seluruh hash kata sandi.
+                Unduhan dari halaman ini sudah otomatis didekripsi.
+                <span class="font-semibold">Simpan salinan <code class="font-mono">APP_KEY</code> di luar backup ini</span> - bila kuncinya hilang, backup tidak bisa dipulihkan.
+                Untuk memulihkan langsung di server: <code class="font-mono">php artisan backup:decrypt nama-berkas</code>.
+            </span>
+        </div>
 
         <div class="flex items-center justify-between gap-4">
             <div class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Jadwal Otomatis</div>
@@ -962,7 +1197,9 @@
             </div>
         @endif
 
-        <div class="flex justify-end border-t border-zinc-100 pt-5 dark:border-zinc-800">
+        </div>
+
+        <div class="flex justify-end rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
             <button
                 type="button"
                 wire:click="save"
@@ -976,6 +1213,7 @@
                 </x-loading-label>
             </button>
         </div>
+    </div>
     </div>
     </div>
 </div>

@@ -10,8 +10,17 @@
         $isOffline = $website->isOffline();
         // Computed once and reused by the dot and the badge below, so they cannot
         // drift apart - each call re-queries incidents.
-        $statusKey = $website->statusKey($isOffline, $website->wasAttacked());
+        $statusKey = $website->statusKey($isOffline, $website->wasAttacked(), $underMaintenance);
     @endphp
+
+    {{-- Scheduled maintenance: the one banner that explains why a red site is not
+    generating incidents or email right now. --}}
+    @if ($underMaintenance)
+        <div class="enter flex items-start gap-2 rounded-lg bg-sky-50 px-4 py-3 text-sm text-sky-700 dark:bg-sky-500/10 dark:text-sky-400">
+            <x-phosphor-wrench class="mt-0.5 h-4 w-4 shrink-0" />
+            <span>Situs ini sedang dalam <strong>jendela pemeliharaan terjadwal</strong>. Pengecekan tetap berjalan dan riwayatnya tetap dicatat, tetapi insiden baru dan notifikasi ditahan sampai jendela berakhir.</span>
+        </div>
+    @endif
 
     {{-- Automatic probing stops after a full day of failures (Website::isPausedForOffline()).
     Said out loud here, because a dashboard that has quietly stopped checking looks
@@ -255,5 +264,198 @@
                 </div>
             @endif
         </div>
+    </div>
+
+    {{-- Safe Browsing. Only shown once a verdict exists - "belum pernah dicek"
+    and "aman" are different claims, and the second must never stand in for the
+    first. --}}
+    @if ($website->reputation_status === 'flagged')
+        <div class="enter flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">
+            <x-phosphor-shield-warning class="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+                Domain ini <strong>masuk daftar blokir Google Safe Browsing</strong>
+                ({{ collect($website->reputation_threats ?? [])->map(fn ($threat) => \App\Services\Monitoring\ReputationChecker::THREAT_LABELS[$threat] ?? $threat)->implode(', ') }}).
+                Pengunjung Chrome melihat halaman peringatan merah sebelum masuk, meski server situsnya menjawab normal.
+                Bersihkan penyebabnya, lalu ajukan peninjauan ulang lewat Google Search Console.
+            </span>
+        </div>
+    @elseif ($website->reputation_status === 'clean')
+        <p class="enter flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+            <x-phosphor-shield-check class="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+            Bersih menurut Google Safe Browsing, dicek {{ \App\Support\Dates::display($website->reputation_checked_at) }}.
+        </p>
+    @endif
+
+    {{-- Security posture --}}
+    <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+            <div class="min-w-0">
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Keamanan Situs (Header &amp; TLS)</h2>
+                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Seberapa baik situs ini melindungi pengunjungnya sendiri. Bersifat informatif - tidak membuat insiden, karena header berubah setahun sekali dan alarm harian hanya bikin orang mengabaikannya.
+                    @if ($website->security_checked_at)
+                        <span class="block">Dinilai {{ \App\Support\Dates::display($website->security_checked_at) }}.</span>
+                    @endif
+                </p>
+            </div>
+
+            <div class="flex shrink-0 items-center gap-3">
+                @if ($website->security_grade)
+                    @php
+                        $gradeTone = match ($website->security_grade) {
+                            'A' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+                            'B' => 'bg-lime-50 text-lime-700 dark:bg-lime-500/10 dark:text-lime-400',
+                            'C' => 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+                            'D' => 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-400',
+                            default => 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+                        };
+                    @endphp
+                    <div class="flex items-center gap-2">
+                        <span class="flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold {{ $gradeTone }}">{{ $website->security_grade }}</span>
+                        <span class="text-sm text-zinc-500 dark:text-zinc-400">{{ $website->security_score }}/100</span>
+                    </div>
+                @endif
+
+                @can('situs.update')
+                    <button type="button" wire:click="gradeSecurityNow" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                        <x-loading-label target="gradeSecurityNow" loading="Menilai...">
+                            <x-phosphor-shield-check class="h-4 w-4" />
+                            <span>Nilai Sekarang</span>
+                        </x-loading-label>
+                    </button>
+                @endcan
+            </div>
+        </div>
+
+        @if ($website->security_findings)
+            <div class="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">
+                @foreach ($website->security_findings as $finding)
+                    <div class="flex items-start gap-3 px-5 py-3">
+                        <x-dynamic-component
+                            :component="$finding['ok'] ? 'phosphor-check-circle' : 'phosphor-x-circle'"
+                            @class([
+                                'mt-0.5 h-4 w-4 shrink-0',
+                                'text-emerald-500' => $finding['ok'],
+                                'text-red-500' => ! $finding['ok'],
+                            ])
+                        />
+                        <div class="min-w-0">
+                            <p class="text-sm font-medium text-zinc-900 dark:text-white">{{ $finding['label'] }}</p>
+                            <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{{ $finding['note'] }}</p>
+                        </div>
+                    </div>
+                @endforeach
+            </div>
+        @else
+            <p class="border-t border-zinc-100 px-5 py-4 text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">Situs ini belum pernah dinilai. Penilaian otomatis berjalan setiap malam, atau tekan "Nilai Sekarang".</p>
+        @endif
+    </div>
+
+    {{-- Scheduled maintenance --}}
+    <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+            <div>
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Jendela Pemeliharaan</h2>
+                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Periode saat situs ini memang sedang dikerjakan. Pengecekan tetap jalan dan riwayat uptime tetap jujur - yang ditahan hanya insiden baru dan notifikasinya.</p>
+            </div>
+
+            @can('situs.update')
+                @unless ($showMaintenanceForm)
+                    <button type="button" wire:click="openMaintenanceForm" class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                        <x-phosphor-plus class="h-4 w-4" />
+                        Jadwalkan
+                    </button>
+                @endunless
+            @endcan
+        </div>
+
+        @can('situs.update')
+            @if ($showMaintenanceForm)
+                <form wire:submit="saveMaintenance" class="flex flex-col gap-3 border-t border-zinc-100 px-5 py-4 dark:border-zinc-800" novalidate>
+                    <div class="flex flex-col gap-1.5">
+                        <label for="maintenanceReason" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Keterangan</label>
+                        <input
+                            id="maintenanceReason" type="text" wire:model="maintenanceReason" placeholder="Migrasi server, update CMS, ..."
+                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                        >
+                        @error('maintenanceReason') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <div class="flex flex-col gap-1.5">
+                            <label for="maintenanceStartsAt" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Mulai ({{ \App\Support\Dates::abbreviation() }})</label>
+                            <input
+                                id="maintenanceStartsAt" type="datetime-local" wire:model="maintenanceStartsAt"
+                                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                            >
+                            @error('maintenanceStartsAt') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <label for="maintenanceEndsAt" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Selesai ({{ \App\Support\Dates::abbreviation() }})</label>
+                            <input
+                                id="maintenanceEndsAt" type="datetime-local" wire:model="maintenanceEndsAt"
+                                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                            >
+                            @error('maintenanceEndsAt') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button type="submit" class="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700">
+                            <x-loading-label target="saveMaintenance" loading="Menyimpan...">
+                                <x-phosphor-check class="h-4 w-4" />
+                                <span>Simpan</span>
+                            </x-loading-label>
+                        </button>
+                        <button type="button" wire:click="$set('showMaintenanceForm', false)" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                            Batal
+                        </button>
+                    </div>
+                </form>
+            @endif
+        @endcan
+
+        @if ($maintenanceWindows->isEmpty())
+            <p class="border-t border-zinc-100 px-5 py-4 text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">Belum ada jendela pemeliharaan yang dijadwalkan.</p>
+        @else
+            <div class="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">
+                @foreach ($maintenanceWindows as $window)
+                    @php
+                        $state = $window->state();
+                        $tone = $state === 'berlangsung'
+                            ? 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400'
+                            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+                    @endphp
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                        <div class="min-w-0">
+                            <p class="flex flex-wrap items-center gap-2 text-sm font-medium text-zinc-900 dark:text-white">
+                                <span class="rounded-full px-2 py-0.5 text-xs font-medium {{ $tone }}">{{ ucfirst($state) }}</span>
+                                <span class="truncate">{{ $window->reason }}</span>
+                                @unless ($window->website_id)
+                                    <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">Semua situs</span>
+                                @endunless
+                            </p>
+                            <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                                {{ \App\Support\Dates::plain($window->starts_at) }} &rarr; {{ \App\Support\Dates::display($window->ends_at) }}
+                                @if ($window->author)
+                                    &middot; dijadwalkan oleh {{ $window->author->name }}
+                                @endif
+                            </p>
+                        </div>
+
+                        @can('situs.update')
+                            {{-- An all-sites window is not this page's to remove - deleting it here
+                            would silently change every other site's behaviour too. --}}
+                            @if ($window->website_id)
+                                <button type="button" wire:click="deleteMaintenance('{{ $window->uuid }}')" title="Hapus" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-red-50 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-red-500/10 dark:hover:text-red-400">
+                                    <x-phosphor-trash class="h-4 w-4" />
+                                </button>
+                            @endif
+                        @endcan
+                    </div>
+                @endforeach
+            </div>
+        @endif
     </div>
 </div>

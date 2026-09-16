@@ -2,7 +2,7 @@
     <div class="mb-8">
         <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Atur ulang kata sandi</h1>
         <p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-            Pilih kata sandi baru untuk akun Anda. Minimal 8 karakter.
+            Pilih kata sandi baru untuk akun Anda. Minimal 12 karakter, mengandung huruf besar, huruf kecil, dan angka.
         </p>
     </div>
 

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\Auditable;
 use App\Models\Concerns\HasUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
@@ -28,9 +29,39 @@ use Illuminate\Support\Facades\Cache;
  */
 class Setting extends Model
 {
-    use HasUuid;
+    use Auditable, HasUuid;
 
     protected $fillable = ['key', 'value'];
+
+    public function auditEventPrefix(): string
+    {
+        return 'pengaturan';
+    }
+
+    public function auditSubject(): string
+    {
+        return (string) $this->key;
+    }
+
+    public function auditIgnored(): array
+    {
+        return ['id', 'uuid', 'created_at', 'updated_at', 'key'];
+    }
+
+    /**
+     * Here the secret is the value of a row, not a column with a telling name -
+     * so the API key and the SMTP password are masked by which key they belong to.
+     */
+    protected function auditMask(array $changes): array
+    {
+        if (! in_array($this->key, AuditLog::REDACTED_FIELDS, true)) {
+            return $changes;
+        }
+
+        return collect($changes)
+            ->map(fn ($value) => is_array($value) ? ['dari' => '[disensor]', 'ke' => '[disensor]'] : '[disensor]')
+            ->all();
+    }
 
     /**
      * Values already resolved during this request, keyed by setting key. A key

@@ -148,8 +148,16 @@ class Incident extends Model
                 'Indikasi' => match ($meta['reason'] ?? null) {
                     'response_time_spike' => 'Lonjakan response time',
                     'content_changed' => 'Perubahan konten drastis',
+                    'foreign_script' => 'Kode asing di halaman depan',
                     default => null,
                 },
+                // One line per thing found, so an operator can tell a forgotten
+                // analytics tag from a loader nobody has ever seen before.
+                ...collect($meta['temuan'] ?? [])
+                    ->mapWithKeys(fn (array $finding, int $index) => [
+                        ($finding['jenis'] ?? 'Temuan').' #'.($index + 1) => $finding['detail'] ?? '',
+                    ])
+                    ->all(),
                 'Response Time' => isset($meta['response_time_ms']) ? number_format($meta['response_time_ms']).' ms' : null,
                 'Baseline Normal' => isset($meta['baseline_ms']) ? number_format($meta['baseline_ms']).' ms' : null,
                 'Ukuran Sebelumnya' => isset($meta['previous_length']) ? number_format($meta['previous_length']).' byte' : null,
@@ -157,6 +165,27 @@ class Incident extends Model
             ],
             'ssl' => [
                 'Kedaluwarsa Pada' => isset($meta['expires_at']) ? Carbon::parse($meta['expires_at'])->translatedFormat('d F Y') : null,
+            ],
+            'dns' => [
+                // One line per record type, showing exactly what moved - an
+                // operator can usually tell a planned migration from a hijack at a
+                // glance, but only if the old and new values are both in front of them.
+                ...collect($meta['changes'] ?? [])
+                    ->mapWithKeys(fn (array $change, string $type) => [
+                        "Record {$type}" => implode(', ', $change['dari'] ?? []).' -> '.implode(', ', $change['ke'] ?? []),
+                    ])
+                    ->all(),
+            ],
+            'reputation' => [
+                'Kategori Ancaman' => $meta['ancaman_label'] ?? null,
+                'Sumber' => 'Google Safe Browsing',
+                'Langkah Pemulihan' => 'Bersihkan penyebabnya, lalu ajukan peninjauan ulang di Google Search Console.',
+            ],
+            'domain' => [
+                'Kedaluwarsa Pada' => isset($meta['expires_at']) ? Carbon::parse($meta['expires_at'])->translatedFormat('d F Y') : null,
+                'Sisa Waktu' => isset($meta['expires_at'])
+                    ? (int) now()->startOfDay()->diffInDays(Carbon::parse($meta['expires_at'])->startOfDay(), false).' hari'
+                    : null,
             ],
             'judol' => [
                 'URL Halaman' => $meta['url'] ?? null,

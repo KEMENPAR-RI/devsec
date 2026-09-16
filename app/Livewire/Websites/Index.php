@@ -4,7 +4,9 @@ namespace App\Livewire\Websites;
 
 use App\Jobs\CheckWebsiteJob;
 use App\Models\Website;
+use App\Rules\PublicUrl;
 use App\Services\AppSettings;
+use App\Services\Security\OutboundUrlGuard;
 use App\Support\Url as SiteUrl;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -49,6 +51,12 @@ class Index extends Component
 
     public bool $isInternalOnly = false;
 
+    /**
+     * Typed by hand for the registries that publish no RDAP - .id among them.
+     * A lookup that comes back empty never clears it.
+     */
+    public string $domainExpiresAt = '';
+
     public bool $showBulkModal = false;
 
     public string $bulkInput = '';
@@ -74,7 +82,7 @@ class Index extends Component
     {
         $this->authorize('situs.create');
 
-        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly']);
+        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'domainExpiresAt']);
 
         // Defaults come from Pengaturan > Konfigurasi Aplikasi rather than being
         // hard-coded here, so an operator can set them once for every new site.
@@ -100,6 +108,7 @@ class Index extends Component
         $this->responseTimeThresholdMs = $website->response_time_threshold_ms;
         $this->isActive = $website->is_active;
         $this->isInternalOnly = $website->is_internal_only;
+        $this->domainExpiresAt = $website->domain_expires_at?->format('Y-m-d') ?? '';
         $this->showModal = true;
     }
 
@@ -109,6 +118,9 @@ class Index extends Component
             'name' => ['required', 'string', 'max:255'],
             'url' => [
                 'required', 'url', 'max:255',
+                // Shape alone is not enough: an http://10.0.0.5 would otherwise turn
+                // this monitor into a proxy into its own network.
+                new PublicUrl,
                 Rule::unique('websites', 'url')->ignore($this->editing?->id),
             ],
             'checkIntervalMinutes' => ['required', 'integer', 'min:1', 'max:1440'],
@@ -117,6 +129,7 @@ class Index extends Component
             'responseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:60000'],
             'isActive' => ['boolean'],
             'isInternalOnly' => ['boolean'],
+            'domainExpiresAt' => ['nullable', 'date'],
         ];
     }
 
@@ -140,6 +153,7 @@ class Index extends Component
             'response_time_threshold_ms' => $data['responseTimeThresholdMs'],
             'is_active' => $data['isActive'],
             'is_internal_only' => $data['isInternalOnly'],
+            'domain_expires_at' => $data['domainExpiresAt'] ?: null,
         ]);
         $website->save();
 
@@ -203,7 +217,8 @@ class Index extends Component
             [$name, $url] = $this->parseBulkLine($line);
             $url = $url ? rtrim($url, '/') : null;
 
-            if (! $url || strlen($url) > 255 || ! filter_var($url, FILTER_VALIDATE_URL)) {
+            // Same gate as the single-site form - bulk import is not a way around it.
+            if (! $url || strlen($url) > 255 || ! filter_var($url, FILTER_VALIDATE_URL) || ! OutboundUrlGuard::allows($url)) {
                 $invalid[] = $line;
 
                 continue;
@@ -431,11 +446,13 @@ class Index extends Component
 
         $offline = Website::offlineIds($websites);
         $attacked = Website::attackedIds($websites);
+        $maintenance = Website::maintenanceIds($websites);
 
         return $websites
             ->filter(fn (Website $site) => $site->statusKey(
                 isset($offline[$site->id]),
                 isset($attacked[$site->id]),
+                isset($maintenance[$site->id]),
             ) === $this->status)
             ->pluck('id')
             ->all();
@@ -463,6 +480,7 @@ class Index extends Component
             // One query each for the whole page instead of one per row - see Website::offlineIds().
             'offlineIds' => Website::offlineIds($websites),
             'attackedIds' => Website::attackedIds($websites),
+            'maintenanceIds' => Website::maintenanceIds($websites),
             'loadLevels' => Website::loadLevels($websites),
             'filteredCount' => $this->filteredQuery()->count(),
         ]);
