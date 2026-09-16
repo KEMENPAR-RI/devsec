@@ -255,6 +255,7 @@
             </div>
         </div>
     </div>
+    <x-session-expired-handler />
     @livewireScripts
 </body>
 </html>

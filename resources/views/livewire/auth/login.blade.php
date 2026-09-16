@@ -7,6 +7,14 @@
         </div>
     @endif
 
+    {{-- Set when a Livewire request is rejected with 419 and the client redirects here. --}}
+    @if (request()->boolean('expired'))
+        <div class="mb-6 flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+            <x-phosphor-clock-countdown class="mt-0.5 h-4 w-4 shrink-0" />
+            Sesi Anda telah berakhir. Silakan masuk kembali.
+        </div>
+    @endif
+
     <div class="mb-8">
         <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Masuk ke akun Anda</h1>
         <p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
