@@ -193,7 +193,7 @@ return [
     */
 
     'navigate' => [
-        'show_progress_bar' => true,
+        'show_progress_bar' => false,
         'progress_bar_color' => '#EAC170',
     ],
 

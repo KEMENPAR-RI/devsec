@@ -98,6 +98,7 @@
         </div>
     </div>
     <x-toast-handler />
+    <x-nav-loading-overlay />
     @livewireScripts
 </body>
 </html>
