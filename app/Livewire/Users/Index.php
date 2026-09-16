@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Users;
 
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Validation\Rule;
@@ -14,6 +15,7 @@ use Livewire\WithPagination;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
     use WithPagination;
 
     #[Url]
@@ -95,14 +97,14 @@ class Index extends Component
         }
 
         if ($user->is(auth()->user())) {
-            session()->flash('status', 'Anda tidak bisa memblokir akun Anda sendiri.');
+            $this->toastError('Anda tidak bisa memblokir akun Anda sendiri.');
             $this->showBanModal = false;
 
             return;
         }
 
         if ($user->isSuperadmin() && $this->isLastActiveSuperadmin($user)) {
-            session()->flash('status', 'Ini satu-satunya superadmin yang aktif - blokir akan mengunci semua orang di luar.');
+            $this->toastError('Ini satu-satunya superadmin yang aktif - blokir akan mengunci semua orang di luar.');
             $this->showBanModal = false;
 
             return;
@@ -112,7 +114,7 @@ class Index extends Component
 
         $this->showBanModal = false;
         $this->banning = null;
-        session()->flash('status', "Akun {$user->name} diblokir.");
+        $this->toastSuccess("Akun {$user->name} diblokir.");
     }
 
     public function unban(User $user): void
@@ -120,7 +122,7 @@ class Index extends Component
         $this->authorize('users.update');
 
         $user->update(['banned_at' => null, 'banned_reason' => null]);
-        session()->flash('status', "Blokir akun {$user->name} dicabut.");
+        $this->toastSuccess("Blokir akun {$user->name} dicabut.");
     }
 
     public function openCreate(): void
@@ -193,7 +195,7 @@ class Index extends Component
         $user->save();
 
         $this->showModal = false;
-        session()->flash('status', $this->editing ? "Pengguna {$user->name} diperbarui." : "Pengguna {$user->name} dibuat.");
+        $this->toastSuccess($this->editing ? "Pengguna {$user->name} diperbarui." : "Pengguna {$user->name} dibuat.");
         $this->editing = null;
     }
 
@@ -204,20 +206,20 @@ class Index extends Component
         // Deleting yourself would log you out mid-request and, if you were the last
         // superadmin, leave nobody able to hand the role back out.
         if ($user->is(auth()->user())) {
-            session()->flash('status', 'Anda tidak bisa menghapus akun Anda sendiri.');
+            $this->toastError('Anda tidak bisa menghapus akun Anda sendiri.');
 
             return;
         }
 
         if ($user->isSuperadmin() && $this->isLastActiveSuperadmin($user)) {
-            session()->flash('status', 'Ini satu-satunya akun superadmin - buat penggantinya dulu sebelum menghapusnya.');
+            $this->toastError('Ini satu-satunya akun superadmin - buat penggantinya dulu sebelum menghapusnya.');
 
             return;
         }
 
         $name = $user->name;
         $user->delete();
-        session()->flash('status', "Pengguna {$name} dihapus.");
+        $this->toastSuccess("Pengguna {$name} dihapus.");
     }
 
     /** No banned account counts here - a blocked superadmin can't let anyone back in. */

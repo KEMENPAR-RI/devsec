@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Roles;
 
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Role;
 use App\Support\Permissions;
 use Illuminate\Validation\Rule;
@@ -13,6 +14,7 @@ use Livewire\WithPagination;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
     use WithPagination;
 
     #[Url]
@@ -124,7 +126,7 @@ class Index extends Component
         $role->save();
 
         $this->showModal = false;
-        session()->flash('status', $this->editing ? "Role {$role->name} diperbarui." : "Role {$role->name} dibuat.");
+        $this->toastSuccess($this->editing ? "Role {$role->name} diperbarui." : "Role {$role->name} dibuat.");
         $this->editing = null;
     }
 
@@ -133,7 +135,7 @@ class Index extends Component
         $this->authorize('roles.delete');
 
         if ($role->is_locked) {
-            session()->flash('status', "Role {$role->name} bawaan sistem dan tidak bisa dihapus.");
+            $this->toastError("Role {$role->name} bawaan sistem dan tidak bisa dihapus.");
 
             return;
         }
@@ -141,7 +143,7 @@ class Index extends Component
         // Users keep working, just without permissions, until someone gives them a
         // new role - the FK is nullOnDelete, so this never orphans an account.
         $role->delete();
-        session()->flash('status', "Role {$role->name} dihapus.");
+        $this->toastSuccess("Role {$role->name} dihapus.");
     }
 
     public function render()

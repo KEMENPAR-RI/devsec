@@ -1,12 +1,5 @@
 <div class="enter">
     {{-- Set by the reset-password page on success, and by the ban middleware. --}}
-    @if (session('status'))
-        <div class="mb-6 flex items-start gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-            <x-phosphor-check-circle class="mt-0.5 h-4 w-4 shrink-0" />
-            {{ session('status') }}
-        </div>
-    @endif
-
     {{-- Set when a Livewire request is rejected with 419 and the client redirects here. --}}
     @if (request()->boolean('expired'))
         <div class="mb-6 flex items-start gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">

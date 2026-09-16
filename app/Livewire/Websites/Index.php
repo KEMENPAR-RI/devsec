@@ -3,6 +3,7 @@
 namespace App\Livewire\Websites;
 
 use App\Jobs\CheckWebsiteJob;
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Website;
 use App\Rules\PublicUrl;
 use App\Services\AppSettings;
@@ -18,6 +19,7 @@ use Livewire\WithPagination;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
     use WithPagination;
 
     #[Url]
@@ -179,7 +181,7 @@ class Index extends Component
         Website::query()->delete();
 
         $this->resetPage();
-        session()->flash('status', 'Semua data situs (beserta riwayat cek, insiden, dan deteksi judolnya) berhasil dihapus.');
+        $this->toastSuccess('Semua data situs (beserta riwayat cek, insiden, dan deteksi judolnya) berhasil dihapus.');
     }
 
     public function openBulk(): void
@@ -388,7 +390,7 @@ class Index extends Component
         $this->showMassModal = false;
         $this->selected = [];
 
-        session()->flash('status', 'Setelan '.count($applying)." field berhasil diterapkan ke {$count} situs.");
+        $this->toastSuccess('Setelan '.count($applying)." field berhasil diterapkan ke {$count} situs.");
     }
 
     public function updatingStatus(): void
@@ -463,7 +465,7 @@ class Index extends Component
         $this->authorize('situs.update');
 
         CheckWebsiteJob::dispatch($website);
-        session()->flash('status', "Pengecekan {$website->name} dikirim ke antrean.");
+        $this->toastSuccess("Pengecekan {$website->name} dikirim ke antrean.");
     }
 
     public function render()

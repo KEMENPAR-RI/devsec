@@ -439,7 +439,7 @@ class WebsiteMonitoringTest extends TestCase
         Livewire::actingAs($user)
             ->test(Index::class)
             ->call('removeKeyword', $keyword->uuid)
-            ->assertSee('1 temuan yang sudah tidak valid ikut dibersihkan');
+            ->assertDispatched('toast', fn (string $event, array $params) => str_contains($params['message'], '1 temuan yang sudah tidak valid ikut dibersihkan'));
 
         $this->assertSame(0, JudolDetection::count());
     }

@@ -4,6 +4,7 @@ namespace App\Livewire\Websites;
 
 use App\Jobs\CheckWebsiteJob;
 use App\Jobs\ScanWebsiteForJudolJob;
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\MaintenanceWindow;
 use App\Models\Website;
 use App\Rules\PublicUrl;
@@ -18,6 +19,8 @@ use Throwable;
 #[Layout('components.layouts.app')]
 class Show extends Component
 {
+    use InteractsWithToasts;
+
     public Website $website;
 
     public string $manualScanUrl = '';
@@ -48,7 +51,7 @@ class Show extends Component
         $this->authorize('situs.update');
 
         CheckWebsiteJob::dispatch($this->website);
-        session()->flash('status', 'Pengecekan dikirim ke antrean.');
+        $this->toastSuccess('Pengecekan dikirim ke antrean.');
     }
 
     public function scanJudolNow(): void
@@ -56,7 +59,7 @@ class Show extends Component
         $this->authorize('situs.update');
 
         ScanWebsiteForJudolJob::dispatch($this->website);
-        session()->flash('status', 'Pemindaian judol (full crawl) dikirim ke antrean. Bisa makan waktu beberapa menit untuk situs besar.');
+        $this->toastSuccess('Pemindaian judol (full crawl) dikirim ke antrean. Bisa makan waktu beberapa menit untuk situs besar.');
     }
 
     /**
@@ -112,7 +115,7 @@ class Show extends Component
         $result = app(SecurityGrader::class)->grade($this->website);
 
         if ($result === null) {
-            session()->flash('status', 'Situs tidak merespons, jadi nilainya tidak diubah.');
+            $this->toastWarning('Situs tidak merespons, jadi nilainya tidak diubah.');
 
             return;
         }
@@ -124,7 +127,7 @@ class Show extends Component
             'security_checked_at' => now(),
         ]);
 
-        session()->flash('status', "Penilaian keamanan diperbarui: {$result['grade']} ({$result['score']}/100).");
+        $this->toastSuccess("Penilaian keamanan diperbarui: {$result['grade']} ({$result['score']}/100).");
     }
 
     // --- Maintenance windows ----------------------------------------------
@@ -169,7 +172,7 @@ class Show extends Component
         ]);
 
         $this->showMaintenanceForm = false;
-        session()->flash('status', 'Jendela pemeliharaan disimpan. Insiden dan notifikasi untuk situs ini ditahan selama periode tersebut.');
+        $this->toastSuccess('Jendela pemeliharaan disimpan. Insiden dan notifikasi untuk situs ini ditahan selama periode tersebut.');
     }
 
     public function deleteMaintenance(string $uuid): void
@@ -178,7 +181,7 @@ class Show extends Component
 
         $this->website->maintenanceWindows()->where('uuid', $uuid)->first()?->delete();
 
-        session()->flash('status', 'Jendela pemeliharaan dihapus.');
+        $this->toastSuccess('Jendela pemeliharaan dihapus.');
     }
 
     public function render()

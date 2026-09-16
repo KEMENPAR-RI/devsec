@@ -3,6 +3,7 @@
 namespace App\Livewire\Settings;
 
 use App\Console\Commands\EscalateIncidents;
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Mail\IncidentEmail;
 use App\Models\Setting;
 use App\Services\AppSettings;
@@ -25,6 +26,7 @@ use Throwable;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
     use WithFileUploads;
 
     /**
@@ -241,7 +243,7 @@ class Index extends Component
         }
 
         $this->reset('logo');
-        session()->flash('status', 'Logo aplikasi diperbarui.');
+        $this->toastSuccess('Logo aplikasi diperbarui.');
     }
 
     /**
@@ -267,7 +269,7 @@ class Index extends Component
         }
 
         $this->reset('favicon');
-        session()->flash('status', 'Favicon diperbarui. Muat ulang halaman untuk melihatnya di tab browser.');
+        $this->toastSuccess('Favicon diperbarui. Muat ulang halaman untuk melihatnya di tab browser.');
     }
 
     public function removeFavicon(): void
@@ -281,7 +283,7 @@ class Index extends Component
         Setting::forget('app_favicon_path');
         // The file is gone but this request already memoized a URL for it.
         $this->appSettings()->forgetResolvedUrls();
-        session()->flash('status', 'Favicon dihapus.');
+        $this->toastSuccess('Favicon dihapus.');
     }
 
     public function removeLogo(): void
@@ -294,7 +296,7 @@ class Index extends Component
 
         Setting::forget('app_logo_path');
         $this->appSettings()->forgetResolvedUrls();
-        session()->flash('status', 'Logo aplikasi dihapus - kembali ke inisial nama aplikasi.');
+        $this->toastSuccess('Logo aplikasi dihapus - kembali ke inisial nama aplikasi.');
     }
 
     public function backupNow(DatabaseBackup $backup): void
@@ -314,7 +316,7 @@ class Index extends Component
         $this->authorize('pengaturan.update');
 
         $backup->delete($filename);
-        session()->flash('status', 'Berkas backup dihapus.');
+        $this->toastSuccess('Berkas backup dihapus.');
     }
 
     /**
@@ -473,7 +475,7 @@ class Index extends Component
 
         $this->testResult = null;
         $this->mailTestResult = null;
-        session()->flash('status', 'Pengaturan disimpan.');
+        $this->toastSuccess('Pengaturan disimpan.');
     }
 
     public function clearRecaptchaSecret(): void
@@ -483,7 +485,7 @@ class Index extends Component
         Setting::forget('recaptcha_secret_key');
         $this->recaptchaSecretIsSet = false;
         $this->recaptchaSecretKey = '';
-        session()->flash('status', 'Secret key reCAPTCHA dihapus.');
+        $this->toastSuccess('Secret key reCAPTCHA dihapus.');
     }
 
     public function clearApiKey(): void
@@ -493,7 +495,7 @@ class Index extends Component
         Setting::forget('anthropic_api_key');
         $this->apiKeyIsSet = false;
         $this->testResult = null;
-        session()->flash('status', 'API key dihapus. Sistem akan memakai ANTHROPIC_API_KEY dari .env (jika ada).');
+        $this->toastSuccess('API key dihapus. Sistem akan memakai ANTHROPIC_API_KEY dari .env (jika ada).');
     }
 
     public function clearMailPassword(): void
@@ -503,7 +505,7 @@ class Index extends Component
         Setting::forget('mail_password');
         $this->mailPasswordIsSet = false;
         $this->mailTestResult = null;
-        session()->flash('status', 'Kata sandi SMTP dihapus. Sistem akan memakai MAIL_PASSWORD dari .env (jika ada).');
+        $this->toastSuccess('Kata sandi SMTP dihapus. Sistem akan memakai MAIL_PASSWORD dari .env (jika ada).');
     }
 
     /**

@@ -97,6 +97,7 @@
             </div>
         </div>
     </div>
+    <x-toast-handler />
     @livewireScripts
 </body>
 </html>

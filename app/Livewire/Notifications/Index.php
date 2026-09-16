@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Notifications;
 
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Website;
 use App\Support\DailyGroups;
 use Illuminate\Notifications\DatabaseNotification;
@@ -13,6 +14,7 @@ use Livewire\WithPagination;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
     use WithPagination;
 
     #[Url]
@@ -65,7 +67,7 @@ class Index extends Component
         // still somebody's, and one operator must not be able to clear another's.
         auth()->user()->notifications()->whereKey($id)->delete();
 
-        session()->flash('status', 'Notifikasi dihapus.');
+        $this->toastSuccess('Notifikasi dihapus.');
     }
 
     public function deleteAll(): void
@@ -75,7 +77,7 @@ class Index extends Component
         auth()->user()->notifications()->delete();
 
         $this->resetPage();
-        session()->flash('status', 'Semua notifikasi berhasil dihapus.');
+        $this->toastSuccess('Semua notifikasi berhasil dihapus.');
     }
 
     /**

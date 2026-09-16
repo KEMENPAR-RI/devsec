@@ -5,13 +5,6 @@
         <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Konfigurasi AI untuk deteksi judol - tersimpan di database, berlaku langsung tanpa deploy ulang.</p>
     </div>
 
-    @if (session('status'))
-        <div class="enter flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-            <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-            {{ session('status') }}
-        </div>
-    @endif
-
     @php
         $tabs = [
             'ai' => ['label' => 'Klasifikasi AI', 'icon' => 'robot', 'errors' => ['apiKey', 'workspaceId', 'aiModel', 'confidenceThreshold', 'maxImages']],

@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Incidents;
 
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Incident;
 use App\Models\Website;
 use App\Services\Monitoring\IncidentInvestigator;
@@ -15,6 +16,7 @@ use Throwable;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
     use WithPagination;
 
     #[Url]
@@ -83,7 +85,7 @@ class Index extends Component
         $this->authorize('insiden.delete');
 
         $incident->delete();
-        session()->flash('status', 'Insiden dihapus.');
+        $this->toastSuccess('Insiden dihapus.');
     }
 
     public function deleteAll(): void
@@ -95,7 +97,7 @@ class Index extends Component
         Incident::query()->where('type', '!=', 'judol')->delete();
 
         $this->resetPage();
-        session()->flash('status', 'Semua data insiden website berhasil dihapus.');
+        $this->toastSuccess('Semua data insiden website berhasil dihapus.');
     }
 
     /**

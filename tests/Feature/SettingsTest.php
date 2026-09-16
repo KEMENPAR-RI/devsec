@@ -276,7 +276,7 @@ class SettingsTest extends TestCase
         Livewire::actingAs($user)
             ->test(Index::class)
             ->call('recheckUrl', $finding->uuid, 0)
-            ->assertSee('sudah bersih sekarang');
+            ->assertDispatched('toast', fn (string $event, array $params) => str_contains($params['message'], 'sudah bersih sekarang'));
 
         $this->assertDatabaseMissing('judol_detections', ['id' => $detection->id]);
     }

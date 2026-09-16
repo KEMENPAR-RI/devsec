@@ -1,11 +1,4 @@
 <div class="mx-auto flex max-w-7xl flex-col gap-6" wire:poll.10s.visible>
-    @if (session('status'))
-        <div class="enter flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-            <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-            {{ session('status') }}
-        </div>
-    @endif
-
     {{-- Header --}}
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -65,13 +58,6 @@
         </button>
 
         <div x-show="open" x-cloak class="border-t border-zinc-100 px-5 py-4 dark:border-zinc-800">
-            @if (session('keyword-status'))
-                <div class="mb-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                    <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-                    {{ session('keyword-status') }}
-                </div>
-            @endif
-
             {{-- Ambang batas --}}
             <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
                 <div class="flex flex-col gap-1.5">

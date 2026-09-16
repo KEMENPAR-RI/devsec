@@ -26,13 +26,6 @@
         <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Informasi Akun</h2>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Nama dan email yang dipakai untuk masuk serta menerima notifikasi.</p>
 
-        @if (session('profileStatus'))
-            <div class="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-                {{ session('profileStatus') }}
-            </div>
-        @endif
-
         <form wire:submit="updateProfile" class="mt-4 flex flex-col gap-4">
             <div class="grid gap-4 sm:grid-cols-2">
                 <div class="flex flex-col gap-1.5">
@@ -70,13 +63,6 @@
     <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
         <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Ubah Kata Sandi</h2>
         <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Minimal 12 karakter, mengandung huruf besar, huruf kecil, dan angka. Kata sandi saat ini diperlukan sebagai verifikasi.</p>
-
-        @if (session('passwordStatus'))
-            <div class="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-                {{ session('passwordStatus') }}
-            </div>
-        @endif
 
         <form wire:submit="updatePassword" class="mt-4 flex flex-col gap-4">
             <div class="flex flex-col gap-1.5">
@@ -125,13 +111,6 @@
         <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
             <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Perangkat yang Sedang Masuk</h2>
             <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Sesi yang masih aktif dengan akun Anda. Bila ada yang tidak Anda kenali, keluarkan semuanya lalu ganti kata sandi.</p>
-
-            @if (session('sessionStatus'))
-                <div class="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                    <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-                    {{ session('sessionStatus') }}
-                </div>
-            @endif
 
             <div class="mt-4 divide-y divide-zinc-100 dark:divide-zinc-800">
                 @forelse ($activeSessions as $session)
@@ -204,13 +183,6 @@
                 </span>
             @endif
         </div>
-
-        @if (session('twoFactorStatus'))
-            <div class="mt-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                <x-phosphor-check-circle class="h-4 w-4 shrink-0" />
-                {{ session('twoFactorStatus') }}
-            </div>
-        @endif
 
         {{-- Shown once, right after enrolling or regenerating. --}}
         @if ($freshRecoveryCodes)

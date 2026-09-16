@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Profile;
 
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\AuditLog;
 use App\Services\Security\AccountAlerts;
 use App\Services\Security\ActiveSessions;
@@ -21,6 +22,8 @@ use Livewire\Component;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
+
     public string $name = '';
 
     public string $email = '';
@@ -64,7 +67,7 @@ class Index extends Component
 
         $user->fill($data)->save();
 
-        session()->flash('profileStatus', 'Profil berhasil diperbarui.');
+        $this->toastSuccess('Profil berhasil diperbarui.');
     }
 
     public function updatePassword(): void
@@ -104,7 +107,7 @@ class Index extends Component
         app(AccountAlerts::class)->notifyPasswordChanged($user);
 
         $this->reset(['currentPassword', 'password', 'passwordConfirmation']);
-        session()->flash('passwordStatus', $ended
+        $this->toastSuccess($ended
             ? "Kata sandi berhasil diperbarui. {$ended} sesi lain ikut dikeluarkan."
             : 'Kata sandi berhasil diperbarui.');
     }
@@ -137,7 +140,7 @@ class Index extends Component
         AuditLog::record('users.sesi-lain-dikeluarkan', $user->email, ['jumlah' => $ended]);
 
         $this->reset('sessionPassword');
-        session()->flash('sessionStatus', $ended
+        $this->toastSuccess($ended
             ? "{$ended} sesi lain berhasil dikeluarkan."
             : 'Tidak ada sesi lain yang sedang aktif.');
     }
@@ -238,7 +241,7 @@ class Index extends Component
         app(AccountAlerts::class)->notifyTwoFactorDisabled($user);
 
         $this->reset(['disablePassword', 'pendingSecret', 'twoFactorCode', 'freshRecoveryCodes']);
-        session()->flash('twoFactorStatus', 'Verifikasi dua faktor dinonaktifkan.');
+        $this->toastSuccess('Verifikasi dua faktor dinonaktifkan.');
     }
 
     public function render()

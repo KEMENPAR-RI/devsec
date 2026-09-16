@@ -2,6 +2,7 @@
 
 namespace App\Livewire\JudolDetections;
 
+use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\JudolFinding;
@@ -20,6 +21,8 @@ use Throwable;
 #[Layout('components.layouts.app')]
 class Index extends Component
 {
+    use InteractsWithToasts;
+
     #[Url]
     public string $search = '';
 
@@ -82,7 +85,7 @@ class Index extends Component
 
         $finding->delete();
 
-        session()->flash('status', 'Titik penyisipan dihapus.');
+        $this->toastSuccess('Titik penyisipan dihapus.');
     }
 
     public function toggleFinding(string $uuid): void
@@ -117,11 +120,12 @@ class Index extends Component
         try {
             $matched = app(JudolScanner::class)->scanUrlNow($website, $url);
 
-            session()->flash('status', $matched
-                ? "{$url} masih cocok kata kunci: ".implode(', ', $matched).'.'
-                : "{$url} sudah bersih sekarang - deteksi lama dihapus.");
+            $matched
+                ? $this->toastWarning("{$url} masih cocok kata kunci: ".implode(', ', $matched).'.')
+                : $this->toastSuccess("{$url} sudah bersih sekarang - deteksi lama dihapus.");
         } catch (Throwable $e) {
             $this->recheckErrors[$finding->uuid] = $e->getMessage();
+            $this->toastError("Gagal memeriksa ulang {$url}: ".$e->getMessage());
         }
     }
 
@@ -136,7 +140,7 @@ class Index extends Component
         JudolKeyword::create(['keyword' => trim($this->newKeyword), 'is_active' => true]);
 
         $this->newKeyword = '';
-        session()->flash('keyword-status', 'Kata kunci ditambahkan.');
+        $this->toastSuccess('Kata kunci ditambahkan.');
     }
 
     public function openBulkKeywords(): void
@@ -234,7 +238,7 @@ class Index extends Component
         // Deactivating can only make matches disappear, never add new ones - prune
         // right away so stale detections don't linger. Reactivating needs no pruning.
         if (! $keyword->is_active) {
-            session()->flash('keyword-status', $this->pruneStale('Kata kunci dinonaktifkan.'));
+            $this->toastSuccess($this->pruneStale('Kata kunci dinonaktifkan.'));
         }
     }
 
@@ -244,7 +248,7 @@ class Index extends Component
 
         $keyword->delete();
 
-        session()->flash('keyword-status', $this->pruneStale('Kata kunci dihapus.'));
+        $this->toastSuccess($this->pruneStale('Kata kunci dihapus.'));
     }
 
     /**
@@ -271,7 +275,7 @@ class Index extends Component
         $this->validate(['threshold' => ['required', 'integer', 'min:1', 'max:20']]);
 
         Setting::set('judol_threshold', (string) $this->threshold);
-        session()->flash('keyword-status', 'Ambang batas disimpan.');
+        $this->toastSuccess('Ambang batas disimpan.');
     }
 
     /**
@@ -290,7 +294,7 @@ class Index extends Component
         JudolDetection::query()->delete();
         JudolFinding::query()->delete();
 
-        session()->flash('status', 'Semua data deteksi judol berhasil dihapus. Kata kunci tetap tersimpan.');
+        $this->toastSuccess('Semua data deteksi judol berhasil dihapus. Kata kunci tetap tersimpan.');
     }
 
     /**

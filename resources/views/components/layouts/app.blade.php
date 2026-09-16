@@ -256,6 +256,7 @@
         </div>
     </div>
     <x-session-expired-handler />
+    <x-toast-handler />
     @livewireScripts
 </body>
 </html>
