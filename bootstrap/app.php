@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureTvToken;
 use App\Http\Middleware\EnsureUserIsNotBanned;
 use App\Http\Middleware\RequireTwoFactor;
 use App\Http\Middleware\SecurityHeaders;
@@ -14,6 +15,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->alias(['tv.token' => EnsureTvToken::class]);
+
         // Runs on every web request so a ban applied mid-session takes effect on
         // that session's very next click, not whenever it happens to expire.
         $middleware->appendToGroup('web', EnsureUserIsNotBanned::class);

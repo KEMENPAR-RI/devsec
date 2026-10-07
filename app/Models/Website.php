@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Pagination\AbstractPaginator;
 
 class Website extends Model
@@ -88,6 +89,11 @@ class Website extends Model
     public function checks(): HasMany
     {
         return $this->hasMany(WebsiteCheck::class);
+    }
+
+    public function latestCheck(): HasOne
+    {
+        return $this->hasOne(WebsiteCheck::class)->latestOfMany('checked_at');
     }
 
     public function incidents(): HasMany

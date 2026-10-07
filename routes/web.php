@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\TvDisplayController;
 use App\Http\Controllers\JudolEvidenceController;
 use App\Http\Controllers\PwaController;
 use App\Livewire\Audit\Index as AuditIndex;
@@ -67,6 +68,11 @@ Route::post('/logout', function () {
 
     return redirect()->route('login');
 })->middleware('auth')->name('logout');
+
+Route::middleware('tv.token')->group(function () {
+    Route::get('/tv', [TvDisplayController::class, 'show'])->name('tv');
+    Route::get('/tv/data', [TvDisplayController::class, 'data'])->name('tv.data');
+});
 
 Route::middleware('auth')->group(function () {
     // Own account: no permission gate, since every signed-in user - even one whose
