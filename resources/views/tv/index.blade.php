@@ -51,9 +51,6 @@
                 ? '-'
                 : `${site.response_time_ms} ms`;
             const code = site.status_code ? `HTTP ${site.status_code}` : (site.error_message || '-');
-            const subtitle = site.kind === 'insiden' && site.incident_title
-                ? site.incident_title
-                : site.url;
 
             return `
                 <div class="flex min-h-0 flex-col justify-between rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
@@ -61,7 +58,7 @@
                         <span class="h-3 w-3 shrink-0 rounded-full ${escapeHtml(site.dot)}"></span>
                         <p class="truncate text-sm font-semibold text-zinc-900">${escapeHtml(site.name)}</p>
                     </div>
-                    <p class="truncate text-xs text-zinc-500">${escapeHtml(subtitle)}</p>
+                    <p class="truncate text-xs text-zinc-500">${escapeHtml(site.url)}</p>
                     <div class="flex items-end justify-between">
                         <p class="text-xs font-medium text-zinc-600">${escapeHtml(site.status_label)}</p>
                         <p class="text-[11px] text-zinc-400">${escapeHtml(site.occurred_at)}</p>
