@@ -99,7 +99,7 @@
 
     <header class="flex flex-wrap items-center justify-between gap-x-8 gap-y-3 px-8 pb-4 pt-5">
         <div class="flex min-w-0 items-center gap-4">
-            <x-brand-mark size="lg" :image_url="$appLogoUrl ?? null" class="shrink-0 ring-2 ring-secondary-300/60" />
+            <x-brand-mark size="lg" :image_url="$appLogoUrl ?? null" class="shrink-0 object-contain" />
             <div class="min-w-0">
                 <p class="truncate text-xl font-bold tracking-tight text-white">{{ $appName ?? app_name() }}</p>
                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-secondary-300">Monitoring Website</p>

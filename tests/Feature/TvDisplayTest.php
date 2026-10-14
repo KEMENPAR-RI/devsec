@@ -15,6 +15,7 @@ use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use ReflectionClass;
 use ReflectionProperty;
@@ -43,6 +44,17 @@ class TvDisplayTest extends TestCase
         $this->assertGuest();
 
         $this->get(route('tv'))->assertOk();
+    }
+
+    public function test_wallboard_links_the_uploaded_favicon(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('branding/favicon.png', 'png');
+        Setting::set('app_favicon_path', 'branding/favicon.png');
+
+        $url = app(AppSettings::class)->faviconUrl();
+
+        $this->get(route('tv'))->assertOk()->assertSee('<link rel="icon" href="'.$url.'">', false);
     }
 
     public function test_cards_show_site_names_and_status_colours(): void
