@@ -10,6 +10,7 @@ use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\PageRegion;
 use DOMDocument;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Tests\TestCase;
@@ -35,6 +36,7 @@ class RegionFindingTest extends TestCase
         // Without this every test here would pass vacuously - no links examined,
         // no findings, and nothing to group.
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         config(['judol.ai.links.enabled' => true]);
 
         // The region grouping is what is under test, not the classifier's judgement:

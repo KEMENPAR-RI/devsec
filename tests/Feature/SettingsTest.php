@@ -10,19 +10,31 @@ use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
+use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolScanner;
 use App\Services\Notifications\MailSettings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Livewire\Livewire;
+use RuntimeException;
 use Tests\TestCase;
 
 class SettingsTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function tearDown(): void
+    {
+        putenv('ANTHROPIC_API_KEY');
+        putenv('ANTHROPIC_AUTH_TOKEN');
+        putenv('ANTHROPIC_BASE_URL');
+
+        parent::tearDown();
+    }
 
     public function test_setting_get_set_forget_roundtrip_and_cache_invalidation(): void
     {
@@ -91,6 +103,78 @@ class SettingsTest extends TestCase
         $settings = new JudolAiSettings;
         $this->assertTrue($settings->hasApiKey());
         $this->assertSame('sk-ant-real-key', $settings->apiKey());
+    }
+
+    public function test_client_never_falls_back_to_anthropic_env_credentials(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+        putenv('ANTHROPIC_AUTH_TOKEN=env-token');
+        putenv('ANTHROPIC_BASE_URL=http://attacker.example');
+        Setting::set('judol_ai_enabled', '1');
+
+        $settings = new JudolAiSettings;
+        $this->assertFalse($settings->usable());
+
+        try {
+            $settings->client();
+            $this->fail('client() must not be built from env credentials');
+        } catch (RuntimeException) {
+        }
+
+        // With a saved key, env still can't add a token or redirect the base URL.
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-real-key'));
+        $client = (new JudolAiSettings)->client();
+
+        $this->assertSame('sk-ant-real-key', $client->apiKey);
+        $this->assertSame('', $client->authToken);
+        $this->assertSame('api.anthropic.com', (fn () => $this->getBaseUrl())->call($client)->getHost());
+    }
+
+    public function test_scanner_skips_ai_when_only_env_has_a_key(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+        NotificationFacade::fake();
+        Setting::set('judol_ai_enabled', '1');
+        JudolKeyword::firstOrCreate(['keyword' => 'slot gacor'], ['is_active' => true]);
+        Http::fake(['envkey.example' => Http::response('<title>Slot Gacor</title>', 200)]);
+
+        $calls = 0;
+        $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings, $calls) extends JudolAiClassifier
+        {
+            public function __construct(JudolAiSettings $settings, public int &$calls)
+            {
+                parent::__construct($settings);
+            }
+
+            public function classify(string $url, string $text, array $matchedKeywords, array $imageUrls = []): array
+            {
+                $this->calls++;
+
+                return ['is_judol' => true, 'confidence' => 1.0, 'reasoning' => 'x'];
+            }
+        });
+
+        $website = Website::factory()->create(['url' => 'http://envkey.example']);
+        (new JudolScanner)->scanUrlNow($website, 'http://envkey.example');
+
+        $this->assertSame(0, $calls);
+        $this->assertNull(JudolDetection::where('website_id', $website->id)->firstOrFail()->ai_verdict);
+    }
+
+    public function test_undecryptable_stored_key_is_not_usable(): void
+    {
+        Log::spy();
+        Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', 'not-a-valid-ciphertext');
+
+        $settings = new JudolAiSettings;
+
+        $this->assertNull($settings->apiKey());
+        $this->assertFalse($settings->hasApiKey());
+        $this->assertFalse($settings->usable());
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn (string $message) => ! str_contains($message, 'not-a-valid-ciphertext')
+        );
     }
 
     public function test_settings_page_saves_ai_config_and_encrypts_the_api_key(): void

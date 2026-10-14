@@ -17,6 +17,7 @@ use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\WebsiteChecker;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Illuminate\Support\Facades\Queue;
@@ -261,6 +262,7 @@ class WebsiteMonitoringTest extends TestCase
     {
         NotificationFacade::fake();
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
         {
@@ -287,6 +289,7 @@ class WebsiteMonitoringTest extends TestCase
     {
         NotificationFacade::fake();
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
         {
@@ -316,6 +319,7 @@ class WebsiteMonitoringTest extends TestCase
         // that case - not treat "AI unavailable" as "AI denies it".
         NotificationFacade::fake();
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
         {

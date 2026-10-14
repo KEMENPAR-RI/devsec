@@ -3,8 +3,10 @@
 namespace App\Services\Monitoring;
 
 use App\Models\Website;
+use App\Models\WebsiteCheck;
 use App\Services\AppSettings;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Data for the public TV wallboard. Public page: never add error_message or other
@@ -12,6 +14,8 @@ use Illuminate\Support\Facades\Cache;
  */
 class TvBoard
 {
+    protected const HISTORY_SIZE = 24;
+
     public function build(): array
     {
         // Public page polled by every screen/visitor: share one result, never staler than the poll interval.
@@ -30,6 +34,7 @@ class TvBoard
         $offlineIds = Website::offlineIds($websites);
         $attackedIds = Website::attackedIds($websites);
         $maintenanceIds = Website::maintenanceIds($websites);
+        $history = $this->history($websites->modelKeys());
 
         $masalah = [];
         $online = [];
@@ -61,6 +66,7 @@ class TvBoard
                 'text' => $config['text'],
                 'occurred_at_ts' => $since?->timestamp ?? 0,
                 'occurred_at' => $since?->diffForHumans() ?? '-',
+                'history' => $history[$site->id] ?? [],
             ];
 
             if ($key === 'up') {
@@ -97,5 +103,39 @@ class TvBoard
             ] : null,
             'kartu' => $kartu,
         ];
+    }
+
+    /**
+     * Last HISTORY_SIZE is_up values per site, oldest first, in one query (window function:
+     * MariaDB 10.2+/MySQL 8+/SQLite 3.25+). Booleans only: this feeds a public page.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, list<bool>>
+     */
+    protected function history(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $ranked = WebsiteCheck::query()
+            ->select(['website_id', 'is_up', 'checked_at', 'id'])
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY checked_at DESC, id DESC) AS rn')
+            ->whereIn('website_id', $ids);
+
+        $rows = DB::query()
+            ->fromSub($ranked, 'ranked')
+            ->where('rn', '<=', self::HISTORY_SIZE)
+            ->orderBy('website_id')
+            ->orderBy('checked_at')
+            ->orderBy('id')
+            ->get(['website_id', 'is_up']);
+
+        $history = [];
+        foreach ($rows as $row) {
+            $history[$row->website_id][] = (bool) $row->is_up;
+        }
+
+        return $history;
     }
 }

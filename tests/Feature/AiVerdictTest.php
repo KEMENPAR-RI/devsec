@@ -10,6 +10,7 @@ use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Tests\TestCase;
@@ -30,6 +31,7 @@ class AiVerdictTest extends TestCase
     public function test_a_detection_records_that_the_ai_confirmed_it(): void
     {
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         $this->fakeClassifier(['is_judol' => true, 'confidence' => 0.95, 'reasoning' => 'Jelas promosi slot.']);
 
         $detection = $this->scan();
@@ -45,6 +47,7 @@ class AiVerdictTest extends TestCase
     {
         // The keyword match still stands - the AI just wasn't sure enough to drop it.
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         config(['judol.ai.confidence_threshold' => 0.8]);
         $this->fakeClassifier(['is_judol' => false, 'confidence' => 0.4, 'reasoning' => 'Mungkin artikel berita.']);
 
@@ -57,6 +60,7 @@ class AiVerdictTest extends TestCase
     public function test_a_failed_call_is_recorded_as_unavailable_not_as_a_verdict(): void
     {
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         $this->fakeClassifier(['is_judol' => null, 'confidence' => 0.0, 'reasoning' => 'AI unavailable: timeout']);
 
         $detection = $this->scan();
@@ -81,6 +85,7 @@ class AiVerdictTest extends TestCase
         // This is what keeps the bill near zero: the classifier only ever vets pages
         // the free keyword filter already flagged, never every crawled page.
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         Http::fake(['clean.example' => Http::response('<title>Halaman biasa tanpa apa pun</title>', 200)]);
 
         $calls = 0;

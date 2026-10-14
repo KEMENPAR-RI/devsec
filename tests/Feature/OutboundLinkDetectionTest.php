@@ -11,6 +11,7 @@ use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolLinkClassifier;
 use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -31,6 +32,7 @@ class OutboundLinkDetectionTest extends TestCase
 
         JudolKeyword::firstOrCreate(['keyword' => 'slot gacor'], ['is_active' => true]);
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         config(['judol.ai.links.enabled' => true]);
     }
 

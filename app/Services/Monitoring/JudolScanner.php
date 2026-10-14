@@ -441,7 +441,7 @@ class JudolScanner
     {
         $settings = app(JudolAiSettings::class);
 
-        if (! $settings->enabled() || ! config('judol.ai.links.enabled', true) || $domains === []) {
+        if (! $settings->usable() || ! config('judol.ai.links.enabled', true) || $domains === []) {
             return [];
         }
 
@@ -1289,7 +1289,7 @@ class JudolScanner
         // when there is one. On a link-only finding its answer would be worse than
         // useless: the visible article really is a clean article, so it would deny
         // the finding and delete a genuine backlink injection.
-        if ($aiSettings->enabled() && $keywordsMatched) {
+        if ($aiSettings->usable() && $keywordsMatched) {
             $verdict = app(JudolAiClassifier::class)->classify(
                 $url,
                 $text,
@@ -1416,7 +1416,7 @@ class JudolScanner
     {
         $settings = app(JudolAiSettings::class);
 
-        if (! $settings->enabled() || ! config('judol.ai.links.enabled', true)) {
+        if (! $settings->usable() || ! config('judol.ai.links.enabled', true)) {
             return [];
         }
 

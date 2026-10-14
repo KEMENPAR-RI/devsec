@@ -6,6 +6,8 @@ use Anthropic\Client;
 use Anthropic\RequestOptions;
 use App\Models\Setting;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -58,6 +60,7 @@ class JudolAiSettings
             } catch (Throwable) {
                 // Corrupted or undecryptable (e.g. APP_KEY rotated since it was saved) -
                 // treat as unset rather than hard-failing every scan.
+                Log::warning('Stored Anthropic API key could not be decrypted; AI features are disabled until it is re-saved.');
             }
         }
 
@@ -65,12 +68,19 @@ class JudolAiSettings
     }
 
     /**
-     * Whether an API key has been saved - lets the UI/scanner short-circuit
-     * without needing to decrypt just to check presence.
+     * Whether a usable API key has been saved - one that actually decrypts.
      */
     public function hasApiKey(): bool
     {
-        return Setting::get('anthropic_api_key') !== null;
+        return filled($this->apiKey());
+    }
+
+    /**
+     * AI switched on AND a usable key saved - the gate for every AI call.
+     */
+    public function usable(): bool
+    {
+        return $this->enabled() && $this->hasApiKey();
     }
 
     /**
@@ -90,19 +100,29 @@ class JudolAiSettings
      * header automatically when one is configured. Pass $apiKeyOverride /
      * $workspaceIdOverride to test unsaved values (e.g. the "Tes Koneksi" button
      * on the Pengaturan page, checking what's in the form before it's saved).
+     *
+     * Key, auth token and base URL are always passed explicitly: the SDK would
+     * otherwise fall back to ANTHROPIC_* env vars, credential files or OIDC.
+     *
+     * @throws RuntimeException when no usable API key is available
      */
     public function client(?string $apiKeyOverride = null, ?string $workspaceIdOverride = null): Client
     {
-        $apiKey = $apiKeyOverride ?? $this->apiKey();
+        $apiKey = filled($apiKeyOverride) ? $apiKeyOverride : $this->apiKey();
         $workspaceId = $workspaceIdOverride ?? $this->workspaceId();
 
-        if (blank($workspaceId)) {
-            return new Client(apiKey: $apiKey);
+        if (blank($apiKey)) {
+            throw new RuntimeException('Belum ada Anthropic API key yang dikonfigurasi. Atur di halaman Pengaturan.');
         }
 
         return new Client(
             apiKey: $apiKey,
-            requestOptions: RequestOptions::with(extraHeaders: ['anthropic-workspace-id' => $workspaceId]),
+            authToken: '',
+            webhookKey: '',
+            baseUrl: 'https://api.anthropic.com',
+            requestOptions: blank($workspaceId)
+                ? null
+                : RequestOptions::with(extraHeaders: ['anthropic-workspace-id' => $workspaceId]),
         );
     }
 }

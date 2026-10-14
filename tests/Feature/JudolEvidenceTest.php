@@ -9,6 +9,7 @@ use App\Models\Website;
 use App\Services\Monitoring\JudolLinkClassifier;
 use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Tests\TestCase;
@@ -30,6 +31,7 @@ class JudolEvidenceTest extends TestCase
         NotificationFacade::fake();
 
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         config(['judol.ai.links.enabled' => true]);
 
         // The same stand-in RegionFindingTest uses: the region work is under test,

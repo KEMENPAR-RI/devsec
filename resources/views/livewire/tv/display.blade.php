@@ -167,7 +167,7 @@
         @foreach ($slides as $index => $slide)
             <div wire:key="tv-slide-{{ $index }}" wire:ignore.self x-show="slide === {{ $index }}" @style(['display: none' => $index > 0]) class="grid h-full grid-cols-4 grid-rows-4 gap-4">
                 @foreach ($slide as $site)
-                    <div class="relative flex min-h-0 flex-col justify-between gap-1 overflow-hidden rounded-2xl border py-4 pl-6 pr-4 shadow-lg shadow-black/30 {{ $site['card'] }}">
+                    <div class="relative flex min-h-0 flex-col justify-between gap-1 overflow-hidden rounded-2xl border py-3 pl-6 pr-4 shadow-lg shadow-black/30 {{ $site['card'] }}">
                         {{-- Status bar: same colour as the dot, readable from across the room. --}}
                         <span class="absolute inset-y-0 left-0 w-2 {{ $site['dot'] }}" aria-hidden="true"></span>
                         <div class="flex items-center gap-2">
@@ -183,6 +183,21 @@
                             <p class="text-sm font-bold {{ $site['text'] }}">{{ $site['status_label'] }}</p>
                             {{-- Server text is the first paint; Alpine keeps it live from the timestamp. --}}
                             <p class="truncate text-xs text-zinc-600" @if ($site['occurred_at_ts']) x-text="ago({{ (int) $site['occurred_at_ts'] }})" @endif>{{ $site['occurred_at'] }}</p>
+                        </div>
+                        {{-- Uptime bar: newest check rightmost, missing slots padded on the left. --}}
+                        @php($history = array_slice(array_values($site['history'] ?? []), -24))
+                        @php($pad = 24 - count($history))
+                        @php($upCount = count(array_filter($history)))
+                        <div role="img" aria-label="Riwayat 24 pengecekan terakhir: {{ $upCount }} up, {{ count($history) - $upCount }} down" class="flex h-2.5 w-full shrink-0 gap-0.5">
+                            @for ($i = 0; $i < 24; $i++)
+                                @if ($i < $pad)
+                                    <span class="flex-1 rounded-sm bg-zinc-300/60" title="Belum ada data"></span>
+                                @elseif ($history[$i - $pad])
+                                    <span class="flex-1 rounded-sm bg-emerald-500" title="Up"></span>
+                                @else
+                                    <span class="flex-1 rounded-sm bg-red-500" title="Down"></span>
+                                @endif
+                            @endfor
                         </div>
                     </div>
                 @endforeach

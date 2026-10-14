@@ -189,6 +189,27 @@ class TvDisplayTest extends TestCase
         $this->assertSame($few, $count());
     }
 
+    public function test_history_holds_last_24_checks_oldest_first_as_booleans(): void
+    {
+        $site = Website::factory()->create(['name' => 'Riwayat', 'last_status' => 'up']);
+        Website::factory()->create(['name' => 'Tanpa Cek', 'last_status' => 'up']);
+        $expected = [];
+        // 30 checks, every third one down; the 6 oldest must be dropped.
+        foreach (range(29, 0) as $slot) {
+            $isUp = $slot % 3 !== 0;
+            $site->checks()->create(['is_up' => $isUp, 'checked_at' => now()->subMinutes($slot * 5)]);
+            if ($slot < 24) {
+                $expected[] = $isUp;
+            }
+        }
+
+        $cards = collect(app(TvBoard::class)->build()['kartu'])->keyBy('name');
+
+        $this->assertCount(24, $cards['Riwayat']['history']);
+        $this->assertSame($expected, $cards['Riwayat']['history']);
+        $this->assertSame([], $cards['Tanpa Cek']['history']);
+    }
+
     public function test_old_json_endpoint_is_gone(): void
     {
         $this->get('/tv/data')->assertNotFound();

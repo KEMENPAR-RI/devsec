@@ -15,6 +15,7 @@ use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Livewire\Livewire;
@@ -131,6 +132,7 @@ class NotificationRestraintTest extends TestCase
     {
         $user = User::factory()->create();
         Setting::set('judol_ai_enabled', '1');
+        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-test'));
         Http::fake(['https://manual-ai.example/*' => Http::response('<title>Slot Gacor</title>', 200)]);
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
