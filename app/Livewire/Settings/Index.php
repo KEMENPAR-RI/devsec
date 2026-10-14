@@ -14,6 +14,7 @@ use App\Services\Notifications\MailSettings;
 use App\Services\Notifications\WebhookNotifier;
 use App\Services\Notifications\WebhookSettings;
 use App\Services\Security\Recaptcha;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
@@ -119,6 +120,8 @@ class Index extends Component
 
     public int $defaultResponseTimeThresholdMs = 15000;
 
+    public int $tvPollSeconds = 300;
+
     /** When on, nobody may use the app until they have enrolled a second factor. */
     public bool $twoFactorRequired = false;
 
@@ -177,6 +180,7 @@ class Index extends Component
         $this->defaultJudolScanIntervalMinutes = $appSettings->defaultJudolScanIntervalMinutes();
         $this->defaultDownThresholdFailures = $appSettings->defaultDownThresholdFailures();
         $this->defaultResponseTimeThresholdMs = $appSettings->defaultResponseTimeThresholdMs();
+        $this->tvPollSeconds = $appSettings->tvPollSeconds();
 
         $webhook = app(WebhookSettings::class);
         $this->webhookEnabled = $webhook->enabled();
@@ -361,6 +365,7 @@ class Index extends Component
             'defaultJudolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'defaultDownThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
             'defaultResponseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:60000'],
+            'tvPollSeconds' => ['required', 'integer', 'min:10', 'max:3600'],
             'twoFactorRequired' => ['boolean'],
             'webhookEnabled' => ['boolean'],
             'webhookToken' => ['nullable', 'string', 'max:500'],
@@ -429,6 +434,9 @@ class Index extends Component
         Setting::set('default_judol_scan_interval_minutes', (string) $this->defaultJudolScanIntervalMinutes);
         Setting::set('default_down_threshold_failures', (string) $this->defaultDownThresholdFailures);
         Setting::set('default_response_time_threshold_ms', (string) $this->defaultResponseTimeThresholdMs);
+        Setting::set('tv_poll_seconds', (string) $this->tvPollSeconds);
+        // TV board cache TTL follows the poll interval, so drop the old entry.
+        Cache::forget('tv-board');
 
         if (filled($this->safeBrowsingKey)) {
             Setting::set('safebrowsing_api_key', Crypt::encryptString(trim($this->safeBrowsingKey)));
@@ -495,7 +503,7 @@ class Index extends Component
         Setting::forget('anthropic_api_key');
         $this->apiKeyIsSet = false;
         $this->testResult = null;
-        $this->toastSuccess('API key dihapus. Sistem akan memakai ANTHROPIC_API_KEY dari .env (jika ada).');
+        $this->toastSuccess('API key dihapus. Deteksi AI tidak akan berjalan sampai API key baru disimpan.');
     }
 
     public function clearMailPassword(): void

@@ -9,7 +9,7 @@
         $tabs = [
             'ai' => ['label' => 'Klasifikasi AI', 'icon' => 'robot', 'errors' => ['apiKey', 'workspaceId', 'aiModel', 'confidenceThreshold', 'maxImages']],
             'email' => ['label' => 'Konfigurasi Email', 'icon' => 'envelope-simple', 'errors' => ['mailHost', 'mailPort', 'mailUsername', 'mailPassword', 'mailEncryption', 'mailFromAddress', 'mailFromName', 'mailTemplateSubject', 'mailTemplateBody']],
-            'app' => ['label' => 'Konfigurasi Aplikasi', 'icon' => 'sliders-horizontal', 'errors' => ['appName', 'appTimezone', 'logo', 'favicon', 'defaultCheckIntervalMinutes', 'defaultJudolScanIntervalMinutes', 'defaultDownThresholdFailures', 'defaultResponseTimeThresholdMs', 'recaptchaSiteKey', 'recaptchaSecretKey', 'recaptchaMinScore', 'backupFrequency', 'backupTime', 'backupKeep']],
+            'app' => ['label' => 'Konfigurasi Aplikasi', 'icon' => 'sliders-horizontal', 'errors' => ['appName', 'appTimezone', 'logo', 'favicon', 'defaultCheckIntervalMinutes', 'defaultJudolScanIntervalMinutes', 'defaultDownThresholdFailures', 'defaultResponseTimeThresholdMs', 'tvPollSeconds', 'recaptchaSiteKey', 'recaptchaSecretKey', 'recaptchaMinScore', 'backupFrequency', 'backupTime', 'backupKeep']],
         ];
     @endphp
 
@@ -95,7 +95,7 @@
                     </span>
                     <x-confirm-dialog
                         title="Hapus API Key Tersimpan?"
-                        message="Sistem akan memakai ANTHROPIC_API_KEY dari .env (jika ada)."
+                        message="Deteksi AI tidak akan berjalan sampai API key baru disimpan."
                         confirm-text="Ya, Hapus"
                         variant="danger"
                         target="clearApiKey"
@@ -107,7 +107,7 @@
                     </x-confirm-dialog>
                 @else
                     <span class="inline-flex items-center gap-1">
-                        <x-phosphor-warning-circle class="h-3.5 w-3.5" /> Belum diatur - pakai ANTHROPIC_API_KEY dari .env bila tersedia
+                        <x-phosphor-warning-circle class="h-3.5 w-3.5" /> Belum diatur - deteksi AI tidak berjalan tanpa API key
                     </span>
                 @endif
                 <button type="button" wire:click="testConnection" wire:loading.attr="disabled" wire:target="testConnection" class="ml-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-2.5 py-1 font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
@@ -531,6 +531,16 @@
                 </select>
                 <p class="text-xs text-zinc-500 dark:text-zinc-400">Dipakai untuk menampilkan semua waktu (insiden, deteksi, notifikasi). Sekarang: {{ now()->translatedFormat('d M Y, H:i') }}.</p>
                 @error('appTimezone') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="flex flex-col gap-2">
+                <label for="tvPollSeconds" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval refresh halaman TV (detik)</label>
+                <input
+                    wire:model="tvPollSeconds" id="tvPollSeconds" type="number" min="10" max="3600"
+                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('tvPollSeconds') border-red-400 @enderror"
+                >
+                <p class="text-xs text-zinc-500 dark:text-zinc-400">Seberapa sering halaman TV publik memuat ulang data (10-3600 detik).</p>
+                @error('tvPollSeconds') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
             </div>
         </div>
 

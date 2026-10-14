@@ -130,6 +130,12 @@ class AppSettings
         return (int) (Setting::get('default_response_time_threshold_ms') ?: 15000);
     }
 
+    /** How often the public TV page refreshes, in seconds (10..3600). */
+    public function tvPollSeconds(): int
+    {
+        return max(10, min(3600, (int) (Setting::get('tv_poll_seconds') ?: 300)));
+    }
+
     /**
      * How many distinct keywords must appear on a page before it counts as a judol
      * finding.

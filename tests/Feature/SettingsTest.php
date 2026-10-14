@@ -43,7 +43,6 @@ class SettingsTest extends TestCase
     public function test_judol_ai_settings_falls_back_to_config_until_overridden(): void
     {
         config([
-            'judol.ai.enabled' => false,
             'judol.ai.model' => 'claude-haiku-4-5',
             'judol.ai.confidence_threshold' => 0.5,
             'judol.ai.max_images' => 3,
@@ -70,11 +69,8 @@ class SettingsTest extends TestCase
         $this->assertSame(5, $settings->maxImages());
     }
 
-    public function test_judol_ai_settings_model_falls_back_to_the_default_even_when_the_env_key_is_blank(): void
+    public function test_judol_ai_settings_model_falls_back_to_the_default_even_when_the_config_value_is_blank(): void
     {
-        // The shipped .env has JUDOL_AI_MODEL= (present but empty, meant to signal
-        // "use the default") rather than being unset - config()'s own default param
-        // only kicks in when the key is missing entirely, not when it's blank.
         config(['judol.ai.model' => '']);
 
         $this->assertSame('claude-haiku-4-5', (new JudolAiSettings)->model());
@@ -85,12 +81,10 @@ class SettingsTest extends TestCase
 
     public function test_judol_ai_settings_decrypts_the_stored_api_key(): void
     {
-        config(['services.anthropic.key' => 'env-fallback-key']);
-
-        // No DB override yet - falls back to the .env-sourced config value.
+        // Nothing saved yet - no key at all, .env is never consulted.
         $settings = new JudolAiSettings;
-        $this->assertTrue($settings->hasApiKey());
-        $this->assertSame('env-fallback-key', $settings->apiKey());
+        $this->assertFalse($settings->hasApiKey());
+        $this->assertNull($settings->apiKey());
 
         Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-real-key'));
 

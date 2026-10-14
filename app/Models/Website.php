@@ -123,12 +123,11 @@ class Website extends Model
     /**
      * Whether this website's check interval has elapsed (or it has never been checked).
      *
-     * A site that has been down for a full day straight is not probed automatically
-     * at all: every check is a request that times out, and after a day of them the
-     * next one is not news. It stays that way until somebody presses "Cek Sekarang",
-     * which dispatches the job directly and bypasses this - see
-     * App\Livewire\Websites\Show::checkNow(). One successful check clears
-     * last_status back to 'up' and the normal cadence resumes on its own.
+     * A site that has been down for a full day straight drops to one automatic probe
+     * every 24 hours: every check is a request that times out, and after a day of
+     * them the next one is not news. "Cek Sekarang" still dispatches the job directly
+     * and bypasses this - see App\Livewire\Websites\Show::checkNow(). One successful
+     * check clears last_status back to 'up' and the normal cadence resumes on its own.
      *
      * Note the asymmetry with isOffline(): this must not cost a query per site, so
      * it reads consecutive_failures (already on the row) rather than the open
@@ -138,7 +137,7 @@ class Website extends Model
     public function isDueForCheck(): bool
     {
         if ($this->isPausedForOffline()) {
-            return false;
+            return $this->last_checked_at === null || $this->last_checked_at->addDay()->isPast();
         }
 
         return $this->last_checked_at === null
@@ -391,7 +390,7 @@ class Website extends Model
      * header all read this, so adding a status or renaming one cannot leave a view
      * behind showing a colour with no name (or a name in the wrong colour).
      *
-     * @var array<string, array{label: string, dot: string, text: string, description: string}>
+     * @var array<string, array{label: string, dot: string, text: string, card: string, description: string}>
      */
     public const STATUSES = [
         'up' => [
@@ -399,6 +398,7 @@ class Website extends Model
             'dot' => 'bg-emerald-500',
             'text' => 'text-emerald-700 dark:text-emerald-400',
             'badge' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/30',
+            'card' => 'bg-emerald-50 border-emerald-300',
             'description' => 'Situs merespons normal.',
         ],
         'attack' => [
@@ -406,6 +406,7 @@ class Website extends Model
             'dot' => 'bg-red-500',
             'text' => 'text-red-700 dark:text-red-400',
             'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
+            'card' => 'bg-red-50 border-red-300',
             'description' => 'Melambat lalu berhenti merespons - dugaan kelebihan beban atau serangan DDoS. Perlu konfirmasi access log server.',
         ],
         'down' => [
@@ -413,6 +414,7 @@ class Website extends Model
             'dot' => 'bg-red-500',
             'text' => 'text-red-700 dark:text-red-400',
             'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
+            'card' => 'bg-red-50 border-red-300',
             'description' => 'Berhenti merespons tanpa didahului lonjakan.',
         ],
         'offline' => [
@@ -420,13 +422,15 @@ class Website extends Model
             'dot' => 'bg-zinc-400 dark:bg-zinc-500',
             'text' => 'text-zinc-500 dark:text-zinc-400',
             'badge' => 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
-            'description' => 'Sudah down lebih dari 24 jam. Pengecekan otomatis dihentikan sampai ditekan "Cek Sekarang".',
+            'card' => 'bg-zinc-100 border-zinc-300',
+            'description' => 'Sudah down lebih dari 24 jam. Pengecekan otomatis dicoba ulang setiap 24 jam, atau tekan "Cek Sekarang".',
         ],
         'maintenance' => [
             'label' => 'Pemeliharaan',
             'dot' => 'bg-sky-500',
             'text' => 'text-sky-700 dark:text-sky-400',
             'badge' => 'bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-400/30',
+            'card' => 'bg-sky-50 border-sky-300',
             'description' => 'Sedang dalam jendela pemeliharaan terjadwal - insiden dan notifikasi dihentikan sementara.',
         ],
         'internal' => [
@@ -434,6 +438,7 @@ class Website extends Model
             'dot' => 'bg-amber-500',
             'text' => 'text-amber-700 dark:text-amber-400',
             'badge' => 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/30',
+            'card' => 'bg-amber-50 border-amber-300',
             'description' => 'Kemungkinan hanya bisa diakses dari jaringan internal/instansi.',
         ],
         'unknown' => [
@@ -441,6 +446,7 @@ class Website extends Model
             'dot' => 'bg-zinc-300 dark:bg-zinc-600',
             'text' => 'text-zinc-500 dark:text-zinc-400',
             'badge' => 'bg-zinc-100 text-zinc-500 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
+            'card' => 'bg-zinc-100 border-zinc-300',
             'description' => 'Belum pernah dicek.',
         ],
     ];
@@ -641,7 +647,7 @@ class Website extends Model
      * this table has not caught up with renders as "belum diketahui" rather than
      * throwing on a live dashboard.
      *
-     * @return array{label: string, dot: string, text: string, badge: string, description: string}
+     * @return array{label: string, dot: string, card: string, text: string, badge: string, description: string}
      */
     public static function statusConfig(string $status): array
     {

@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\TvDisplayController;
 use App\Http\Controllers\JudolEvidenceController;
 use App\Http\Controllers\PwaController;
 use App\Livewire\Audit\Index as AuditIndex;
@@ -16,6 +15,7 @@ use App\Livewire\Profile\Index as ProfileIndex;
 use App\Livewire\Reports\Index as ReportsIndex;
 use App\Livewire\Roles\Index as RolesIndex;
 use App\Livewire\Settings\Index as SettingsIndex;
+use App\Livewire\Tv\Display as TvDisplay;
 use App\Livewire\Users\Index as UsersIndex;
 use App\Livewire\Websites\Index as WebsitesIndex;
 use App\Livewire\Websites\Show as WebsiteShow;
@@ -35,15 +35,7 @@ Route::get('/manifest.webmanifest', [PwaController::class, 'manifest'])->name('p
 Route::get('/pwa/icon-{size}-maskable.png', [PwaController::class, 'maskableIcon'])->whereNumber('size')->name('pwa.icon.maskable');
 Route::get('/pwa/icon-{size}.png', [PwaController::class, 'icon'])->whereNumber('size')->name('pwa.icon');
 
-Route::get('/', function () {
-    if (! Auth::check()) {
-        return redirect()->route('login');
-    }
-
-    // A role without dashboard access would bounce straight into a 403 here, so
-    // send them to the first page they can actually open (profile always works).
-    return redirect()->route(Auth::user()->hasPermission('dashboard.view') ? 'dashboard' : 'profil');
-});
+Route::get('/', TvDisplay::class)->middleware('throttle:60,1')->name('tv');
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', Login::class)->name('login');
@@ -68,11 +60,6 @@ Route::post('/logout', function () {
 
     return redirect()->route('login');
 })->middleware('auth')->name('logout');
-
-Route::middleware('tv.token')->group(function () {
-    Route::get('/tv', [TvDisplayController::class, 'show'])->name('tv');
-    Route::get('/tv/data', [TvDisplayController::class, 'data'])->name('tv.data');
-});
 
 Route::middleware('auth')->group(function () {
     // Own account: no permission gate, since every signed-in user - even one whose

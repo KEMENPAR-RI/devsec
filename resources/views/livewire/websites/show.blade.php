@@ -15,14 +15,14 @@
         </div>
     @endif
 
-    {{-- Automatic probing stops after a full day of failures (Website::isPausedForOffline()).
+    {{-- Automatic probing drops to once a day after a full day of failures (Website::isPausedForOffline()).
     Said out loud here, because a dashboard that has quietly stopped checking looks
     exactly like one where nothing is wrong. --}}
     @if ($website->isPausedForOffline())
         <div class="enter flex flex-col gap-2 rounded-lg bg-zinc-100 px-4 py-3 text-sm text-zinc-600 sm:flex-row sm:items-center sm:justify-between dark:bg-zinc-800/60 dark:text-zinc-300">
             <div class="flex items-start gap-2">
                 <x-phosphor-pause-circle class="mt-0.5 h-4 w-4 shrink-0" />
-                <span>Pengecekan otomatis dihentikan karena situs ini sudah down lebih dari 24 jam. Tekan <strong>Cek Sekarang</strong> untuk mencoba lagi - kalau berhasil, pemantauan otomatis berjalan kembali.</span>
+                <span>Situs ini sudah down lebih dari 24 jam, jadi pengecekan otomatis hanya dicoba ulang setiap 24 jam. Tekan <strong>Cek Sekarang</strong> untuk mencoba lagi sekarang - kalau berhasil, pemantauan otomatis berjalan normal kembali.</span>
             </div>
         </div>
     @endif

@@ -175,14 +175,15 @@ return [
     | ada di halaman itu (banner "SLOT GACOR" dsb yang teksnya ada di gambar,
     | bukan di HTML, sehingga lolos dari keyword filter berbasis teks).
     |
-    | Nonaktif secara default supaya tidak butuh ANTHROPIC_API_KEY untuk jalan.
+    | Nonaktif secara default; diaktifkan & diberi API key dari menu Pengaturan
+    | (JudolAiSettings). Nilai di sini hanya default bila belum pernah disimpan.
     | Karena AI hanya dipanggil untuk halaman yang SUDAH lolos keyword filter,
     | biayanya nyaris nol di situs yang bersih.
     |
     */
     'ai' => [
-        'enabled' => env('JUDOL_AI_ENABLED', false),
-        'model' => env('JUDOL_AI_MODEL', 'claude-haiku-4-5'),
+        'enabled' => false,
+        'model' => 'claude-haiku-4-5',
 
         // Ambang batas confidence (0-1) dari AI supaya temuan keyword dianggap
         // terkonfirmasi. Di bawah ini, dianggap false positive dan insiden tidak dibuat.
@@ -205,7 +206,7 @@ return [
         | ditanya sekali, dan pemindaian berikutnya biasanya nol panggilan API.
         */
         'links' => [
-            'enabled' => env('JUDOL_AI_LINKS_ENABLED', true),
+            'enabled' => true,
 
             // Maksimum domain unik per halaman yang dinilai. Halaman yang menaut ke
             // ratusan domain luar hampir selalu agregator/direktori, bukan korban

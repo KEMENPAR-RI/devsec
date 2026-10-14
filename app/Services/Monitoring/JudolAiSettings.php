@@ -9,11 +9,10 @@ use Illuminate\Support\Facades\Crypt;
 use Throwable;
 
 /**
- * Resolves judol AI-classifier config dynamically from the settings table
- * (managed from the Pengaturan page), falling back to config('judol.ai') / .env
- * whenever no override has been saved yet - so the app keeps working from .env
- * alone until someone touches the settings UI, and a key rotation or a toggle
- * flip takes effect immediately without a deploy/restart.
+ * Resolves judol AI-classifier config from the settings table (managed from the
+ * Pengaturan page, the single source - nothing is read from .env). Tunables fall
+ * back to the defaults in config('judol.ai') until saved; a key rotation or a
+ * toggle flip takes effect immediately without a deploy/restart.
  */
 class JudolAiSettings
 {
@@ -21,16 +20,11 @@ class JudolAiSettings
     {
         $value = Setting::get('judol_ai_enabled');
 
-        return $value !== null ? $value === '1' : (bool) config('judol.ai.enabled');
+        return $value === '1';
     }
 
     public function model(): string
     {
-        // Chained ?: rather than config('judol.ai.model', 'claude-haiku-4-5') - the
-        // .env template ships JUDOL_AI_MODEL as present-but-blank (meant to signal
-        // "use the default"), so env()/config() already resolve to '' before ever
-        // reaching that default param, which only applies when the key is missing
-        // entirely. Falling through here catches blank too, not just unset.
         $value = Setting::get('judol_ai_model') ?: (string) config('judol.ai.model');
 
         return $value !== '' ? $value : 'claude-haiku-4-5';
@@ -63,20 +57,20 @@ class JudolAiSettings
                 return Crypt::decryptString($encrypted);
             } catch (Throwable) {
                 // Corrupted or undecryptable (e.g. APP_KEY rotated since it was saved) -
-                // fall through to the .env key rather than hard-failing every scan.
+                // treat as unset rather than hard-failing every scan.
             }
         }
 
-        return config('services.anthropic.key') ?: null;
+        return null;
     }
 
     /**
-     * Whether an API key is available from either source - lets the UI/scanner
-     * short-circuit without needing to decrypt just to check presence.
+     * Whether an API key has been saved - lets the UI/scanner short-circuit
+     * without needing to decrypt just to check presence.
      */
     public function hasApiKey(): bool
     {
-        return Setting::get('anthropic_api_key') !== null || filled(config('services.anthropic.key'));
+        return Setting::get('anthropic_api_key') !== null;
     }
 
     /**
@@ -88,7 +82,7 @@ class JudolAiSettings
      */
     public function workspaceId(): ?string
     {
-        return Setting::get('anthropic_workspace_id') ?: (config('services.anthropic.workspace_id') ?: null);
+        return Setting::get('anthropic_workspace_id') ?: null;
     }
 
     /**

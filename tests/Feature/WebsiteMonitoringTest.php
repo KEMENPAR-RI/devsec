@@ -8,6 +8,7 @@ use App\Livewire\JudolDetections\Index;
 use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
+use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\WebsiteDownNotification;
@@ -259,7 +260,7 @@ class WebsiteMonitoringTest extends TestCase
     public function test_ai_classifier_can_veto_a_keyword_match_as_a_false_positive(): void
     {
         NotificationFacade::fake();
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
         {
@@ -285,7 +286,7 @@ class WebsiteMonitoringTest extends TestCase
     public function test_ai_classifier_confirms_a_keyword_match_and_incident_is_created(): void
     {
         NotificationFacade::fake();
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
         {
@@ -314,7 +315,7 @@ class WebsiteMonitoringTest extends TestCase
         // ("unknown"), and JudolScanner must keep trusting the keyword match in
         // that case - not treat "AI unavailable" as "AI denies it".
         NotificationFacade::fake();
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
         {

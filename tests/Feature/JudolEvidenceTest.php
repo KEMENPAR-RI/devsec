@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\JudolFinding;
+use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
 use App\Services\Monitoring\JudolLinkClassifier;
@@ -28,7 +29,8 @@ class JudolEvidenceTest extends TestCase
 
         NotificationFacade::fake();
 
-        config(['judol.ai.enabled' => true, 'judol.ai.links.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
+        config(['judol.ai.links.enabled' => true]);
 
         // The same stand-in RegionFindingTest uses: the region work is under test,
         // not the classifier's judgement.

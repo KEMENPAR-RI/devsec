@@ -7,6 +7,7 @@ use App\Livewire\Websites\Show;
 use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
+use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\JudolContentDetected;
@@ -129,7 +130,7 @@ class NotificationRestraintTest extends TestCase
     public function test_the_manual_url_field_assumes_https_and_reports_the_ai_verdict(): void
     {
         $user = User::factory()->create();
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
         Http::fake(['https://manual-ai.example/*' => Http::response('<title>Slot Gacor</title>', 200)]);
 
         $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier

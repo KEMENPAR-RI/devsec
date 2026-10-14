@@ -92,7 +92,7 @@ class AppServiceProvider extends ServiceProvider
     protected function composeViews(): void
     {
         View::composer(
-            ['components.layouts.app', 'components.layouts.guest'],
+            ['components.layouts.app', 'components.layouts.guest', 'components.layouts.tv', 'livewire.tv.display'],
             BrandingComposer::class
         );
 

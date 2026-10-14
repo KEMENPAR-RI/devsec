@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
+use App\Models\Setting;
 use App\Models\Website;
 use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
@@ -28,7 +29,7 @@ class AiVerdictTest extends TestCase
 
     public function test_a_detection_records_that_the_ai_confirmed_it(): void
     {
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
         $this->fakeClassifier(['is_judol' => true, 'confidence' => 0.95, 'reasoning' => 'Jelas promosi slot.']);
 
         $detection = $this->scan();
@@ -43,7 +44,8 @@ class AiVerdictTest extends TestCase
     public function test_a_denial_below_the_threshold_is_kept_but_marked_disputed(): void
     {
         // The keyword match still stands - the AI just wasn't sure enough to drop it.
-        config(['judol.ai.enabled' => true, 'judol.ai.confidence_threshold' => 0.8]);
+        Setting::set('judol_ai_enabled', '1');
+        config(['judol.ai.confidence_threshold' => 0.8]);
         $this->fakeClassifier(['is_judol' => false, 'confidence' => 0.4, 'reasoning' => 'Mungkin artikel berita.']);
 
         $detection = $this->scan();
@@ -54,7 +56,7 @@ class AiVerdictTest extends TestCase
 
     public function test_a_failed_call_is_recorded_as_unavailable_not_as_a_verdict(): void
     {
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
         $this->fakeClassifier(['is_judol' => null, 'confidence' => 0.0, 'reasoning' => 'AI unavailable: timeout']);
 
         $detection = $this->scan();
@@ -65,7 +67,7 @@ class AiVerdictTest extends TestCase
 
     public function test_with_the_classifier_off_the_detection_is_marked_keyword_only(): void
     {
-        config(['judol.ai.enabled' => false]);
+        Setting::set('judol_ai_enabled', '0');
 
         $detection = $this->scan();
 
@@ -78,7 +80,7 @@ class AiVerdictTest extends TestCase
     {
         // This is what keeps the bill near zero: the classifier only ever vets pages
         // the free keyword filter already flagged, never every crawled page.
-        config(['judol.ai.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
         Http::fake(['clean.example' => Http::response('<title>Halaman biasa tanpa apa pun</title>', 200)]);
 
         $calls = 0;

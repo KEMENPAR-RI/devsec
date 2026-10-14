@@ -6,7 +6,11 @@ use App\Jobs\CheckWebsiteJob;
 use App\Livewire\Websites\Show;
 use App\Models\User;
 use App\Models\Website;
+use App\Services\Monitoring\WebsiteChecker;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -34,6 +38,12 @@ class OfflineCheckPauseTest extends TestCase
 
         $this->assertTrue($website->isPausedForOffline());
         $this->assertFalse($website->isDueForCheck(), 'the interval has elapsed, but the site is paused');
+    }
+
+    public function test_a_paused_site_is_rechecked_once_every_24_hours(): void
+    {
+        $this->assertTrue($this->offlineWebsite(['last_checked_at' => now()->subHours(25)])->isDueForCheck());
+        $this->assertFalse($this->offlineWebsite(['last_checked_at' => now()->subHours(23)])->isDueForCheck());
     }
 
     public function test_a_site_that_has_only_just_gone_down_keeps_being_checked(): void
@@ -119,6 +129,38 @@ class OfflineCheckPauseTest extends TestCase
         $this->assertTrue($website->isDueForCheck());
     }
 
+    public function test_a_failing_daily_recheck_keeps_the_site_paused_for_another_day(): void
+    {
+        Notification::fake();
+        Http::fake(fn () => throw new ConnectionException('Connection timed out'));
+        $website = $this->offlineWebsite(['last_checked_at' => now()->subHours(25)]);
+        $this->assertTrue($website->isDueForCheck());
+
+        app(WebsiteChecker::class)->check($website->fresh());
+        $website->refresh();
+
+        $this->assertSame('down', $website->last_status);
+        $this->assertSame(289, $website->consecutive_failures);
+        $this->assertTrue($website->isPausedForOffline());
+        $this->assertFalse($website->isDueForCheck(), 'next automatic try is 24h away');
+    }
+
+    public function test_a_successful_daily_recheck_resumes_normal_cadence(): void
+    {
+        Notification::fake();
+        Http::fake(['*' => Http::response('ok', 200)]);
+        $website = $this->offlineWebsite(['last_checked_at' => now()->subHours(25)]);
+
+        app(WebsiteChecker::class)->check($website->fresh());
+        $website->refresh();
+
+        $this->assertSame('up', $website->last_status);
+        $this->assertSame(0, $website->consecutive_failures);
+        $this->assertFalse($website->isPausedForOffline());
+        $this->travel(6)->minutes();
+        $this->assertTrue($website->isDueForCheck());
+    }
+
     public function test_the_detail_page_says_that_checking_is_paused(): void
     {
         $user = User::factory()->create();
@@ -126,7 +168,7 @@ class OfflineCheckPauseTest extends TestCase
 
         Livewire::actingAs($user)
             ->test(Show::class, ['website' => $website])
-            ->assertSee('Pengecekan otomatis dihentikan')
+            ->assertSee('hanya dicoba ulang setiap 24 jam')
             ->assertSee('Cek Sekarang');
     }
 
@@ -137,6 +179,6 @@ class OfflineCheckPauseTest extends TestCase
 
         Livewire::actingAs($user)
             ->test(Show::class, ['website' => $website])
-            ->assertDontSee('Pengecekan otomatis dihentikan');
+            ->assertDontSee('hanya dicoba ulang setiap 24 jam');
     }
 }

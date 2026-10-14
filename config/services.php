@@ -45,10 +45,4 @@ return [
         'enabled' => env('RECAPTCHA_ENABLED', true),
     ],
 
-    'anthropic' => [
-        'key' => env('ANTHROPIC_API_KEY'),
-        // Only needed for an "identity-linked" API key (see JudolAiSettings::workspaceId).
-        'workspace_id' => env('ANTHROPIC_WORKSPACE_ID'),
-    ],
-
 ];

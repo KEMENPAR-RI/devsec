@@ -36,6 +36,8 @@ class SsrfGuardTest extends TestCase
             'unique local ipv6' => ['http://[fd00::1]/'],
             'non-http scheme' => ['file:///etc/passwd'],
             'gopher scheme' => ['gopher://127.0.0.1:6379/'],
+            'userinfo credentials' => ['http://user:pass@93.184.216.34/'],
+            'userinfo username only' => ['http://user@93.184.216.34/'],
         ];
     }
 

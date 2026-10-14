@@ -121,8 +121,6 @@ class RolesAndUsersTest extends TestCase
 
         $this->actingAs($user)->get(route('dashboard'))->assertForbidden();
         $this->actingAs($user)->get(route('profil'))->assertOk();
-        // The landing route must not bounce them into that 403.
-        $this->actingAs($user)->get('/')->assertRedirect(route('profil'));
     }
 
     // --- Livewire actions are gated server-side ---------------------------

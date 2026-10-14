@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\JudolDetection;
 use App\Models\JudolKeyword;
+use App\Models\Setting;
 use App\Models\Website;
 use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
@@ -29,7 +30,8 @@ class OutboundLinkDetectionTest extends TestCase
         parent::setUp();
 
         JudolKeyword::firstOrCreate(['keyword' => 'slot gacor'], ['is_active' => true]);
-        config(['judol.ai.enabled' => true, 'judol.ai.links.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
+        config(['judol.ai.links.enabled' => true]);
     }
 
     public function test_a_clean_page_that_links_to_a_gambling_site_is_still_flagged(): void

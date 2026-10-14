@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\JudolFinding;
+use App\Models\Setting;
 use App\Models\Website;
 use App\Services\Monitoring\JudolLinkClassifier;
 use App\Services\Monitoring\JudolScanner;
@@ -33,7 +34,8 @@ class RegionFindingTest extends TestCase
         // The outbound-link check is gated behind the AI toggle, which ships off.
         // Without this every test here would pass vacuously - no links examined,
         // no findings, and nothing to group.
-        config(['judol.ai.enabled' => true, 'judol.ai.links.enabled' => true]);
+        Setting::set('judol_ai_enabled', '1');
+        config(['judol.ai.links.enabled' => true]);
 
         // The region grouping is what is under test, not the classifier's judgement:
         // this one flags anything whose domain looks like the fixtures' spam.

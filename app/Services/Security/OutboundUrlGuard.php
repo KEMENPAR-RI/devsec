@@ -47,6 +47,11 @@ class OutboundUrlGuard
             return 'Alamat tidak memuat nama host yang valid.';
         }
 
+        // user:pass@host leaks credentials into logs and hides the real host from a glance.
+        if (parse_url($url, PHP_URL_USER) !== null || parse_url($url, PHP_URL_PASS) !== null) {
+            return 'Alamat tidak boleh memuat username atau password.';
+        }
+
         return static::memoized(strtolower($host));
     }
 
