@@ -124,7 +124,7 @@
             <x-brand-mark size="md" :image_url="$appLogoUrl ?? null" class="shrink-0 object-contain" />
             <div class="min-w-0">
                 <p class="truncate text-lg font-bold leading-tight tracking-tight text-white">{{ $appName ?? app_name() }}</p>
-                <p class="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-secondary-300">Monitoring Website</p>
+                <p class="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-secondary-300">Kementerian Pariwisata Republik Indonesia</p>
             </div>
         </div>
 
