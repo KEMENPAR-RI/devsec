@@ -2,11 +2,12 @@
 
 namespace App\Services\Monitoring;
 
+use App\Models\Incident;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Services\AppSettings;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 
 /**
  * Data for the public TV wallboard. Public page: never add error_message or other
@@ -14,8 +15,6 @@ use Illuminate\Support\Facades\DB;
  */
 class TvBoard
 {
-    protected const HISTORY_SIZE = 24;
-
     public function build(): array
     {
         // Public page polled by every screen/visitor: share one result, never staler than the poll interval.
@@ -34,7 +33,16 @@ class TvBoard
         $offlineIds = Website::offlineIds($websites);
         $attackedIds = Website::attackedIds($websites);
         $maintenanceIds = Website::maintenanceIds($websites);
-        $history = $this->history($websites->modelKeys());
+        $downtimes = $this->downtimes($websites->modelKeys());
+        $upSites = $websites->filter(fn ($site) => $site->last_status === 'up');
+        // First check is only the up-since fallback for up sites that never had a downtime.
+        $firstChecks = $this->firstChecks($upSites
+            ->filter(fn ($site) => ! isset($downtimes[$site->id]))
+            ->values()->modelKeys());
+        // Latest downtime has no usable resolved_at (open, null or older than detection): use the first up check after it.
+        $recoveries = $this->recoveries($upSites
+            ->filter(fn ($site) => isset($downtimes[$site->id]) && ! $this->recoveredAfterDetection($downtimes[$site->id]))
+            ->values()->modelKeys());
 
         $masalah = [];
         $online = [];
@@ -56,6 +64,15 @@ class TvBoard
             // Public view does not reveal attack suspicion: shown as plain down.
             $publicKey = $key === 'attack' ? 'down' : $key;
             $config = Website::statusConfig($publicKey);
+            $lastDown = $downtimes[$site->id]['detected'] ?? null;
+            $upSince = null;
+            if ($key === 'up') {
+                $upSince = isset($downtimes[$site->id])
+                    ? ($this->recoveredAfterDetection($downtimes[$site->id])
+                        ? $downtimes[$site->id]['resolved']
+                        : ($recoveries[$site->id] ?? $lastDown))
+                    : ($firstChecks[$site->id] ?? null);
+            }
             $row = [
                 'name' => $site->name,
                 'host' => $site->is_internal_only ? null : parse_url($site->url, PHP_URL_HOST),
@@ -65,7 +82,9 @@ class TvBoard
                 'card' => $config['card'],
                 'occurred_at_ts' => $since?->timestamp ?? 0,
                 'occurred_at' => $since?->diffForHumans() ?? '-',
-                'history' => $history[$site->id] ?? [],
+                'up_since_ts' => $upSince?->timestamp ?? 0,
+                'up_for' => $upSince ? $this->upFor(max(0, now()->timestamp - $upSince->timestamp)) : '',
+                'last_down_at' => $lastDown?->translatedFormat('d M Y, H:i') ?? 'Belum pernah',
             ];
 
             if ($key === 'up') {
@@ -105,36 +124,113 @@ class TvBoard
     }
 
     /**
-     * Last HISTORY_SIZE is_up values per site, oldest first, in one query (window function:
-     * MariaDB 10.2+/MySQL 8+/SQLite 3.25+). Booleans only: this feeds a public page.
+     * Latest downtime detection and recovery per site, in one grouped query. Timestamps only.
      *
      * @param  list<int>  $ids
-     * @return array<int, list<bool>>
+     * @return array<int, array{detected: ?Carbon, resolved: ?Carbon}>
      */
-    protected function history(array $ids): array
+    protected function downtimes(array $ids): array
     {
         if ($ids === []) {
             return [];
         }
 
-        $ranked = WebsiteCheck::query()
-            ->select(['website_id', 'is_up', 'checked_at', 'id'])
-            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY checked_at DESC, id DESC) AS rn')
-            ->whereIn('website_id', $ids);
+        $rows = Incident::query()
+            ->where('type', 'downtime')
+            ->whereIn('website_id', $ids)
+            ->groupBy('website_id')
+            ->selectRaw('website_id, MAX(detected_at) AS last_detected, MAX(resolved_at) AS last_resolved')
+            ->toBase()
+            ->get();
 
-        $rows = DB::query()
-            ->fromSub($ranked, 'ranked')
-            ->where('rn', '<=', self::HISTORY_SIZE)
-            ->orderBy('website_id')
-            ->orderBy('checked_at')
-            ->orderBy('id')
-            ->get(['website_id', 'is_up']);
-
-        $history = [];
+        $downtimes = [];
         foreach ($rows as $row) {
-            $history[$row->website_id][] = (bool) $row->is_up;
+            $downtimes[$row->website_id] = [
+                'detected' => $row->last_detected ? Carbon::parse($row->last_detected) : null,
+                'resolved' => $row->last_resolved ? Carbon::parse($row->last_resolved) : null,
+            ];
         }
 
-        return $history;
+        return $downtimes;
+    }
+
+    /** Mirrors Alpine duration(): two largest units from the first non-zero one, e.g. '3 hari 4 jam'. */
+    protected function upFor(int $seconds): string
+    {
+        $parts = [[intdiv($seconds, 86400), 'hari'], [intdiv($seconds % 86400, 3600), 'jam'], [intdiv($seconds % 3600, 60), 'mnt']];
+        foreach ($parts as $i => [$n]) {
+            if ($n > 0) {
+                $top = array_filter(array_slice($parts, $i, 2), fn ($p) => $p[0] > 0);
+
+                return implode(' ', array_map(fn ($p) => "{$p[0]} {$p[1]}", $top));
+            }
+        }
+
+        return '< 1 mnt';
+    }
+
+    /**
+     * MAX(detected_at) and MAX(resolved_at) may come from different incidents: resolved only counts if not older.
+     *
+     * @param  array{detected: ?Carbon, resolved: ?Carbon}  $downtime
+     */
+    protected function recoveredAfterDetection(array $downtime): bool
+    {
+        return $downtime['resolved'] !== null
+            && ($downtime['detected'] === null || $downtime['resolved']->gte($downtime['detected']));
+    }
+
+    /**
+     * First up check after the latest downtime detection per site, in one grouped query.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, Carbon>
+     */
+    protected function recoveries(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $checks = (new WebsiteCheck)->getTable();
+        $lastDetected = Incident::query()
+            ->where('type', 'downtime')
+            ->whereIn('website_id', $ids)
+            ->groupBy('website_id')
+            ->selectRaw('website_id, MAX(detected_at) AS last_detected')
+            ->toBase();
+
+        return WebsiteCheck::query()
+            ->joinSub($lastDetected, 'd', 'd.website_id', '=', "{$checks}.website_id")
+            ->where("{$checks}.is_up", true)
+            ->whereColumn("{$checks}.checked_at", '>', 'd.last_detected')
+            ->groupBy("{$checks}.website_id")
+            ->selectRaw("{$checks}.website_id AS website_id, MIN({$checks}.checked_at) AS recovered_at")
+            ->toBase()
+            ->get()
+            ->mapWithKeys(fn ($row) => [$row->website_id => Carbon::parse($row->recovered_at)])
+            ->all();
+    }
+
+    /**
+     * First ever check time per site, in one grouped query.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, Carbon>
+     */
+    protected function firstChecks(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        return WebsiteCheck::query()
+            ->whereIn('website_id', $ids)
+            ->groupBy('website_id')
+            ->selectRaw('website_id, MIN(checked_at) AS first_checked')
+            ->toBase()
+            ->get()
+            ->mapWithKeys(fn ($row) => [$row->website_id => Carbon::parse($row->first_checked)])
+            ->all();
     }
 }

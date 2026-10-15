@@ -52,6 +52,14 @@
             }
             return rtf.format(diff, 'second')
         },
+        // Elapsed time since a unix timestamp (seconds), two largest units, e.g. '3 hari 4 jam'.
+        duration(ts) {
+            let s = Math.max(0, Math.floor(this.now / 1000) - ts)
+            let parts = [[Math.floor(s / 86400), 'hari'], [Math.floor(s % 86400 / 3600), 'jam'], [Math.floor(s % 3600 / 60), 'mnt']]
+            let i = parts.findIndex(([n]) => n > 0)
+            if (i < 0) return '< 1 mnt'
+            return parts.slice(i, i + 2).filter(([n]) => n > 0).map(([n, unit]) => `${n} ${unit}`).join(' ')
+        },
         go(step) {
             this.slide = (this.slide + step + this.total) % this.total
             this.schedule()
@@ -185,21 +193,15 @@
                             {{-- Server text is the first paint; Alpine keeps it live from the timestamp. --}}
                             <p class="truncate text-xs text-accent-200" @if ($site['occurred_at_ts']) x-text="ago({{ (int) $site['occurred_at_ts'] }})" @endif>{{ $site['occurred_at'] }}</p>
                         </div>
-                        {{-- Uptime bar: newest check rightmost, missing slots padded on the left. --}}
-                        @php($history = array_slice(array_values($site['history'] ?? []), -24))
-                        @php($pad = 24 - count($history))
-                        @php($upCount = count(array_filter($history)))
-                        <div role="img" aria-label="Riwayat 24 pengecekan terakhir: {{ $upCount }} up, {{ count($history) - $upCount }} down" class="flex h-2.5 w-full shrink-0 gap-0.5">
-                            @for ($i = 0; $i < 24; $i++)
-                                @if ($i < $pad)
-                                    <span class="flex-1 rounded-sm bg-accent-400/30" title="Belum ada data"></span>
-                                @elseif ($history[$i - $pad])
-                                    <span class="flex-1 rounded-sm bg-emerald-500" title="Up"></span>
-                                @else
-                                    <span class="flex-1 rounded-sm bg-red-500" title="Down"></span>
-                                @endif
-                            @endfor
-                        </div>
+                        <p class="truncate text-sm leading-tight text-accent-200">
+                            @if ($site['up_since_ts'] ?? 0)
+                                <span class="text-accent-300">Online</span>
+                                <span class="tabular-nums" x-text="duration({{ (int) $site['up_since_ts'] }})">{{ $site['up_for'] ?? '' }}</span>
+                                <span aria-hidden="true">·</span>
+                            @endif
+                            <span class="text-accent-300">Terakhir down</span>
+                            {{ $site['last_down_at'] ?? '-' }}
+                        </p>
                     </div>
                 @endforeach
 

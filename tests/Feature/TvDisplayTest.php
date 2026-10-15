@@ -189,25 +189,64 @@ class TvDisplayTest extends TestCase
         $this->assertSame($few, $count());
     }
 
-    public function test_history_holds_last_24_checks_oldest_first_as_booleans(): void
+    public function test_up_site_after_resolved_downtime_shows_last_down_and_up_since(): void
     {
-        $site = Website::factory()->create(['name' => 'Riwayat', 'last_status' => 'up']);
-        Website::factory()->create(['name' => 'Tanpa Cek', 'last_status' => 'up']);
-        $expected = [];
-        // 30 checks, every third one down; the 6 oldest must be dropped.
-        foreach (range(29, 0) as $slot) {
-            $isUp = $slot % 3 !== 0;
-            $site->checks()->create(['is_up' => $isUp, 'checked_at' => now()->subMinutes($slot * 5)]);
-            if ($slot < 24) {
-                $expected[] = $isUp;
-            }
-        }
+        $site = $this->siteWithCheck('Pulih', 'up');
+        $detectedAt = now()->subHours(3)->startOfSecond();
+        $resolvedAt = now()->subHours(2)->startOfSecond();
+        Incident::create([
+            'website_id' => $site->id, 'type' => 'downtime', 'severity' => 'critical',
+            'title' => 'Pulih tidak dapat diakses', 'status' => 'resolved',
+            'detected_at' => $detectedAt, 'resolved_at' => $resolvedAt,
+        ]);
+
+        $card = collect(app(TvBoard::class)->build()['kartu'])->keyBy('name')['Pulih'];
+
+        $this->assertSame('up', $card['status']);
+        $this->assertSame($resolvedAt->timestamp, $card['up_since_ts']);
+        $this->assertSame('2 jam', $card['up_for']);
+        $this->assertSame($detectedAt->translatedFormat('d M Y, H:i'), $card['last_down_at']);
+    }
+
+    public function test_never_down_site_shows_belum_pernah_and_up_since_first_check(): void
+    {
+        $site = $this->siteWithCheck('Selalu Up', 'up');
+        $firstCheck = now()->subDays(5)->startOfSecond();
+        $site->checks()->create(['is_up' => true, 'checked_at' => $firstCheck]);
+        $down = $this->siteWithCheck('Mati Sekarang', 'down');
 
         $cards = collect(app(TvBoard::class)->build()['kartu'])->keyBy('name');
 
-        $this->assertCount(24, $cards['Riwayat']['history']);
-        $this->assertSame($expected, $cards['Riwayat']['history']);
-        $this->assertSame([], $cards['Tanpa Cek']['history']);
+        $this->assertSame('Belum pernah', $cards['Selalu Up']['last_down_at']);
+        $this->assertArrayNotHasKey('last_down_ts', $cards['Selalu Up']);
+        $this->assertSame($firstCheck->timestamp, $cards['Selalu Up']['up_since_ts']);
+        // up_since is only meaningful for up sites.
+        $this->assertSame(0, $cards[$down->name]['up_since_ts']);
+    }
+
+    public function test_up_since_ignores_older_resolved_at_when_latest_downtime_has_none(): void
+    {
+        $site = $this->siteWithCheck('Pulih Lagi', 'up');
+        $oldResolved = now()->subDays(9)->startOfSecond();
+        $latestDetected = now()->subHours(2)->startOfSecond();
+        $recoveredAt = now()->subHour()->startOfSecond();
+        Incident::create([
+            'website_id' => $site->id, 'type' => 'downtime', 'severity' => 'critical',
+            'title' => 'Lama', 'status' => 'resolved',
+            'detected_at' => now()->subDays(10), 'resolved_at' => $oldResolved,
+        ]);
+        Incident::create([
+            'website_id' => $site->id, 'type' => 'downtime', 'severity' => 'critical',
+            'title' => 'Baru', 'status' => 'resolved',
+            'detected_at' => $latestDetected, 'resolved_at' => null,
+        ]);
+        $site->checks()->create(['is_up' => false, 'checked_at' => $latestDetected->copy()->addMinutes(10)]);
+        $site->checks()->create(['is_up' => true, 'checked_at' => $recoveredAt]);
+
+        $card = collect(app(TvBoard::class)->build()['kartu'])->keyBy('name')['Pulih Lagi'];
+
+        $this->assertSame($recoveredAt->timestamp, $card['up_since_ts']);
+        $this->assertSame($latestDetected->translatedFormat('d M Y, H:i'), $card['last_down_at']);
     }
 
     public function test_old_json_endpoint_is_gone(): void
