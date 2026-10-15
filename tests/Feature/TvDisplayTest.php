@@ -66,8 +66,8 @@ class TvDisplayTest extends TestCase
             ->assertOk()
             ->assertSee('Portal Dinas Down')
             ->assertSee('Portal Dinas Up')
-            ->assertSee('bg-red-50 border-red-300', false)
-            ->assertSee('bg-emerald-50 border-emerald-300', false);
+            ->assertSee('from-red-500/15 to-transparent to-60% border-red-400/50 text-red-300', false)
+            ->assertSee('from-emerald-500/15 to-transparent to-60% border-emerald-400/50 text-emerald-300', false);
     }
 
     public function test_board_data_hides_inactive_sites_and_probe_details(): void

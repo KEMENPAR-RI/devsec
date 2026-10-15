@@ -63,7 +63,6 @@ class TvBoard
                 'status_label' => $config['label'],
                 'dot' => $config['dot'],
                 'card' => $config['card'],
-                'text' => $config['text'],
                 'occurred_at_ts' => $since?->timestamp ?? 0,
                 'occurred_at' => $since?->diffForHumans() ?? '-',
                 'history' => $history[$site->id] ?? [],

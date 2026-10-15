@@ -398,7 +398,7 @@ class Website extends Model
             'dot' => 'bg-emerald-500',
             'text' => 'text-emerald-700 dark:text-emerald-400',
             'badge' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/30',
-            'card' => 'bg-emerald-50 border-emerald-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-emerald-500/15 to-transparent to-60% border-emerald-400/50 text-emerald-300',
             'description' => 'Situs merespons normal.',
         ],
         'attack' => [
@@ -406,7 +406,7 @@ class Website extends Model
             'dot' => 'bg-red-500',
             'text' => 'text-red-700 dark:text-red-400',
             'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
-            'card' => 'bg-red-50 border-red-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-red-500/15 to-transparent to-60% border-red-400/50 text-red-300',
             'description' => 'Melambat lalu berhenti merespons - dugaan kelebihan beban atau serangan DDoS. Perlu konfirmasi access log server.',
         ],
         'down' => [
@@ -414,7 +414,7 @@ class Website extends Model
             'dot' => 'bg-red-500',
             'text' => 'text-red-700 dark:text-red-400',
             'badge' => 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/30',
-            'card' => 'bg-red-50 border-red-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-red-500/15 to-transparent to-60% border-red-400/50 text-red-300',
             'description' => 'Berhenti merespons tanpa didahului lonjakan.',
         ],
         'offline' => [
@@ -422,7 +422,7 @@ class Website extends Model
             'dot' => 'bg-zinc-400 dark:bg-zinc-500',
             'text' => 'text-zinc-500 dark:text-zinc-400',
             'badge' => 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
-            'card' => 'bg-zinc-100 border-zinc-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-zinc-400/15 to-transparent to-60% border-zinc-400/40 text-zinc-300',
             'description' => 'Sudah down lebih dari 24 jam. Pengecekan otomatis dicoba ulang setiap 24 jam, atau tekan "Cek Sekarang".',
         ],
         'maintenance' => [
@@ -430,7 +430,7 @@ class Website extends Model
             'dot' => 'bg-sky-500',
             'text' => 'text-sky-700 dark:text-sky-400',
             'badge' => 'bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-400/30',
-            'card' => 'bg-sky-50 border-sky-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-sky-500/15 to-transparent to-60% border-sky-400/50 text-sky-300',
             'description' => 'Sedang dalam jendela pemeliharaan terjadwal - insiden dan notifikasi dihentikan sementara.',
         ],
         'internal' => [
@@ -438,7 +438,7 @@ class Website extends Model
             'dot' => 'bg-amber-500',
             'text' => 'text-amber-700 dark:text-amber-400',
             'badge' => 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/30',
-            'card' => 'bg-amber-50 border-amber-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-amber-500/15 to-transparent to-60% border-amber-400/50 text-amber-300',
             'description' => 'Kemungkinan hanya bisa diakses dari jaringan internal/instansi.',
         ],
         'unknown' => [
@@ -446,7 +446,7 @@ class Website extends Model
             'dot' => 'bg-zinc-300 dark:bg-zinc-600',
             'text' => 'text-zinc-500 dark:text-zinc-400',
             'badge' => 'bg-zinc-100 text-zinc-500 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-400/20',
-            'card' => 'bg-zinc-100 border-zinc-300',
+            'card' => 'bg-accent-600 bg-linear-to-r from-zinc-400/15 to-transparent to-60% border-zinc-400/40 text-zinc-300',
             'description' => 'Belum pernah dicek.',
         ],
     ];

@@ -172,17 +172,18 @@
                         <span class="absolute inset-y-0 left-0 w-2 {{ $site['dot'] }}" aria-hidden="true"></span>
                         <div class="flex items-center gap-2">
                             <span class="h-3 w-3 shrink-0 rounded-full {{ $site['dot'] }}"></span>
-                            <p class="truncate text-lg font-bold leading-tight text-zinc-900">{{ $site['name'] }}</p>
+                            <p class="truncate text-lg font-bold leading-tight text-white">{{ $site['name'] }}</p>
                         </div>
                         @if ($site['host'])
-                            <p class="truncate text-sm text-zinc-600">{{ $site['host'] }}</p>
+                            <p class="truncate text-sm text-accent-200">{{ $site['host'] }}</p>
                         @else
-                            <p class="truncate text-sm italic text-zinc-600">Jaringan internal</p>
+                            <p class="truncate text-sm italic text-accent-200">Jaringan internal</p>
                         @endif
                         <div class="flex items-end justify-between gap-2">
-                            <p class="text-sm font-bold {{ $site['text'] }}">{{ $site['status_label'] }}</p>
+                            {{-- Label inherits the light status colour from the card. --}}
+                            <p class="text-sm font-bold">{{ $site['status_label'] }}</p>
                             {{-- Server text is the first paint; Alpine keeps it live from the timestamp. --}}
-                            <p class="truncate text-xs text-zinc-600" @if ($site['occurred_at_ts']) x-text="ago({{ (int) $site['occurred_at_ts'] }})" @endif>{{ $site['occurred_at'] }}</p>
+                            <p class="truncate text-xs text-accent-200" @if ($site['occurred_at_ts']) x-text="ago({{ (int) $site['occurred_at_ts'] }})" @endif>{{ $site['occurred_at'] }}</p>
                         </div>
                         {{-- Uptime bar: newest check rightmost, missing slots padded on the left. --}}
                         @php($history = array_slice(array_values($site['history'] ?? []), -24))
@@ -191,7 +192,7 @@
                         <div role="img" aria-label="Riwayat 24 pengecekan terakhir: {{ $upCount }} up, {{ count($history) - $upCount }} down" class="flex h-2.5 w-full shrink-0 gap-0.5">
                             @for ($i = 0; $i < 24; $i++)
                                 @if ($i < $pad)
-                                    <span class="flex-1 rounded-sm bg-zinc-300/60" title="Belum ada data"></span>
+                                    <span class="flex-1 rounded-sm bg-accent-400/30" title="Belum ada data"></span>
                                 @elseif ($history[$i - $pad])
                                     <span class="flex-1 rounded-sm bg-emerald-500" title="Up"></span>
                                 @else
