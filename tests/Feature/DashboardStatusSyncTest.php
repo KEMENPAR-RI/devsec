@@ -15,16 +15,15 @@ class DashboardStatusSyncTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function statCard(array $stats, string $label): ?array
+    protected function dashboard(): Dashboard
     {
-        return collect($stats)->firstWhere('label', $label);
+        return Livewire::actingAs(User::factory()->create())->test(Dashboard::class)->instance();
     }
 
-    protected function stats(): array
+    /** @return array{total: int, online: int, problem: int, offline: int, breakdown: array<string, int>} */
+    protected function summary(): array
     {
-        $component = Livewire::actingAs(User::factory()->create())->test(Dashboard::class);
-
-        return $component->viewData('stats');
+        return $this->dashboard()->summary;
     }
 
     public function test_a_spiking_site_still_counts_as_online(): void
@@ -38,15 +37,16 @@ class DashboardStatusSyncTest extends TestCase
             'status' => 'open', 'detected_at' => now(),
         ]);
 
-        $stats = $this->stats();
+        $summary = $this->summary();
 
-        $this->assertSame('1', $this->statCard($stats, 'Online')['value']);
-        $this->assertSame('0', $this->statCard($stats, 'Down')['value']);
+        $this->assertSame(1, $summary['online']);
+        $this->assertSame(0, $summary['problem']);
+        $this->assertSame(0, $summary['breakdown']['down']);
     }
 
     public function test_each_outage_flavour_gets_its_own_card(): void
     {
-        // They are separate dots for a reason, so they are separate cards too: a
+        // They are separate dots for a reason, so they land in separate cards too: a
         // site dark for three days and one that stopped answering a minute ago need
         // different responses, and a single "Down: 2" total hid that.
         foreach ([now(), now()->subDays(3)] as $detectedAt) {
@@ -57,10 +57,12 @@ class DashboardStatusSyncTest extends TestCase
             ]);
         }
 
-        $stats = $this->stats();
+        $summary = $this->summary();
 
-        $this->assertSame('1', $this->statCard($stats, 'Down')['value']);
-        $this->assertSame('1', $this->statCard($stats, 'Offline')['value']);
+        $this->assertSame(1, $summary['breakdown']['down']);
+        $this->assertSame(1, $summary['breakdown']['offline']);
+        $this->assertSame(1, $summary['problem']);
+        $this->assertSame(1, $summary['offline']);
     }
 
     public function test_the_status_cards_add_up_to_the_total(): void
@@ -69,22 +71,22 @@ class DashboardStatusSyncTest extends TestCase
         Website::factory()->create(['last_status' => 'down']);
         Website::factory()->create(['last_status' => 'unknown']);
 
-        $stats = $this->stats();
-        $total = (int) $this->statCard($stats, 'Total Situs')['value'];
+        $summary = $this->summary();
 
-        // Every site lands on exactly one status card now that none of them are
-        // folded into a shared total, so these have to account for all of them.
-        $counted = collect(['Online', 'Down - Dugaan DDoS', 'Down', 'Offline', 'Jaringan Internal', 'Belum Diketahui'])
-            ->sum(fn (string $label) => (int) $this->statCard($stats, $label)['value']);
-
-        $this->assertSame(4, $total);
-        $this->assertSame($total, $counted);
+        // Every site lands on exactly one of Online / Bermasalah / Offline, so the
+        // three cards (and the chips inside them) have to account for all of them.
+        $this->assertSame(4, $summary['total']);
+        $this->assertSame(2, $summary['online']);
+        $this->assertSame(1, $summary['problem']);
+        $this->assertSame(1, $summary['offline']);
+        $this->assertSame($summary['total'], $summary['online'] + $summary['problem'] + $summary['offline']);
+        $this->assertSame($summary['total'], array_sum($summary['breakdown']));
     }
 
     public function test_the_load_level_cards_count_the_sites_that_answered(): void
     {
         // 3x its own baseline reads as heavy - the same grading the list view's
-        // "Beban" column shows, so the card and the column cannot disagree.
+        // "Beban" column shows, so the distribution bar and the column cannot disagree.
         $website = Website::factory()->create(['last_status' => 'up']);
 
         foreach ([200, 200, 200, 200, 3000] as $i => $ms) {
@@ -94,7 +96,7 @@ class DashboardStatusSyncTest extends TestCase
             ]);
         }
 
-        $this->assertSame('1', $this->statCard($this->stats(), 'Beban Berat')['value']);
+        $this->assertSame(['heavy' => 1], $this->dashboard()->loadCounts);
     }
 
     public function test_a_judol_incident_links_to_the_judol_page(): void
@@ -143,7 +145,8 @@ class DashboardStatusSyncTest extends TestCase
     {
         Livewire::actingAs(User::factory()->create())
             ->test(Dashboard::class)
-            ->assertSee('Response Time')
+            ->assertSee('Performa')
+            ->assertSee('Rata-rata respons')
             ->assertDontSee('Trafik');
     }
 }

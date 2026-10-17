@@ -2,7 +2,7 @@
 
 {{-- Tints the browser/OS chrome; matched to the page background of each theme. --}}
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#040b18" media="(prefers-color-scheme: dark)">
 
 <meta name="application-name" content="{{ app_name() }}">
 <meta name="mobile-web-app-capable" content="yes">

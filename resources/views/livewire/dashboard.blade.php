@@ -1,16 +1,67 @@
-<div class="mx-auto flex max-w-7xl flex-col gap-6" wire:poll.10s.visible>
+@php
+    // Read once per render; computed props are cached for the request anyway.
+    $summary = $this->summary;
+    $metrics = $this->metrics;
+    $series = $this->series;
+    $liveSites = collect($this->liveSites);
+    $loadCounts = $this->loadCounts;
+    $breakdown = $summary['breakdown'] ?? [];
+
+    $user = auth()->user();
+    $canManage = $this->canManage;
+    $canViewSites = $this->canViewSites;
+    $canViewIncidents = $this->canViewIncidents;
+    $canViewJudol = $this->canViewJudol;
+
+    $ranges = ['1h' => 'Jam', '24h' => 'Hari', '7d' => 'Minggu', '30d' => 'Bulan'];
+    $rangeSpan = ['1h' => '1 jam', '24h' => '24 jam', '7d' => '7 hari', '30d' => '30 hari'][$this->range] ?? '24 jam';
+    $rangeBucket = ['1h' => 'per 5 menit', '24h' => 'per jam', '7d' => 'per 6 jam', '30d' => 'per hari'][$this->range] ?? 'per jam';
+
+    $selectedSite = $this->selectedWebsite;
+
+    // Already ordered by the backend: problems first, then heaviest load.
+    $visibleSites = $liveSites->take(8);
+    $siteTag = $canViewSites ? 'a' : 'div';
+
+    $loadTotal = array_sum($loadCounts);
+    $loadSegments = [
+        ['key' => 'light', 'label' => 'Ringan', 'bar' => 'bg-emerald-500'],
+        ['key' => 'moderate', 'label' => 'Sedang', 'bar' => 'bg-yellow-400'],
+        ['key' => 'heavy', 'label' => 'Berat', 'bar' => 'bg-red-500'],
+        ['key' => 'unknown', 'label' => 'Tanpa data', 'bar' => 'bg-zinc-300 dark:bg-zinc-600'],
+    ];
+
+    $total = (int) ($summary['total'] ?? 0);
+    $onlinePct = $total > 0 ? (int) round(($summary['online'] ?? 0) / $total * 100) : 0;
+
+    $chip = 'inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800';
+    $cardBase = 'enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900';
+    $cardHead = 'flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800';
+    $linkClass = 'text-xs font-medium text-accent-600 transition hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300';
+@endphp
+
+<div class="mx-auto flex max-w-7xl flex-col gap-6" wire:poll.15s.visible>
 
     {{-- Header --}}
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
             <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                Selamat datang, {{ explode(' ', auth()->user()->name)[0] }}
+                Selamat datang, {{ explode(' ', $user->name)[0] }}
             </h1>
-            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                {{ now()->translatedFormat('l, d F Y') }} &middot; ringkasan monitoring situs
+            <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-500 dark:text-zinc-400">
+                <span>{{ $this->updatedAt->translatedFormat('l, d F Y') }}</span>
+                <span aria-hidden="true">&middot;</span>
+                <span class="inline-flex items-center gap-1.5">
+                    <span class="relative flex h-2 w-2" aria-hidden="true">
+                        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:animate-none"></span>
+                        <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                    </span>
+                    <span class="font-medium text-emerald-600 dark:text-emerald-400">Live</span>
+                    <span>&middot; diperbarui <span class="font-mono tabular-nums">{{ $this->updatedAt->format('H:i:s') }}</span></span>
+                </span>
             </p>
         </div>
-        @can('situs.create')
+        @if ($canManage)
             <a
                 href="{{ route('situs') }}"
                 wire:navigate
@@ -19,371 +70,375 @@
                 <x-phosphor-plus class="h-4 w-4" />
                 Tambah Situs
             </a>
-        @endcan
-    </div>
-
-    {{-- KPI stats --}}
-    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        @foreach ($stats as $i => $stat)
-            <div
-                class="enter rounded-2xl border border-zinc-200 bg-white p-4 transition hover:-translate-y-0.5 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
-                style="animation-delay: {{ $i * 40 }}ms">
-                {{-- The colour arrives as a whole class string from Dashboard::TONES,
-                so adding a card colour is one entry there rather than another branch
-                here - and Tailwind still sees every class spelled out. --}}
-                <div class="flex items-center gap-2.5">
-                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg {{ $stat['accent'] }}">
-                        <x-dynamic-component :component="'phosphor-'.$stat['icon']" class="h-4 w-4" />
-                    </span>
-                    {{-- Six columns leave no room for "Down - Dugaan DDoS" to wrap onto
-                    three lines, so it truncates and carries the full text on hover. --}}
-                    <span class="min-w-0 truncate text-xs text-zinc-500 dark:text-zinc-400" title="{{ $stat['label'] }}">{{ $stat['label'] }}</span>
-                </div>
-                <div class="mt-3">
-                    <span class="font-mono text-2xl font-semibold text-zinc-900 dark:text-white">{{ $stat['value'] }}</span>
-                </div>
-            </div>
-        @endforeach
-    </div>
-
-    {{-- Response time chart, filterable per site --}}
-    <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Response Time</h2>
-            {{-- A searchable combobox scales to any number of sites without wrapping
-            into a messy wall of pills, and typing filters instantly (client-side -
-            the site list is already loaded, no need to round-trip per keystroke). --}}
-            <div
-                class="relative w-full sm:w-64"
-                wire:key="response-picker-{{ $websiteStatuses->pluck('uuid')->implode('-') }}"
-                x-data="{
-                    open: false,
-                    query: @js($selectedWebsite?->name ?? ''),
-                    sites: @js($websiteStatuses->map(fn ($s) => ['uuid' => $s->uuid, 'name' => $s->name])),
-                    get filtered() {
-                        const q = this.query.toLowerCase().trim();
-                        return q ? this.sites.filter(s => s.name.toLowerCase().includes(q)) : this.sites;
-                    },
-                    pick(site) {
-                        this.query = site.name;
-                        this.open = false;
-                        $wire.selectWebsite(site.uuid);
-                    },
-                    clear() {
-                        this.query = '';
-                        this.open = false;
-                        $wire.selectWebsite('');
-                    },
-                }"
-                @click.outside="open = false"
-            >
-                <div class="relative">
-                    <x-phosphor-magnifying-glass class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                    <input
-                        type="text"
-                        x-model="query"
-                        @focus="open = true"
-                        @input="open = true"
-                        @disabled($websiteStatuses->isEmpty())
-                        autocomplete="off"
-                        placeholder="{{ $websiteStatuses->isEmpty() ? 'Belum ada situs' : 'Cari situs...' }}"
-                        class="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-8 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-                    >
-                    <button type="button" x-show="query" x-cloak @click="clear()" class="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 transition hover:text-zinc-600 dark:hover:text-zinc-300">
-                        <x-phosphor-x class="h-3.5 w-3.5" />
-                    </button>
-                </div>
-
-                <div
-                    x-show="open && filtered.length > 0"
-                    x-cloak
-                    class="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
-                >
-                    <template x-for="site in filtered" :key="site.uuid">
-                        <button
-                            type="button"
-                            @click="pick(site)"
-                            class="block w-full truncate px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-700"
-                            x-text="site.name"
-                        ></button>
-                    </template>
-                </div>
-                <div
-                    x-show="open && query && filtered.length === 0"
-                    x-cloak
-                    class="absolute z-20 mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-500 shadow-lg dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
-                >
-                    Situs tidak ditemukan.
-                </div>
-            </div>
-        </div>
-
-        @if ($responseSeries->isEmpty())
-            <div class="flex flex-col items-center gap-2 px-5 py-14 text-center">
-                <x-phosphor-chart-line class="h-7 w-7 text-zinc-300 dark:text-zinc-600" />
-                <p class="text-sm text-zinc-500 dark:text-zinc-400">
-                    {{ $selectedWebsite ? "Belum ada data pengecekan untuk {$selectedWebsite->name}." : 'Belum ada data pengecekan.' }}
-                </p>
-            </div>
-        @else
-            @php
-                $chartWidth = 1000;
-                $chartHeight = 220;
-                $padTop = 22;
-                $padBottom = 30;
-                $plotBottom = $chartHeight - $padBottom;
-                $plotHeight = $plotBottom - $padTop;
-                $maxMs = max(50, $responseSeries->max('ms'), $responseThresholdMs ?? 0);
-                $n = $responseSeries->count();
-
-                $toY = fn (int $ms) => $padTop + $plotHeight - (min($ms, $maxMs) / $maxMs) * $plotHeight;
-
-                $points = $responseSeries->values()->map(fn (array $point, int $i) => [
-                    ...$point,
-                    'x' => round($n > 1 ? ($i / ($n - 1)) * $chartWidth : $chartWidth / 2, 1),
-                    'y' => round($toY($point['ms']), 1),
-                ]);
-
-                $linePath = $points->map(fn ($p) => "{$p['x']},{$p['y']}")->implode(' ');
-                $areaPath = "0,{$plotBottom} {$linePath} {$chartWidth},{$plotBottom}";
-                $thresholdY = $responseThresholdMs ? round($toY($responseThresholdMs), 1) : null;
-                $last = $points->last();
-            @endphp
-
-            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{{ $responseCaption }}</p>
-
-            {{-- Hover tooltip: finds the nearest point to the pointer's X and shows its
-            time + response time + status. All in Alpine (no chart library) - the point
-            data is embedded once as JSON, mousemove just picks the closest one. --}}
-            <div
-                class="relative mt-4 overflow-hidden"
-                x-data="{
-                    points: @js($points->map(fn ($p) => [
-                        'x' => $p['x'],
-                        'y' => $p['y'],
-                        'time' => $p['label'],
-                        'ms' => $p['ms'],
-                        'up' => $p['up'],
-                    ])),
-                    chartWidth: {{ $chartWidth }},
-                    chartHeight: {{ $chartHeight }},
-                    hovered: null,
-                    onMove(event) {
-                        if (this.points.length === 0) return;
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        const mouseX = (event.clientX - rect.left) * (this.chartWidth / rect.width);
-                        this.hovered = this.points.reduce((nearest, p) =>
-                            Math.abs(p.x - mouseX) < Math.abs(nearest.x - mouseX) ? p : nearest
-                        );
-                    },
-                    onLeave() { this.hovered = null },
-                }"
-            >
-                <svg
-                    viewBox="0 0 {{ $chartWidth }} {{ $chartHeight }}" class="w-full" preserveAspectRatio="none" style="height: 220px"
-                    @mousemove="onMove" @mouseleave="onLeave"
-                >
-                    {{-- Baseline & max gridlines --}}
-                    <line x1="0" y1="{{ $plotBottom }}" x2="{{ $chartWidth }}" y2="{{ $plotBottom }}" class="stroke-zinc-200 dark:stroke-zinc-800" stroke-width="1" />
-                    <text x="4" y="{{ $plotBottom - 4 }}" class="text-[10px] fill-zinc-400 dark:fill-zinc-500">0ms</text>
-                    <text x="4" y="{{ $padTop + 9 }}" class="text-[10px] fill-zinc-400 dark:fill-zinc-500">{{ number_format($maxMs) }}ms</text>
-
-                    {{-- Threshold reference line. Only one site has a single threshold
-                    to draw against; the all-sites overview averages across sites that
-                    each set their own, so a line there would compare nothing. --}}
-                    @if ($thresholdY !== null)
-                        <line x1="0" y1="{{ $thresholdY }}" x2="{{ $chartWidth }}" y2="{{ $thresholdY }}" class="stroke-amber-400/70 dark:stroke-amber-500/60" stroke-width="1" />
-                        <text x="{{ $chartWidth - 4 }}" y="{{ $thresholdY - 4 }}" text-anchor="end" class="text-[10px] fill-amber-600 dark:fill-amber-400">Ambang batas {{ number_format($responseThresholdMs) }}ms</text>
-                    @endif
-
-                    {{-- Area wash under the line --}}
-                    <polygon points="{{ $areaPath }}" class="fill-accent-500/10 dark:fill-accent-400/10" />
-
-                    {{-- The trend line itself --}}
-                    <polyline points="{{ $linePath }}" fill="none" class="stroke-accent-500 dark:stroke-accent-400" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-
-                    {{-- Crosshair + highlighted dot, following the hovered point --}}
-                    <line
-                        x-show="hovered" x-cloak
-                        :x1="hovered?.x" :x2="hovered?.x" y1="{{ $padTop }}" y2="{{ $plotBottom }}"
-                        class="stroke-zinc-300 dark:stroke-zinc-600" stroke-width="1"
-                    />
-                    <circle
-                        x-show="hovered" x-cloak
-                        :cx="hovered?.x" :cy="hovered?.y" r="5" stroke-width="2"
-                        :class="hovered?.up ? 'fill-accent-500 dark:fill-accent-400' : 'fill-red-500'"
-                        class="stroke-white dark:stroke-zinc-900"
-                    />
-
-                    {{-- Per-point dots: red when a check there counted as down (incl.
-                    over-threshold, see WebsiteChecker). In the all-sites view a single
-                    failure anywhere in that hour is enough - see Dashboard::overviewSeries(). --}}
-                    @foreach ($points as $p)
-                        <circle
-                            cx="{{ $p['x'] }}" cy="{{ $p['y'] }}" r="3"
-                            @class(['fill-red-500' => ! $p['up'], 'fill-accent-500 dark:fill-accent-400' => $p['up']])
-                        />
-                    @endforeach
-
-                    {{-- End marker + direct value label --}}
-                    @if ($last)
-                        <circle
-                            cx="{{ $last['x'] }}" cy="{{ $last['y'] }}" r="5" stroke-width="2"
-                            class="stroke-white dark:stroke-zinc-900 {{ $last['up'] ? 'fill-accent-500 dark:fill-accent-400' : 'fill-red-500' }}"
-                        />
-                        <text
-                            x="{{ $last['x'] - 8 }}" y="{{ max(10, $last['y'] - 10) }}" text-anchor="end"
-                            @class(['text-[11px] font-semibold', 'fill-red-600 dark:fill-red-400' => ! $last['up'], 'fill-zinc-900 dark:fill-white' => $last['up']])
-                        >{{ $last['ms'] }}ms</text>
-                    @endif
-                </svg>
-
-                <div
-                    x-show="hovered" x-cloak
-                    class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow-lg dark:bg-zinc-700"
-                    :style="`left: ${hovered ? Math.min(88, Math.max(12, (hovered.x / chartWidth) * 100)) : 0}%; top: ${hovered ? (hovered.y / chartHeight) * 100 : 0}%; margin-top: -8px;`"
-                >
-                    <p class="font-medium" x-text="hovered?.time"></p>
-                    <p class="text-zinc-300 dark:text-zinc-400">
-                        <span x-text="hovered?.ms + 'ms'"></span>
-                        &middot;
-                        <span x-text="hovered?.up ? 'Up' : 'Down'" :class="hovered?.up ? 'text-emerald-400' : 'text-red-400'"></span>
-                    </p>
-                </div>
-            </div>
-
-            <div class="mt-1 flex justify-between text-[11px] text-zinc-400">
-                <span>{{ $responseSeries->first()['label'] }}</span>
-                <span>{{ $responseSeries->last()['label'] }}</span>
-            </div>
         @endif
     </div>
 
-    {{-- Incidents + uptime/website list --}}
+    {{-- Status KPI: a full partition, Online + Bermasalah + Offline = Total --}}
+    <section aria-label="Ringkasan status situs" class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <x-kpi-card label="Total Situs" :value="$total" icon="globe" :href="$canViewSites ? route('situs') : null">
+            @if ($total > 0)
+                <span>{{ $onlinePct }}% online</span>
+            @endif
+        </x-kpi-card>
+
+        <x-kpi-card label="Online" :value="$summary['online'] ?? 0" icon="check-circle" tone="up" style="animation-delay: 40ms">
+            @if (($breakdown['maintenance'] ?? 0) > 0)
+                <span class="{{ $chip }}"><span class="h-1.5 w-1.5 rounded-full bg-sky-500"></span>{{ $breakdown['maintenance'] }} Pemeliharaan</span>
+            @endif
+        </x-kpi-card>
+
+        <x-kpi-card
+            label="Bermasalah" :value="$summary['problem'] ?? 0" icon="warning-circle"
+            :tone="($summary['problem'] ?? 0) > 0 ? 'down' : 'muted'"
+            :alert="($summary['problem'] ?? 0) > 0"
+            style="animation-delay: 80ms"
+        >
+            @if (($breakdown['down'] ?? 0) > 0)
+                <span class="{{ $chip }}"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>{{ $breakdown['down'] }} Down</span>
+            @endif
+            @if (($breakdown['attack'] ?? 0) > 0)
+                <span class="{{ $chip }}"><x-phosphor-lightning class="h-3 w-3 text-red-500" aria-hidden="true" />{{ $breakdown['attack'] }} DDoS</span>
+            @endif
+        </x-kpi-card>
+
+        <x-kpi-card label="Offline" :value="$summary['offline'] ?? 0" icon="power" tone="muted" style="animation-delay: 120ms">
+            @if (($breakdown['internal'] ?? 0) > 0)
+                <span class="{{ $chip }}"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>{{ $breakdown['internal'] }} Internal</span>
+            @endif
+            @if (($breakdown['unknown'] ?? 0) > 0)
+                <span class="{{ $chip }}"><span class="h-1.5 w-1.5 rounded-full bg-zinc-300 dark:bg-zinc-600"></span>{{ $breakdown['unknown'] }} Belum diketahui</span>
+            @endif
+        </x-kpi-card>
+    </section>
+
+    {{-- Range KPI: follow the selected range --}}
+    <section aria-label="Ringkasan performa" class="-mt-2 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <x-kpi-card
+            size="sm" label="Uptime {{ $rangeSpan }}" icon="pulse"
+            :value="$metrics['uptime'] !== null ? number_format($metrics['uptime'], $metrics['uptime'] >= 99.95 ? 0 : 1).'%' : '-'"
+            :tone="$metrics['uptime'] === null ? 'muted' : ($metrics['uptime'] >= 99 ? 'up' : ($metrics['uptime'] >= 95 ? 'warning' : 'down'))"
+        />
+        <x-kpi-card
+            size="sm" label="Rata-rata respons" icon="timer" tone="accent"
+            :value="$metrics['avg_ms'] !== null ? number_format($metrics['avg_ms']).'ms' : '-'"
+        />
+        <x-kpi-card
+            size="sm" label="Insiden terbuka" icon="bell-ringing"
+            :value="$metrics['open_incidents'] ?? 0"
+            :tone="($metrics['open_incidents'] ?? 0) > 0 ? 'down' : 'muted'"
+            :href="$canViewIncidents ? route('insiden', ['status' => 'open']) : null"
+        />
+        <x-kpi-card
+            size="sm" label="Judol baru" icon="shield-warning"
+            :value="$metrics['new_judol'] ?? 0"
+            :tone="($metrics['new_judol'] ?? 0) > 0 ? 'down' : 'muted'"
+            :href="$canViewJudol ? route('deteksi-judol') : null"
+        />
+    </section>
+
+    {{-- Real-time comes first in the DOM so it sits above the chart on mobile --}}
     <div class="grid gap-6 lg:grid-cols-3">
 
-        {{-- Recent incidents --}}
-        {{-- min-w-0: a grid item defaults to min-width:auto, so without this the card
-        refuses to shrink below its longest incident title and the whole card overflows
-        the screen on mobile - the title's own "truncate" never gets to apply. --}}
-        <div class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white lg:col-span-2 dark:border-zinc-800 dark:bg-zinc-900">
-            <div class="flex items-center justify-between px-5 py-4">
-                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Insiden Terbaru</h2>
-                @can('insiden.view')
-                    <a href="{{ route('insiden') }}" wire:navigate class="text-xs font-medium text-accent-600 transition hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300">
-                        Lihat semua
-                    </a>
-                @endcan
+        {{-- Real-time condition --}}
+        <section class="{{ $cardBase }} flex flex-col lg:col-start-3 lg:row-start-1">
+            <div class="{{ $cardHead }}">
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Kondisi Real-time</h2>
+                @if ($canViewSites && $liveSites->isNotEmpty())
+                    <a href="{{ route('situs') }}" wire:navigate class="{{ $linkClass }}">Lihat semua situs</a>
+                @endif
             </div>
 
-            @if ($recentIncidents->isEmpty())
-                <div class="flex flex-col items-center gap-2 px-5 py-10 text-center">
-                    <x-phosphor-shield-check class="h-8 w-8 text-emerald-500" />
-                    <p class="text-sm text-zinc-500 dark:text-zinc-400">Belum ada insiden. Semua situs aman terkendali.</p>
+            @if ($liveSites->isEmpty())
+                <div class="flex flex-1 flex-col items-center justify-center gap-3 p-5 py-12 text-center">
+                    <x-phosphor-globe-hemisphere-west class="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
+                    <p class="text-sm text-zinc-500 dark:text-zinc-400">Belum ada situs yang dipantau.</p>
+                    @if ($canManage)
+                        <a href="{{ route('situs') }}" wire:navigate class="{{ $linkClass }}">Tambah situs pertama</a>
+                    @endif
                 </div>
             @else
-                <div class="space-y-1 px-3 pb-3 overflow-y-auto">
-                    @foreach ($recentIncidents as $incident)
-                        @php
-                            // A judol incident's detail lives on Deteksi Judol, not on the
-                            // incidents page, which lists it without the matched keywords,
-                            // the affected URLs, or the AI verdict.
-                            $incidentHref = $incident->type === 'judol'
-                                ? (auth()->user()?->hasPermission('deteksi-judol.view') ? route('deteksi-judol') : null)
-                                : (auth()->user()?->hasPermission('insiden.view') ? route('insiden') : null);
-                        @endphp
-                        <a
-                            @if ($incidentHref) href="{{ $incidentHref }}" wire:navigate @endif
-                            class="flex items-center gap-2.5 rounded-xl px-2.5 py-2.5 transition hover:bg-zinc-50 sm:gap-3 dark:hover:bg-zinc-800/60"
-                        >
-                            <span @class([
-                                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-                                'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' => $incident->severity === 'critical',
-                                'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400' => $incident->severity === 'warning',
-                                'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' => $incident->severity === 'info',
-                            ])>
-                                @if ($incident->type === 'downtime')
-                                    <x-phosphor-wifi-x class="h-4 w-4" />
-                                @elseif ($incident->type === 'judol')
-                                    <x-phosphor-shield-warning class="h-4 w-4" />
-                                @elseif ($incident->type === 'ssl')
-                                    <x-phosphor-lock-key class="h-4 w-4" />
-                                @else
-                                    <x-phosphor-warning class="h-4 w-4" />
-                                @endif
-                            </span>
-                            <div class="min-w-0 flex-1">
-                                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ $incident->title }}</p>
-                                <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->website->name }}</p>
-                            </div>
-                            <span @class([
-                                'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium',
-                                'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $incident->status === 'open',
-                                'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' => $incident->status === 'resolved',
-                            ])>
-                                {{ $incident->status === 'open' ? 'Terbuka' : 'Selesai' }}
-                            </span>
-                            <span class="hidden w-16 shrink-0 text-right font-mono text-xs text-zinc-400 sm:block">{{ $incident->detected_at->diffForHumans(null, true) }}</span>
-                        </a>
-                    @endforeach
-                </div>
-            @endif
-        </div>
-
-        {{-- min-w-0 for the same reason as the incidents card: the site list below
-        truncates long names and URLs, which only works if this column can shrink. --}}
-        <div class="flex min-w-0 flex-col gap-6">
-            {{-- 7-day uptime chart: plain CSS bars --}}
-            <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Uptime 7 Hari Terakhir</h2>
-                @php
-                    $uptimeBars = collect($weeklyUptime)->map(fn ($day) => [
-                        'height' => max(8, $day['value']),
-                        'class' => 'rounded-md bg-accent-500/85 hover:bg-accent-500 dark:bg-accent-500/70',
-                        'label' => $day['label'],
-                        'value' => $day['value'].'% uptime',
-                        'tone' => null,
-                    ])->all();
-                @endphp
-                <div class="mt-6">
-                    <x-bar-chart :bars="$uptimeBars" height="h-24" gap="gap-2.5" />
-                    <div class="mt-2 flex gap-2.5">
-                        @foreach ($weeklyUptime as $day)
-                            <span class="flex-1 text-center font-mono text-[11px] text-zinc-400">{{ $day['label'] }}</span>
+                {{-- Load distribution --}}
+                <div class="border-b border-zinc-100 p-5 dark:border-zinc-800">
+                    <div class="flex items-baseline justify-between gap-2">
+                        <p class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Distribusi beban</p>
+                        <p class="text-[11px] text-zinc-400 dark:text-zinc-500">{{ $loadTotal }} situs</p>
+                    </div>
+                    <div class="mt-2 flex h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800" aria-hidden="true">
+                        @foreach ($loadSegments as $seg)
+                            @if (($loadCounts[$seg['key']] ?? 0) > 0 && $loadTotal > 0)
+                                <span class="h-full {{ $seg['bar'] }}" style="width: {{ round($loadCounts[$seg['key']] / $loadTotal * 100, 2) }}%"></span>
+                            @endif
                         @endforeach
+                    </div>
+                    <ul class="mt-2.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        @foreach ($loadSegments as $seg)
+                            <li class="inline-flex items-center gap-1.5">
+                                <span class="h-1.5 w-1.5 rounded-full {{ $seg['bar'] }}" aria-hidden="true"></span>
+                                {{ $seg['label'] }} <span class="font-mono text-zinc-700 dark:text-zinc-300">{{ $loadCounts[$seg['key']] ?? 0 }}</span>
+                            </li>
+                        @endforeach
+                    </ul>
+                </div>
+
+                {{-- Problem-first site list --}}
+                <ul class="flex-1 p-2">
+                    @foreach ($visibleSites as $site)
+                        @php
+                            $problem = in_array($site['status_key'], ['down', 'attack'], true);
+                            $history = array_slice(array_values($site['history'] ?? []), -24);
+                            $pad = 24 - count($history);
+                            $upCount = count(array_filter($history, fn ($h) => $h === true));
+                        @endphp
+                        <li wire:key="live-{{ $site['uuid'] }}">
+                            <{{ $siteTag }}
+                                @if ($canViewSites) href="{{ route('situs.show', $site['uuid']) }}" wire:navigate @endif
+                                @class([
+                                    'block rounded-xl px-3 py-2.5',
+                                    'transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60' => $canViewSites,
+                                ])
+                            >
+                                <div class="flex items-center gap-2.5">
+                                    <x-status-dot :status="$site['status_key']" />
+                                    <p class="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900 dark:text-white">{{ $site['name'] }}</p>
+                                    <span class="shrink-0 font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
+                                        {{ $site['last_checked_at']?->diffForHumans(null, true) ?? 'Belum dicek' }}
+                                    </span>
+                                </div>
+                                <div class="mt-1.5 flex items-center gap-2 pl-5">
+                                    <div class="flex h-1.5 min-w-0 flex-1 gap-px" role="img" aria-label="Riwayat 24 pengecekan terakhir: {{ $upCount }} up, {{ count($history) - $upCount }} down">
+                                        @for ($i = 0; $i < 24; $i++)
+                                            @php $h = $i < $pad ? null : $history[$i - $pad]; @endphp
+                                            <span @class([
+                                                'flex-1 rounded-sm',
+                                                'bg-zinc-200 dark:bg-zinc-700' => $h === null,
+                                                'bg-emerald-500' => $h === true,
+                                                'bg-red-500' => $h === false,
+                                            ])></span>
+                                        @endfor
+                                    </div>
+                                    @if ($site['status_key'] !== 'up')
+                                        <span @class([
+                                            'shrink-0 text-[11px] font-medium',
+                                            'text-red-600 dark:text-red-400' => $problem,
+                                            'text-zinc-500 dark:text-zinc-400' => ! $problem,
+                                        ])>{{ $site['status_label'] }}</span>
+                                    @endif
+                                </div>
+                            </{{ $siteTag }}>
+                        </li>
+                    @endforeach
+                </ul>
+
+                @if ($liveSites->count() > $visibleSites->count())
+                    <div class="border-t border-zinc-100 px-5 py-3 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                        +{{ $liveSites->count() - $visibleSites->count() }} situs lainnya
+                        @if ($canViewSites)
+                            &middot; <a href="{{ route('situs') }}" wire:navigate class="{{ $linkClass }}">Lihat semua situs</a>
+                        @endif
+                    </div>
+                @endif
+            @endif
+        </section>
+
+        {{-- Performance chart --}}
+        <section class="{{ $cardBase }} lg:col-span-2 lg:col-start-1 lg:row-start-1">
+            <div class="{{ $cardHead }}">
+                <div class="min-w-0">
+                    <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Performa</h2>
+                    <p class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                        {{ $selectedSite?->name ?? 'Semua situs' }} &middot; rata-rata {{ $rangeBucket }}, {{ $rangeSpan }} terakhir
+                    </p>
+                </div>
+
+                <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                    {{-- Range segmented control --}}
+                    <div role="radiogroup" aria-label="Rentang waktu" class="inline-flex self-start rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800">
+                        @foreach ($ranges as $key => $label)
+                            <label class="cursor-pointer">
+                                <input type="radio" name="dashboard-range" value="{{ $key }}" wire:model.live="range" class="peer sr-only">
+                                <span class="block rounded-md px-3 py-1.5 text-xs font-medium text-zinc-500 transition peer-checked:bg-white peer-checked:text-zinc-900 peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40 hover:text-zinc-700 dark:text-zinc-400 dark:peer-checked:bg-zinc-700 dark:peer-checked:text-white dark:hover:text-zinc-200">{{ $label }}</span>
+                            </label>
+                        @endforeach
+                    </div>
+
+                    {{-- Site picker: filters client-side, list is already loaded --}}
+                    <div
+                        class="relative w-full sm:w-52"
+                        wire:key="response-picker-{{ md5($liveSites->pluck('uuid')->implode('-')) }}"
+                        x-data="{
+                            open: false,
+                            query: @js($selectedSite?->name ?? ''),
+                            sites: @js($liveSites->map(fn ($s) => ['uuid' => $s['uuid'], 'name' => $s['name']])->values()),
+                            get filtered() {
+                                const q = this.query.toLowerCase().trim();
+                                return q ? this.sites.filter(s => s.name.toLowerCase().includes(q)) : this.sites;
+                            },
+                            pick(site) {
+                                this.query = site.name;
+                                this.open = false;
+                                $wire.selectWebsite(site.uuid);
+                            },
+                            clear() {
+                                this.query = '';
+                                this.open = false;
+                                $wire.selectWebsite('');
+                            },
+                        }"
+                        @click.outside="open = false"
+                        @keydown.escape="open = false"
+                    >
+                        <div class="relative">
+                            <x-phosphor-magnifying-glass class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                            <input
+                                type="text"
+                                x-model="query"
+                                @focus="open = true"
+                                @input="open = true"
+                                @disabled($liveSites->isEmpty())
+                                autocomplete="off"
+                                aria-label="Cari situs"
+                                placeholder="{{ $liveSites->isEmpty() ? 'Belum ada situs' : 'Cari situs...' }}"
+                                class="w-full rounded-lg border border-zinc-200 bg-white py-1.5 pl-9 pr-8 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                            >
+                            <button type="button" x-show="query" x-cloak @click="clear()" aria-label="Hapus pilihan situs" class="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 transition hover:text-zinc-600 dark:hover:text-zinc-300">
+                                <x-phosphor-x class="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+
+                        <div
+                            x-show="open && filtered.length > 0"
+                            x-cloak
+                            class="absolute right-0 z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg sm:w-64 dark:border-zinc-700 dark:bg-zinc-800"
+                        >
+                            <template x-for="site in filtered" :key="site.uuid">
+                                <button
+                                    type="button"
+                                    @click="pick(site)"
+                                    class="block w-full truncate px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                                    x-text="site.name"
+                                ></button>
+                            </template>
+                        </div>
+                        <div
+                            x-show="open && query && filtered.length === 0"
+                            x-cloak
+                            class="absolute right-0 z-20 mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-500 shadow-lg sm:w-64 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+                        >
+                            Situs tidak ditemukan.
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {{-- Website status list --}}
-            <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Status Situs</h2>
-                    @can('situs.view')
-                        <a href="{{ route('situs') }}" wire:navigate class="text-xs font-medium text-accent-600 transition hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300">
-                            Lihat semua
-                        </a>
-                    @endcan
-                </div>
-                <div class="mt-4 space-y-3.5 overflow-y-auto h-35">
-                    @forelse ($websiteStatuses as $website)
-                        @php $siteHref = auth()->user()?->hasPermission('situs.view') ? route('situs.show', $website) : null; @endphp
-                        <a @if ($siteHref) href="{{ $siteHref }}" wire:navigate @endif class="flex items-center gap-3">
-                            <x-status-dot :status="$website->statusKey(
-                                isset($offlineIds[$website->id]),
-                                isset($attackedIds[$website->id]),
-                                isset($maintenanceIds[$website->id]),
-                            )" />
-                            <div class="min-w-0 flex-1">
-                                <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ $website->name }}</p>
-                                <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">{{ $website->url }}</p>
-                            </div>
-                        </a>
-                    @empty
-                        <p class="text-sm text-zinc-500 dark:text-zinc-400">Belum ada situs yang dipantau.</p>
-                    @endforelse
-                </div>
+            <div class="p-5 transition-opacity" wire:loading.class="opacity-50" wire:target="range,selectWebsite">
+                <x-line-chart
+                    :series="$series"
+                    :height="220"
+                    :threshold="$selectedSite?->response_time_threshold_ms"
+                    :empty="$liveSites->isEmpty()
+                        ? 'Belum ada situs yang dipantau.'
+                        : ($selectedSite ? 'Belum ada data pengecekan untuk '.$selectedSite->name.' dalam '.$rangeSpan.' terakhir.' : 'Belum ada data pengecekan dalam '.$rangeSpan.' terakhir.')"
+                />
             </div>
-        </div>
+        </section>
+    </div>
+
+    {{-- Incidents --}}
+    @php
+        $incidentPanels = [
+            [
+                'title' => 'Insiden Belum Selesai',
+                'items' => $this->openIncidents,
+                'count' => (int) $this->openIncidentsCount,
+                'href' => $canViewIncidents ? route('insiden', ['status' => 'open']) : null,
+                'empty' => 'Tidak ada insiden terbuka. Semua situs aman terkendali.',
+                'showStatus' => false,
+            ],
+            [
+                'title' => 'Insiden Terbaru',
+                'items' => $this->recentIncidents,
+                'count' => null,
+                'href' => $canViewIncidents ? route('insiden') : null,
+                'empty' => 'Belum ada insiden.',
+                'showStatus' => true,
+            ],
+        ];
+    @endphp
+    <div class="grid gap-6 lg:grid-cols-2">
+        @foreach ($incidentPanels as $panel)
+            <section class="{{ $cardBase }}">
+                <div class="{{ $cardHead }}">
+                    <h2 class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
+                        {{ $panel['title'] }}
+                        @if ($panel['count'])
+                            <span class="rounded-full bg-red-50 px-2 py-0.5 font-mono text-[11px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $panel['count'] }}</span>
+                        @endif
+                    </h2>
+                    @if ($panel['href'])
+                        <a href="{{ $panel['href'] }}" wire:navigate class="{{ $linkClass }}">
+                            Lihat semua{{ $panel['count'] ? ' ('.$panel['count'].')' : '' }}
+                        </a>
+                    @endif
+                </div>
+
+                @if ($panel['items']->isEmpty())
+                    <div class="flex flex-col items-center gap-2 p-5 py-10 text-center">
+                        <x-phosphor-shield-check class="h-8 w-8 text-emerald-500" />
+                        <p class="text-sm text-zinc-500 dark:text-zinc-400">{{ $panel['empty'] }}</p>
+                    </div>
+                @else
+                    <ul class="p-2">
+                        @foreach ($panel['items'] as $incident)
+                            @php
+                                // Judol detail lives on Deteksi Judol, not the incidents page.
+                                $incidentHref = $incident->type === 'judol'
+                                    ? ($canViewJudol ? route('deteksi-judol') : null)
+                                    : ($canViewIncidents ? route('insiden') : null);
+                            @endphp
+                            <li wire:key="incident-{{ $loop->parent->index }}-{{ $incident->id }}">
+                                <a
+                                    @if ($incidentHref) href="{{ $incidentHref }}" wire:navigate @endif
+                                    class="flex items-center gap-3 rounded-xl px-3 py-2.5 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                                >
+                                    <span @class([
+                                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
+                                        'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' => $incident->severity === 'critical',
+                                        'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400' => $incident->severity === 'warning',
+                                        'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' => ! in_array($incident->severity, ['critical', 'warning'], true),
+                                    ])>
+                                        @if ($incident->type === 'downtime')
+                                            <x-phosphor-wifi-x class="h-4 w-4" />
+                                        @elseif ($incident->type === 'judol')
+                                            <x-phosphor-shield-warning class="h-4 w-4" />
+                                        @elseif ($incident->type === 'ssl')
+                                            <x-phosphor-lock-key class="h-4 w-4" />
+                                        @else
+                                            <x-phosphor-warning class="h-4 w-4" />
+                                        @endif
+                                    </span>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="truncate text-sm font-medium text-zinc-900 dark:text-white">{{ $incident->title }}</p>
+                                        <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                            {{ $incident->website?->name ?? '-' }}
+                                            <span class="sm:hidden">&middot; {{ $incident->detected_at?->diffForHumans(null, true) }}</span>
+                                        </p>
+                                    </div>
+                                    @if ($panel['showStatus'])
+                                        <span @class([
+                                            'shrink-0 rounded-full px-2.5 py-1 text-xs font-medium',
+                                            'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $incident->status === 'open',
+                                            'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' => $incident->status !== 'open',
+                                        ])>
+                                            {{ $incident->status === 'open' ? 'Terbuka' : 'Selesai' }}
+                                        </span>
+                                    @endif
+                                    <span class="hidden w-16 shrink-0 text-right font-mono text-xs text-zinc-400 sm:block">{{ $incident->detected_at?->diffForHumans(null, true) }}</span>
+                                </a>
+                            </li>
+                        @endforeach
+                    </ul>
+                @endif
+            </section>
+        @endforeach
     </div>
 </div>

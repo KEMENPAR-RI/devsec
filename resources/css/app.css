@@ -47,6 +47,21 @@
     --color-secondary-950: #281a0b;
 }
 
+/* Dark mode: remap zinc ramp to midnight navy (accent #132B50 hue). */
+.dark {
+    --color-zinc-50: #f3f6fb;
+    --color-zinc-100: #e8edf5;
+    --color-zinc-200: #d6deec;
+    --color-zinc-300: #b3c0d6;
+    --color-zinc-400: #8a9bb8;
+    --color-zinc-500: #5f7192;
+    --color-zinc-600: #3d4e6e;
+    --color-zinc-700: #1f2f4d;
+    --color-zinc-800: #13203a;
+    --color-zinc-900: #0a1428;
+    --color-zinc-950: #040b18;
+}
+
 @layer base {
     body {
         @apply antialiased;

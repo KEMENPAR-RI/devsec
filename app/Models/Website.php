@@ -11,6 +11,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Pagination\AbstractPaginator;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class Website extends Model
 {
@@ -590,21 +592,14 @@ class Website extends Model
 
         // The most recent check per site, whether it succeeded or not: a site whose
         // latest check failed has no latency to grade, same as loadLevel() decides.
-        // Ordered oldest-first so keyBy() leaves the newest row per site standing -
-        // later keys overwrite earlier ones.
-        $latest = WebsiteCheck::whereIn('website_id', $ids)
-            ->oldest('checked_at')
-            ->get(['id', 'website_id', 'is_up', 'response_time_ms'])
+        $latest = self::rankedChecks($ids, 1)
             ->keyBy('website_id');
 
         // Baselines from the successful checks inside the same window loadBaseline()
         // uses, averaged per site - and, like it, excluding the check being graded so
         // a spike cannot inflate the average it is measured against.
-        $baselines = WebsiteCheck::whereIn('website_id', $ids)
-            ->where('is_up', true)
-            ->whereNotNull('response_time_ms')
-            ->orderByDesc('checked_at')
-            ->get(['id', 'website_id', 'response_time_ms'])
+        // One extra row per site covers the excluded latest check.
+        $baselines = self::rankedChecks($ids, self::LOAD_BASELINE_CHECKS + 1, true)
             ->groupBy('website_id')
             ->map(fn ($checks, $websiteId) => $checks
                 ->reject(fn ($check) => $check->id === $latest->get($websiteId)?->id)
@@ -630,6 +625,35 @@ class Website extends Model
                 'response_time_ms' => $check->response_time_ms,
             ]];
         })->all();
+    }
+
+    /**
+     * The newest $limit checks per site (newest first), bounded in SQL via ROW_NUMBER().
+     *
+     * @param  Collection<int, int>  $ids
+     * @return Collection<int, object{id: int, website_id: int, is_up: bool, response_time_ms: ?int}>
+     */
+    protected static function rankedChecks($ids, int $limit, bool $successfulOnly = false): Collection
+    {
+        $ranked = WebsiteCheck::query()
+            ->select(['id', 'website_id', 'is_up', 'response_time_ms', 'checked_at'])
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY checked_at DESC, id DESC) AS rn')
+            ->whereIn('website_id', $ids)
+            ->where('checked_at', '>=', now()->subDays(WebsiteCheck::RANKED_WINDOW_DAYS))
+            ->when($successfulOnly, fn ($q) => $q->where('is_up', true)->whereNotNull('response_time_ms'));
+
+        return DB::query()
+            ->fromSub($ranked, 'ranked')
+            ->where('rn', '<=', $limit)
+            ->orderBy('website_id')
+            ->orderBy('rn')
+            ->get(['id', 'website_id', 'is_up', 'response_time_ms'])
+            ->map(fn ($row) => (object) [
+                'id' => (int) $row->id,
+                'website_id' => (int) $row->website_id,
+                'is_up' => (bool) $row->is_up,
+                'response_time_ms' => $row->response_time_ms === null ? null : (int) $row->response_time_ms,
+            ]);
     }
 
     /**

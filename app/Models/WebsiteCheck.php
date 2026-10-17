@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\HasUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class WebsiteCheck extends Model
 {
@@ -34,5 +35,42 @@ class WebsiteCheck extends Model
     public function website(): BelongsTo
     {
         return $this->belongsTo(Website::class);
+    }
+
+    /** Lookback bound for the per-site ROW_NUMBER() queries (index-covered). */
+    public const RANKED_WINDOW_DAYS = 7;
+
+    /**
+     * Last $size is_up results per site, oldest first, in one windowed query.
+     *
+     * @param  list<int>  $ids
+     * @return array<int, list<bool>>
+     */
+    public static function historyFor(array $ids, int $size): array
+    {
+        if ($ids === [] || $size < 1) {
+            return [];
+        }
+
+        $ranked = static::query()
+            ->select(['website_id', 'is_up', 'checked_at', 'id'])
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY website_id ORDER BY checked_at DESC, id DESC) AS rn')
+            ->whereIn('website_id', $ids)
+            ->where('checked_at', '>=', now()->subDays(self::RANKED_WINDOW_DAYS));
+
+        $rows = DB::query()
+            ->fromSub($ranked, 'ranked')
+            ->where('rn', '<=', $size)
+            ->orderBy('website_id')
+            ->orderBy('checked_at')
+            ->orderBy('id')
+            ->get(['website_id', 'is_up']);
+
+        $history = [];
+        foreach ($rows as $row) {
+            $history[(int) $row->website_id][] = (bool) $row->is_up;
+        }
+
+        return $history;
     }
 }
