@@ -29,7 +29,8 @@ class DomainExpiringNotification extends Notification
         return [
             'type' => 'domain',
             'severity' => $this->incident->severity,
-            'title' => "Domain {$this->website->name} akan kedaluwarsa",
+            // "akan" vs "sudah" kedaluwarsa is decided when the incident is raised.
+            'title' => $this->incident->title,
             'message' => $expiresAt
                 ? 'Registrasi domain berakhir pada '.$expiresAt->translatedFormat('d F Y')
                     .($days !== null ? " ({$days} hari lagi)" : '')

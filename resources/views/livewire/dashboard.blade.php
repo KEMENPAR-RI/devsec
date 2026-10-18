@@ -122,14 +122,18 @@
             size="sm" label="Rata-rata respons" icon="timer" tone="accent"
             :value="$metrics['avg_ms'] !== null ? number_format($metrics['avg_ms']).'ms' : '-'"
         />
-        <x-kpi-card
-            size="sm" label="Insiden terbuka" icon="bell-ringing"
-            :value="$metrics['open_incidents'] ?? 0"
-            :tone="($metrics['open_incidents'] ?? 0) > 0 ? 'down' : 'muted'"
-            :href="$canViewIncidents ? route('insiden', ['status' => 'open']) : null"
-        />
+        @if ($canViewIncidents)
+            <x-kpi-card
+                size="sm" label="Insiden terbuka" icon="bell-ringing"
+                :value="$metrics['open_incidents'] ?? 0"
+                :tone="($metrics['open_incidents'] ?? 0) > 0 ? 'down' : 'muted'"
+                :href="route('insiden', ['status' => 'open'])"
+            />
+        @endif
+        {{-- Widens to fill the slot left by the hidden incident card, keeping the 4-col rhythm --}}
         <x-kpi-card
             size="sm" label="Judol baru" icon="shield-warning"
+            :class="$canViewIncidents ? '' : 'col-span-2'"
             :value="$metrics['new_judol'] ?? 0"
             :tone="($metrics['new_judol'] ?? 0) > 0 ? 'down' : 'muted'"
             :href="$canViewJudol ? route('deteksi-judol') : null"
@@ -344,6 +348,7 @@
     </div>
 
     {{-- Incidents --}}
+    @if ($canViewIncidents)
     @php
         $incidentPanels = [
             [
@@ -441,4 +446,5 @@
             </section>
         @endforeach
     </div>
+    @endif
 </div>

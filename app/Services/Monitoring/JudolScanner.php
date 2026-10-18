@@ -785,6 +785,8 @@ class JudolScanner
             'Accept-Language' => 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
         ])
             ->withOptions(['verify' => $verifySsl] + OutboundUrlGuard::httpOptions())
+            // Every hop and retry connects only to the guard-vetted IPs (no DNS rebinding).
+            ->setHandler(OutboundUrlGuard::pinnedHandler())
             ->timeout(15)
             // 10s, matching WebsiteChecker: the same shared-hosting sites are being
             // fetched, and at 5s their TLS handshake was being cut off. Here that

@@ -57,6 +57,8 @@ class CheckDomains extends Command
             // unattended, and a single unreachable registry would otherwise mean
             // nothing after it gets checked at all.
             try {
+                // A forced drift check from websites:check may have moved dns_records since the query.
+                $website->refresh();
                 $checker->checkDns($website);
                 $checker->checkDomainExpiry($website);
                 $this->checkReputation($website);

@@ -37,6 +37,10 @@ Schedule::command('db:backup')
     ->when(fn () => app(DatabaseBackup::class)->isDue())
     ->withoutOverlapping();
 
+// Monitoring: roll raw checks up into permanent daily totals, then prune those
+// past the retention window - see App\Console\Commands\PruneWebsiteChecks.
+Schedule::command('websites:prune-checks')->dailyAt('03:15')->withoutOverlapping();
+
 // Audit: the only thing that removes a trail line, and it runs unattended - see
 // App\Console\Commands\PruneAuditLogs for why there is no button for this.
 Schedule::command('audit:prune')->dailyAt('03:30')->withoutOverlapping();

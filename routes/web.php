@@ -69,8 +69,8 @@ Route::middleware('auth')->group(function () {
     // Each page is gated by the matching "{page}.view" permission from
     // App\Support\Permissions (registered as Gates in AppServiceProvider), so a
     // user without it gets a 403 even when typing the URL directly - the sidebar
-    // just hides the link. The components authorize again in mount(), which is what
-    // covers Livewire's own update requests.
+    // just hides the link. Livewire re-runs these persistent route middleware (auth,
+    // can:...) on every update request; mount() only authorizes the initial render.
     Route::get('/dashboard', Dashboard::class)->middleware('can:dashboard.view')->name('dashboard');
 
     Route::middleware('can:situs.view')->group(function () {

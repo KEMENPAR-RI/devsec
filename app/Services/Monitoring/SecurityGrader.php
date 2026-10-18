@@ -4,6 +4,7 @@ namespace App\Services\Monitoring;
 
 use App\Models\Website;
 use App\Services\Security\OutboundUrlGuard;
+use GuzzleHttp\Utils as GuzzleUtils;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Throwable;
@@ -177,6 +178,7 @@ class SecurityGrader
                 ->timeout(15)
                 ->connectTimeout(10)
                 ->withOptions(OutboundUrlGuard::httpOptions())
+                ->setHandler(OutboundUrlGuard::pinningHandler(GuzzleUtils::chooseHandler()))
                 ->get($url);
         } catch (Throwable) {
             return null;
@@ -197,29 +199,8 @@ class SecurityGrader
      */
     protected function tlsVersion(string $url): ?string
     {
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (! $host) {
-            return null;
-        }
-
-        $port = parse_url($url, PHP_URL_PORT) ?? 443;
-
-        try {
-            $context = stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]);
-            $client = @stream_socket_client("ssl://{$host}:{$port}", $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $context);
-
-            if (! $client) {
-                return null;
-            }
-
-            $meta = stream_get_meta_data($client);
-            fclose($client);
-
-            return $meta['crypto']['protocol'] ?? null;
-        } catch (Throwable) {
-            return null;
-        }
+        // Pinned to the guard-vetted IP: a raw ssl://host connect would re-resolve (DNS rebinding).
+        return app(CertificateInspector::class)->tlsVersion($url);
     }
 
     protected function header(array $headers, string $name): ?string

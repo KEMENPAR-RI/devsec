@@ -1,9 +1,54 @@
-<div class="mx-auto flex max-w-7xl flex-col gap-6" wire:poll.5s.visible>
+<div class="mx-auto flex max-w-7xl flex-col gap-6" wire:poll.15s.visible>
     @php
         $isOffline = $website->isOffline();
         // Computed once and reused by the dot and the badge below, so they cannot
         // drift apart - each call re-queries incidents.
         $statusKey = $website->statusKey($isOffline, $website->wasAttacked(), $underMaintenance);
+        $loadLevel = $website->loadLevel();
+
+        // Uptime history: view data or computed props, whichever the component exposes.
+        $series ??= $this->series;
+        $rangeMetrics ??= $this->rangeMetrics;
+        $uptimeSummary ??= $this->uptimeSummary;
+        $downtimes = collect($downtimes ?? $this->downtimes);
+        $downtimeTotal30d ??= $this->downtimeTotal30d;
+        $verification ??= $this->verification;
+
+        $ranges = ['1h' => 'Jam', '24h' => 'Hari', '7d' => 'Minggu', '30d' => 'Bulan'];
+        $rangeSpan = ['1h' => '1 jam', '24h' => '24 jam', '7d' => '7 hari', '30d' => '30 hari'][$this->range] ?? '24 jam';
+        $rangeBucket = ['1h' => 'per 5 menit', '24h' => 'per jam', '7d' => 'per 6 jam', '30d' => 'per hari'][$this->range] ?? 'per jam';
+
+        $errorLabels = [
+            'timeout' => 'Timeout',
+            'dns' => 'DNS gagal',
+            'connect' => 'Koneksi gagal',
+            'ssl' => 'SSL/TLS bermasalah',
+            'http' => 'Error HTTP',
+            'slow' => 'Respons lambat',
+            'blocked' => 'Alamat diblokir',
+        ];
+
+        // 100 / 99.9 / 99.95 - null stays "-", never a fake 100%.
+        $fmtUptime = fn (?float $u) => $u === null ? '-' : rtrim(rtrim(number_format($u, 2), '0'), '.').'%';
+        $uptimeTone = fn (?float $u) => match (true) {
+            $u === null => 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+            $u >= 99 => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+            $u >= 95 => 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+            default => 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+        };
+        // 45 dtk / 12m / 1j 12m / 2 hari 3j
+        $fmtDuration = function (int $s): string {
+            if ($s < 60) {
+                return max(0, $s).' dtk';
+            }
+            $d = intdiv($s, 86400);
+            $h = intdiv($s % 86400, 3600);
+            $m = intdiv($s % 3600, 60);
+
+            return collect([$d ? $d.' hari' : null, $h ? $h.'j' : null, ! $d && $m ? $m.'m' : null])->filter()->implode(' ');
+        };
+
+        $cardHead = 'flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800';
     @endphp
 
     {{-- Scheduled maintenance: the one banner that explains why a red site is not
@@ -59,7 +104,14 @@
                 by their names. --}}
                 <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                     <x-status-badge :status="$statusKey" />
-                    <x-load-badge :level="$website->loadLevel()" :response-time="$checks->last()?->response_time_ms" />
+                    @if ($verification)
+                        <span title="Pengecekan gagal, sedang diulang tiap menit sebelum insiden dibuka." class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-amber-700 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/30">
+                            <x-phosphor-circle-notch class="h-3 w-3 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
+                            Memverifikasi {{ $verification['failures'] }}/{{ $verification['threshold'] }}
+                        </span>
+                    @endif
+                    {{-- No latency in the tooltip when the level is unknown (last check failed / none yet). --}}
+                    <x-load-badge :level="$loadLevel" :response-time="$loadLevel === 'unknown' ? null : $checks->last()?->response_time_ms" />
                     <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ \App\Models\Website::statusConfig($statusKey)['description'] }}</span>
                 </div>
                 {{-- Truncated, not wrapped: the full URL is one tap away on the link
@@ -67,6 +119,21 @@
                 <a href="{{ $website->url }}" target="_blank" rel="noopener" title="{{ $website->url }}" class="block truncate text-sm text-zinc-500 hover:text-accent-600 dark:text-zinc-400 dark:hover:text-accent-400">
                     {{ $website->url }}
                 </a>
+
+                {{-- Multi-period uptime + 30-day downtime total --}}
+                <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                    @foreach (['24h' => '24 jam', '7d' => '7 hari', '30d' => '30 hari'] as $key => $label)
+                        @php $uptime = isset($uptimeSummary[$key]) ? (float) $uptimeSummary[$key] : null; @endphp
+                        <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium {{ $uptimeTone($uptime) }}">
+                            <span class="font-normal opacity-80">Uptime {{ $label }}</span>
+                            <span class="font-mono tabular-nums">{{ $fmtUptime($uptime) }}</span>
+                        </span>
+                    @endforeach
+                    <span class="px-1 text-zinc-500 dark:text-zinc-400">
+                        Total downtime 30 hari:
+                        <span class="font-mono font-medium tabular-nums text-zinc-700 dark:text-zinc-200">{{ $downtimeTotal30d > 0 ? $fmtDuration((int) $downtimeTotal30d) : '0m' }}</span>
+                    </span>
+                </div>
             </div>
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2">
@@ -90,8 +157,9 @@
     {{-- KPI row --}}
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-            <p class="text-sm text-zinc-500 dark:text-zinc-400">Uptime 7 Hari</p>
-            <p class="mt-2 font-mono text-2xl font-semibold text-zinc-900 dark:text-white">{{ $website->uptimePercentage() }}%</p>
+            {{-- Follows the range selected on the chart below --}}
+            <p class="text-sm text-zinc-500 dark:text-zinc-400">Uptime {{ $rangeSpan }}</p>
+            <p class="mt-2 font-mono text-2xl font-semibold text-zinc-900 dark:text-white">{{ $fmtUptime(isset($rangeMetrics['uptime']) ? (float) $rangeMetrics['uptime'] : null) }}</p>
         </div>
         <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
             <p class="text-sm text-zinc-500 dark:text-zinc-400">Response Time Terakhir</p>
@@ -115,25 +183,152 @@
     </div>
 
     {{-- Response time history --}}
-    <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Riwayat Response Time</h2>
-        @if ($checks->isEmpty())
-            <p class="mt-4 text-sm text-zinc-500 dark:text-zinc-400">Belum ada data pengecekan.</p>
-        @else
-            @php
-                $max = max(50, $checks->max('response_time_ms'));
-                $bars = $checks->map(fn ($check) => [
-                    'height' => (int) max(6, round($check->response_time_ms / $max * 100)),
-                    'class' => $check->is_up ? 'bg-emerald-500/80 hover:bg-emerald-500' : 'bg-red-500/80 hover:bg-red-500',
-                    'label' => $check->checked_at->format('d M Y, H:i'),
-                    'value' => number_format($check->response_time_ms).'ms',
-                    'tone' => $check->is_up ? 'up' : 'down',
-                ])->values()->all();
-            @endphp
-            <div class="mt-6">
-                <x-bar-chart :bars="$bars" />
+    <section class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="{{ $cardHead }}">
+            <div class="min-w-0">
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Riwayat Response Time</h2>
+                <p class="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    Rata-rata {{ $rangeBucket }}, {{ $rangeSpan }} terakhir
+                    @if (isset($rangeMetrics['avg_ms']))
+                        &middot; rata-rata <span class="font-mono tabular-nums">{{ number_format($rangeMetrics['avg_ms']) }}ms</span>
+                    @endif
+                </p>
             </div>
-        @endif
+
+            {{-- Range segmented control, same as the dashboard --}}
+            <div role="radiogroup" aria-label="Rentang waktu" class="inline-flex self-start rounded-lg bg-zinc-100 p-0.5 dark:bg-zinc-800">
+                @foreach ($ranges as $key => $label)
+                    <label class="cursor-pointer">
+                        <input type="radio" name="site-range" value="{{ $key }}" wire:model.live="range" class="peer sr-only">
+                        <span class="block rounded-md px-3 py-1.5 text-xs font-medium text-zinc-500 transition peer-checked:bg-white peer-checked:text-zinc-900 peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-accent-500/40 hover:text-zinc-700 dark:text-zinc-400 dark:peer-checked:bg-zinc-700 dark:peer-checked:text-white dark:hover:text-zinc-200">{{ $label }}</span>
+                    </label>
+                @endforeach
+            </div>
+        </div>
+
+        <div class="p-5 transition-opacity" wire:loading.class="opacity-50" wire:target="range">
+            <x-line-chart
+                :series="$series"
+                :height="220"
+                :threshold="$website->response_time_threshold_ms"
+                :empty="'Belum ada data pengecekan untuk situs ini dalam '.$rangeSpan.' terakhir.'"
+            />
+        </div>
+    </section>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        {{-- Downtime history --}}
+        <section class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+            <div class="{{ $cardHead }}">
+                <div class="min-w-0">
+                    <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Riwayat Downtime</h2>
+                    <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">90 hari terakhir</p>
+                </div>
+                @can('insiden.view')
+                    @if ($downtimes->isNotEmpty())
+                        <a href="{{ route('insiden', ['type' => 'downtime', 'search' => $website->name]) }}" wire:navigate class="inline-flex items-center gap-1 text-xs font-medium text-accent-600 transition hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300">
+                            Lihat di Insiden
+                            <x-phosphor-arrow-square-out class="h-3.5 w-3.5" aria-hidden="true" />
+                        </a>
+                    @endif
+                @endcan
+            </div>
+
+            @if ($downtimes->isEmpty())
+                <div class="flex flex-col items-center gap-2 px-5 py-8 text-center">
+                    <x-phosphor-check-circle class="h-7 w-7 text-emerald-500/70" aria-hidden="true" />
+                    <p class="text-sm text-zinc-500 dark:text-zinc-400">Tidak ada downtime dalam 90 hari terakhir.</p>
+                </div>
+            @else
+                <ul class="max-h-[340px] divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800">
+                    @foreach ($downtimes as $downtime)
+                        @php
+                            $cause = $downtime['cause'] ?? null;
+                            $causeLabel = $cause ? ($errorLabels[$cause] ?? $cause) : null;
+                            $code = $downtime['status_code'] ?? null;
+                            $causeDetail = $downtime['cause_detail'] ?? null;
+                        @endphp
+                        <li wire:key="downtime-{{ $downtime['uuid'] }}" @class(['px-5 py-3', 'bg-red-50/50 dark:bg-red-500/5' => $downtime['ongoing']])>
+                            <div class="flex items-start justify-between gap-3">
+                                <p class="min-w-0 text-sm text-zinc-900 dark:text-white">
+                                    <span class="font-mono tabular-nums">{{ \App\Support\Dates::plain($downtime['started_at']) }}</span>
+                                    <span class="text-zinc-400">&rarr;</span>
+                                    @if ($downtime['ongoing'] || ! $downtime['ended_at'])
+                                        <span class="font-medium text-red-600 dark:text-red-400">Masih down</span>
+                                    @else
+                                        <span class="font-mono tabular-nums">{{ \App\Support\Dates::plain($downtime['ended_at']) }}</span>
+                                    @endif
+                                </p>
+                                <span @class([
+                                    'shrink-0 rounded-full px-2.5 py-0.5 font-mono text-xs font-semibold tabular-nums',
+                                    'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $downtime['ongoing'],
+                                    'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300' => ! $downtime['ongoing'],
+                                ])>{{ $fmtDuration((int) $downtime['duration_seconds']) }}</span>
+                            </div>
+                            @if ($causeLabel || ! $causeDetail)
+                                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                    Penyebab: {{ $causeLabel ?? 'Tidak diketahui' }}
+                                    @if ($code) &middot; <span class="font-mono">HTTP {{ $code }}</span>@endif
+                                </p>
+                            @endif
+                            @if ($causeDetail)
+                                {{-- Raw cURL/HTTP text: clipped to one line, full text on hover. --}}
+                                <p class="mt-0.5 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500" title="{{ $causeDetail }}">{{ \Illuminate\Support\Str::limit($causeDetail, 80) }}</p>
+                            @endif
+                        </li>
+                    @endforeach
+                </ul>
+            @endif
+        </section>
+
+        {{-- Recent checks, newest first --}}
+        <section class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+            <div class="{{ $cardHead }}">
+                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Pengecekan Terbaru</h2>
+                @if ($checks->isNotEmpty())
+                    <span class="text-xs text-zinc-500 dark:text-zinc-400">{{ $checks->count() }} terakhir</span>
+                @endif
+            </div>
+
+            @if ($checks->isEmpty())
+                <div class="flex flex-col items-center gap-2 px-5 py-8 text-center">
+                    <x-phosphor-list-checks class="h-7 w-7 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+                    <p class="text-sm text-zinc-500 dark:text-zinc-400">Belum ada data pengecekan.</p>
+                </div>
+            @else
+                {{-- relative: makes the list the containing block of the sr-only labels, so it
+                clips them - otherwise they escape the scroll box and add blank space under the footer. --}}
+                <ul class="relative max-h-[340px] divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800">
+                    @foreach ($checks->reverse() as $check)
+                        @php $errorType = $check->error_type; @endphp
+                        <li wire:key="check-{{ $check->id }}" class="flex items-center gap-3 px-5 py-2.5">
+                            <span @class(['h-2 w-2 shrink-0 rounded-full', 'bg-emerald-500' => $check->is_up, 'bg-red-500' => ! $check->is_up])>
+                                <span class="sr-only">{{ $check->is_up ? 'Up' : 'Down' }}</span>
+                            </span>
+                            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                                <span class="font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-300">{{ \App\Support\Dates::plain($check->checked_at) }}</span>
+                                @if ($errorType)
+                                    <span @class([
+                                        'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                                        'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' => $errorType === 'slow',
+                                        'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $errorType !== 'slow',
+                                    ])>{{ $errorLabels[$errorType] ?? $errorType }}</span>
+                                @elseif (! $check->is_up)
+                                    <span class="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">Gagal</span>
+                                @endif
+                            </div>
+                            <span @class([
+                                'shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums',
+                                'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' => $check->status_code && $check->status_code < 400,
+                                'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $check->status_code >= 400,
+                                'text-zinc-400 dark:text-zinc-500' => ! $check->status_code,
+                            ])>{{ $check->status_code ?: '-' }}</span>
+                            <span class="w-16 shrink-0 text-right font-mono text-xs tabular-nums text-zinc-900 dark:text-white">{{ $check->response_time_ms !== null ? number_format($check->response_time_ms).'ms' : '-' }}</span>
+                        </li>
+                    @endforeach
+                </ul>
+            @endif
+        </section>
     </div>
 
     {{-- min-w-0 on both cards: a grid item defaults to min-width:auto, so without it
@@ -168,7 +363,7 @@
                             these lines carry full page URLs and comma-joined keyword lists with
                             no spaces to wrap at, which is exactly what pushes the card wide. --}}
                             @if ($incident->description)
-                                <p class="mt-1.5 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->description }}</p>
+                                <p class="mt-1.5 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->displayDescription() }}</p>
                             @endif
                             {{-- e() on both halves, not a raw echo of the joined string: a judol
                             incident's "URL Halaman" is a URL the crawler read off the monitored
@@ -278,6 +473,165 @@
             Bersih menurut Google Safe Browsing, dicek {{ \App\Support\Dates::display($website->reputation_checked_at) }}.
         </p>
     @endif
+
+    {{-- Certificate, DNS & domain: everything here is read from $website, no extra queries. --}}
+    @php
+        // Calendar days in the app timezone - the same count the incident severity uses.
+        $daysLeft = fn ($date) => $date ? (int) now()->startOfDay()->diffInDays($date->copy()->timezone(config('app.timezone'))->startOfDay(), false) : null;
+        // Red when expired or $red days out, amber within $amber days.
+        $expiryTone = fn (?int $d, int $red, int $amber) => match (true) {
+            $d === null => 'text-zinc-400 dark:text-zinc-500',
+            $d <= $red => 'text-red-600 dark:text-red-400',
+            $d <= $amber => 'text-amber-600 dark:text-amber-400',
+            default => 'text-emerald-600 dark:text-emerald-400',
+        };
+        // [big, small] for the focal line.
+        $daysText = fn (int $d) => match (true) {
+            $d < 0 => ['Kedaluwarsa', abs($d).' hari lalu'],
+            $d === 0 => ['Hari ini', 'berakhir'],
+            default => [$d, 'hari lagi'],
+        };
+        $flag = fn (?bool $v, string $yes, string $no, string $unknown) => match ($v) {
+            true => [$yes, 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'],
+            false => [$no, 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'],
+            default => [$unknown, 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'],
+        };
+
+        $sslDays = $daysLeft($website->ssl_expires_at);
+        $domainDays = $daysLeft($website->domain_expires_at);
+        [$chainLabel, $chainTone] = $flag($website->ssl_chain_valid, 'Valid', 'Tidak valid', 'Tidak diketahui');
+        [$hostLabel, $hostTone] = $flag($website->ssl_hostname_match, 'Cocok', 'Tidak cocok', '-');
+        $dnsRecords = collect(['A', 'AAAA', 'CNAME', 'NS', 'MX'])
+            ->mapWithKeys(fn ($type) => [$type => (array) (($website->dns_records ?? [])[$type] ?? [])])
+            ->filter();
+        $sourceLabels = ['rdap' => 'RDAP', 'manual' => 'Manual'];
+    @endphp
+    <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+        <div class="px-5 py-4">
+            <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Sertifikat, DNS &amp; Domain</h2>
+            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Kapan sertifikat dan domain habis, dan ke mana nama domain ini mengarah saat terakhir dicek.</p>
+        </div>
+
+        <div class="grid divide-y divide-zinc-100 border-t border-zinc-100 lg:grid-cols-3 lg:divide-x lg:divide-y-0 dark:divide-zinc-800 dark:border-zinc-800">
+            {{-- Certificate --}}
+            <div class="min-w-0 px-5 py-4">
+                <p class="flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    <x-phosphor-certificate class="h-4 w-4 shrink-0" />
+                    Sertifikat SSL
+                </p>
+
+                @if (! $website->ssl_checked_at && ! $website->ssl_expires_at && ! $website->ssl_error)
+                    <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Belum dicek.</p>
+                @else
+                    @if ($sslDays !== null)
+                        @php [$sslBig, $sslSmall] = $daysText($sslDays); @endphp
+                        <p class="mt-2 font-mono text-2xl font-semibold tabular-nums {{ $expiryTone($sslDays, (int) config('monitoring.ssl.critical_days'), (int) config('monitoring.ssl.warning_days')) }}">
+                            {{ $sslBig }}<span class="ml-1.5 font-sans text-sm font-normal">{{ $sslSmall }}</span>
+                        </p>
+                        <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Berlaku sampai {{ \App\Support\Dates::display($website->ssl_expires_at) }}</p>
+                    @endif
+
+                    @if ($website->ssl_error)
+                        <p class="mt-3 flex items-start gap-1.5 break-words rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">
+                            <x-phosphor-warning-circle class="mt-px h-3.5 w-3.5 shrink-0" />
+                            <span class="min-w-0">{{ $website->ssl_error }}</span>
+                        </p>
+                    @endif
+
+                    <dl class="mt-3 space-y-2 text-xs">
+                        <div class="flex items-start justify-between gap-3">
+                            <dt class="shrink-0 text-zinc-500 dark:text-zinc-400">Penerbit</dt>
+                            <dd class="min-w-0 break-words text-right font-medium text-zinc-900 dark:text-white">{{ $website->ssl_issuer ?: '-' }}</dd>
+                        </div>
+                        <div class="flex items-center justify-between gap-3">
+                            <dt class="text-zinc-500 dark:text-zinc-400">Rantai sertifikat</dt>
+                            <dd><span class="rounded-full px-2 py-0.5 text-[11px] font-medium {{ $chainTone }}">{{ $chainLabel }}</span></dd>
+                        </div>
+                        <div class="flex items-center justify-between gap-3">
+                            <dt class="text-zinc-500 dark:text-zinc-400">Nama host</dt>
+                            <dd><span class="rounded-full px-2 py-0.5 text-[11px] font-medium {{ $hostTone }}">{{ $hostLabel }}</span></dd>
+                        </div>
+                        @if ($website->ssl_hostname_match === false && $website->ssl_names)
+                            @php $sanNames = collect($website->ssl_names); @endphp
+                            <div>
+                                <dt class="text-zinc-500 dark:text-zinc-400">Sertifikat berlaku untuk</dt>
+                                <dd class="mt-1 flex flex-wrap gap-1">
+                                    @foreach ($sanNames->take(5) as $san)
+                                        <span class="max-w-full break-all rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{{ $san }}</span>
+                                    @endforeach
+                                    @if ($sanNames->count() > 5)
+                                        <span class="px-1 py-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">+{{ $sanNames->count() - 5 }} lainnya</span>
+                                    @endif
+                                </dd>
+                            </div>
+                        @endif
+                        <div class="flex items-start justify-between gap-3">
+                            <dt class="shrink-0 text-zinc-500 dark:text-zinc-400">Terakhir dicek</dt>
+                            <dd class="text-right text-zinc-700 dark:text-zinc-300">{{ $website->ssl_checked_at ? \App\Support\Dates::display($website->ssl_checked_at) : '-' }}</dd>
+                        </div>
+                    </dl>
+                @endif
+            </div>
+
+            {{-- DNS --}}
+            <div class="min-w-0 px-5 py-4">
+                <p class="flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    <x-phosphor-tree-structure class="h-4 w-4 shrink-0" />
+                    Rekaman DNS
+                    @if ($website->dns_ip_rotates)
+                        <span title="Perubahan IP A/AAAA jadi peringatan, bukan kritis." class="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">IP berganti-ganti</span>
+                    @endif
+                </p>
+
+                @if ($dnsRecords->isEmpty())
+                    <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Belum dicek.</p>
+                @else
+                    <dl class="mt-3 space-y-2.5">
+                        @foreach ($dnsRecords as $type => $values)
+                            <div class="flex items-start gap-3">
+                                <dt class="w-12 shrink-0 pt-0.5 font-mono text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">{{ $type }}</dt>
+                                <dd class="flex min-w-0 flex-1 flex-wrap gap-1">
+                                    @foreach ($values as $value)
+                                        <span class="max-w-full break-all rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{{ $value }}</span>
+                                    @endforeach
+                                </dd>
+                            </div>
+                        @endforeach
+                    </dl>
+                @endif
+
+                @if ($website->dns_checked_at)
+                    <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Dicek {{ \App\Support\Dates::display($website->dns_checked_at) }}</p>
+                @endif
+            </div>
+
+            {{-- Domain --}}
+            <div class="min-w-0 px-5 py-4">
+                <p class="flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    <x-phosphor-globe-simple class="h-4 w-4 shrink-0" />
+                    Masa Berlaku Domain
+                    @if ($sourceLabel = $sourceLabels[$website->domain_expiry_source] ?? null)
+                        <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ $sourceLabel }}</span>
+                    @endif
+                </p>
+
+                @if ($domainDays === null)
+                    <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Belum dicek.</p>
+                    <p class="mt-1 text-xs text-zinc-400 dark:text-zinc-500">Registri tanpa RDAP (mis. .id) perlu diisi manual lewat Edit situs.</p>
+                @else
+                    @php [$domainBig, $domainSmall] = $daysText($domainDays); @endphp
+                    <p class="mt-2 font-mono text-2xl font-semibold tabular-nums {{ $expiryTone($domainDays, (int) config('monitoring.domain.critical_days', 3), (int) config('monitoring.domain.warning_days')) }}">
+                        {{ $domainBig }}<span class="ml-1.5 font-sans text-sm font-normal">{{ $domainSmall }}</span>
+                    </p>
+                    <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Berlaku sampai {{ $website->domain_expires_at->translatedFormat('d M Y') }}</p>
+                @endif
+
+                @if ($website->domain_checked_at)
+                    <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Dicek {{ \App\Support\Dates::display($website->domain_checked_at) }}</p>
+                @endif
+            </div>
+        </div>
+    </div>
 
     {{-- Security posture --}}
     <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">

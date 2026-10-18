@@ -12,8 +12,10 @@ use App\Models\WebsiteCheck;
 use App\Services\Monitoring\DashboardOverview;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Defer\DeferredCallbackCollection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -140,9 +142,16 @@ class DashboardOverviewTest extends TestCase
         // ...a different range is a different key...
         $this->assertSame(200, $this->overview()->performance('1h', $a->id)['avg_ms']);
 
-        // ...and after the TTL it is.
+        // ...past the TTL the stale value is served once while a deferred refresh runs...
         $this->travel(61)->seconds();
+        $this->assertSame(100, $this->overview()->performance('24h', $a->id)['avg_ms']);
+        app(DeferredCallbackCollection::class)->invoke();
         $this->assertSame(200, $this->overview()->performance('24h', $a->id)['avg_ms']);
+
+        // ...and past 2x TTL (no stale copy left) it is recomputed inline.
+        $this->check($b, true, 100, now());
+        $this->travel(61)->seconds();
+        $this->assertSame(500, $this->overview()->performance('24h', $b->id)['avg_ms']);
     }
 
     // --- Summary -----------------------------------------------------------
@@ -349,9 +358,24 @@ class DashboardOverviewTest extends TestCase
 
         $this->assertNull($component->instance()->selectedWebsite);
 
-        // Setting the public property directly (bypassing selectWebsite) must not crash either.
-        $component = $component->set('selectedWebsiteUuid', 'not-a-uuid')->assertOk()->assertSee('Semua situs');
+        $component->call('selectWebsite', '')->assertSet('selectedWebsiteUuid', null);
         $this->assertNull($component->instance()->selectedWebsite);
+    }
+
+    public function test_the_selected_uuid_cannot_be_set_directly_from_the_client(): void
+    {
+        $website = Website::factory()->create();
+        $component = Livewire::actingAs(User::factory()->create())->test(Dashboard::class);
+
+        try {
+            $component->set('selectedWebsiteUuid', $website->uuid);
+            $this->fail('A locked property accepted a client update.');
+        } catch (CannotUpdateLockedPropertyException) {
+            // expected
+        }
+
+        $component->assertSet('selectedWebsiteUuid', null);
+        $component->call('selectWebsite', $website->uuid)->assertSet('selectedWebsiteUuid', $website->uuid);
     }
 
     // --- Model helpers -----------------------------------------------------
@@ -413,11 +437,166 @@ class DashboardOverviewTest extends TestCase
         // Baseline = the 10 checks before the latest (300ms), so 900ms is 3x -> heavy.
         $this->assertSame('heavy', $levels[$windowed->id]['level']);
         $this->assertSame(900, $levels[$windowed->id]['response_time_ms']);
-        // $windowed is left out of parity: loadBaseline() applies LIMIT after AVG() and
-        // so averages every check (reported as a bug), while the bulk path is bounded.
-        foreach ([$mixed, $failedLast, $unchecked] as $website) {
+        foreach ([$windowed, $mixed, $failedLast, $unchecked] as $website) {
             $this->assertSame($website->loadLevel(), $levels[$website->id]['level'], "website {$website->id}");
         }
+    }
+
+    public function test_the_per_record_load_level_matches_the_bulk_one_and_bounds_its_baseline(): void
+    {
+        // Old repro: AVG() before LIMIT averaged all 25 prior checks (640ms), grading 900ms as light.
+        $site = Website::factory()->create(['last_status' => 'up']);
+        $at = now()->subHours(5);
+        foreach (range(1, 15) as $i) {
+            $this->check($site, true, 1000, $at = $at->copy()->addMinutes(5));
+        }
+        foreach (range(1, 10) as $i) {
+            $this->check($site, true, 300, $at = $at->copy()->addMinutes(5));
+        }
+        $latest = $this->check($site, true, 900, $at->copy()->addMinutes(5));
+        // Outside the ranked window: must not count toward either path.
+        $this->check($site, true, 5, now()->subDays(WebsiteCheck::RANKED_WINDOW_DAYS)->subHour());
+
+        $this->assertSame(300.0, $site->loadBaseline($latest->id));
+        $this->assertSame('heavy', $site->loadLevel());
+        $this->assertSame('heavy', Website::loadLevels([$site])[$site->id]['level']);
+
+        // Same checked_at: the higher id is the latest in both paths.
+        $tied = Website::factory()->create(['last_status' => 'up']);
+        $at = now()->subHour();
+        foreach (range(1, 10) as $i) {
+            $this->check($tied, true, 300, $at = $at->copy()->addMinutes(5));
+        }
+        $tieAt = $at->copy()->addMinutes(5);
+        $this->check($tied, true, 300, $tieAt);
+        $this->check($tied, true, 1200, $tieAt);
+
+        $this->assertSame('heavy', $tied->loadLevel());
+        $this->assertSame(Website::loadLevels([$tied])[$tied->id]['level'], $tied->loadLevel());
+
+        // Only checks older than the window: unknown in both paths.
+        $stale = Website::factory()->create(['last_status' => 'up']);
+        $this->check($stale, true, 300, now()->subDays(WebsiteCheck::RANKED_WINDOW_DAYS + 1));
+
+        $this->assertSame('unknown', $stale->loadLevel());
+        $this->assertNull($stale->loadBaseline());
+        $this->assertSame('unknown', Website::loadLevels([$stale])[$stale->id]['level']);
+    }
+
+    // --- Real-time snapshot cache -----------------------------------------
+
+    public function test_the_realtime_snapshot_is_shared_for_15_seconds_without_requerying_checks(): void
+    {
+        $user = User::factory()->create();
+        $site = Website::factory()->create(['name' => 'First', 'last_status' => 'up']);
+        $this->check($site, true, 200, now()->subMinute());
+
+        Livewire::actingAs($user)->test(Dashboard::class)->assertSee('First');
+        Website::factory()->create(['name' => 'Second', 'last_status' => 'up']);
+
+        $this->travel(10)->seconds();
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $component = Livewire::actingAs(User::factory()->create())->test(Dashboard::class)->assertOk();
+        $queries = collect(DB::getQueryLog())->pluck('query');
+        DB::disableQueryLog();
+
+        $this->assertFalse(
+            $queries->contains(fn (string $sql) => str_contains($sql, 'website_checks')),
+            "website_checks queried within the TTL:\n".$queries->implode("\n"),
+        );
+        $this->assertSame(1, $component->instance()->summary['total']);
+        $component->assertDontSee('Second');
+
+        // Beyond 2x TTL there is no stale copy left, so the next render rebuilds it.
+        $this->travel(DashboardOverview::REALTIME_TTL * 2)->seconds();
+        $fresh = Livewire::actingAs($user)->test(Dashboard::class)->assertSee('Second');
+        $this->assertSame(2, $fresh->instance()->summary['total']);
+    }
+
+    public function test_the_shared_realtime_snapshot_holds_no_user_or_permission_data(): void
+    {
+        $website = Website::factory()->create(['name' => 'Shared Site', 'last_status' => 'up']);
+        $user = User::factory()->create(['name' => 'Secret Viewer Name']);
+
+        Livewire::actingAs($user)->test(Dashboard::class)->assertOk();
+
+        $cached = Cache::get('dashboard:realtime');
+        $this->assertIsArray($cached);
+        $this->assertSame(['summary', 'live_sites', 'load_counts'], array_keys($cached));
+        $this->assertSame(
+            ['uuid', 'name', 'url', 'status_key', 'status_label', 'load_level', 'history', 'last_checked_at'],
+            array_keys($cached['live_sites'][0]),
+        );
+        $this->assertSame($website->uuid, $cached['live_sites'][0]['uuid']);
+
+        $serialized = serialize($cached);
+        $this->assertStringNotContainsString($user->email, $serialized);
+        $this->assertStringNotContainsString('Secret Viewer Name', $serialized);
+        $this->assertStringNotContainsString(route('situs.show', $website->uuid), $serialized);
+    }
+
+    // --- Range payload hardening ------------------------------------------
+
+    public function test_an_array_or_nested_range_payload_is_rejected_with_422(): void
+    {
+        $user = User::factory()->create();
+
+        foreach ([['7d'], ['a' => 'b']] as $payload) {
+            Livewire::actingAs($user)->test(Dashboard::class)
+                ->set('range', $payload)
+                ->assertStatus(422);
+        }
+
+        Livewire::actingAs($user)->test(Dashboard::class)
+            ->set('range.foo', '7d')
+            ->assertStatus(422);
+    }
+
+    public function test_a_non_string_scalar_range_falls_back_to_24h(): void
+    {
+        $user = User::factory()->create();
+
+        foreach ([5, 1.5, true, false] as $payload) {
+            Livewire::actingAs($user)->test(Dashboard::class)
+                ->set('range', '7d')
+                ->set('range', $payload)
+                ->assertOk()
+                ->assertSet('range', '24h');
+        }
+
+        Livewire::actingAs($user)->test(Dashboard::class)->set('range', '30d')->assertSet('range', '30d');
+    }
+
+    // --- Incident visibility ----------------------------------------------
+
+    public function test_incident_panels_and_kpi_are_hidden_without_insiden_view(): void
+    {
+        $website = Website::factory()->create();
+        Incident::create([
+            'website_id' => $website->id, 'type' => 'downtime', 'severity' => 'critical',
+            'title' => 'Hidden incident title', 'status' => 'open', 'detected_at' => now(),
+        ]);
+
+        $without = Role::factory()->withPermissions(['dashboard.view'])->create();
+        Livewire::actingAs(User::factory()->create(['role_id' => $without->id]))
+            ->test(Dashboard::class)
+            ->assertOk()
+            ->assertSee('Judol baru')
+            ->assertDontSee('Insiden terbuka')
+            ->assertDontSee('Insiden Belum Selesai')
+            ->assertDontSee('Insiden Terbaru')
+            ->assertDontSee('Hidden incident title');
+
+        $with = Role::factory()->withPermissions(['dashboard.view', 'insiden.view'])->create();
+        Livewire::actingAs(User::factory()->create(['role_id' => $with->id]))
+            ->test(Dashboard::class)
+            ->assertOk()
+            ->assertSee('Insiden terbuka')
+            ->assertSee('Insiden Belum Selesai')
+            ->assertSee('Insiden Terbaru')
+            ->assertSee('Hidden incident title')
+            ->assertSee(route('insiden', ['status' => 'open']), escape: false);
     }
 
     // --- Authorization -----------------------------------------------------

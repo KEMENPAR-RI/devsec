@@ -11,6 +11,7 @@ use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
+use App\Notifications\AttackAnomalyDetected;
 use App\Notifications\WebsiteDownNotification;
 use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
+use ReflectionMethod;
 use Tests\TestCase;
 
 class WebsiteMonitoringTest extends TestCase
@@ -108,6 +110,65 @@ class WebsiteMonitoringTest extends TestCase
         $website->refresh();
         $this->assertSame('down', $website->last_status);
         $this->assertSame(1, Incident::where('website_id', $website->id)->where('type', 'downtime')->count());
+    }
+
+    /** Runs the protected spike detector against an already-stored check. */
+    protected function detectSpike(Website $website, int $ms): void
+    {
+        $check = $website->checks()->create([
+            'is_up' => true, 'status_code' => 200, 'response_time_ms' => $ms, 'checked_at' => now(),
+        ]);
+
+        $method = new ReflectionMethod(WebsiteChecker::class, 'detectResponseTimeAnomaly');
+        $method->invoke(new WebsiteChecker, $website, $check);
+    }
+
+    public function test_the_spike_baseline_is_the_last_ten_successful_checks_not_all_history(): void
+    {
+        NotificationFacade::fake();
+        Http::fake();
+        $website = Website::factory()->create();
+        $at = now()->subHours(3);
+        // 15 old slow checks + 10 recent fast ones: an unbounded AVG() reads 640ms and misses the spike.
+        foreach ([...array_fill(0, 15, 1000), ...array_fill(0, 10, 100)] as $ms) {
+            $website->checks()->create([
+                'is_up' => true, 'status_code' => 200, 'response_time_ms' => $ms,
+                'checked_at' => $at = $at->copy()->addMinutes(5),
+            ]);
+            // Failed checks in between are not part of the baseline.
+            $website->checks()->create([
+                'is_up' => false, 'status_code' => null, 'response_time_ms' => 30000,
+                'checked_at' => $at->copy()->addMinute(),
+            ]);
+        }
+
+        $this->detectSpike($website, 400);
+
+        $incident = Incident::where('website_id', $website->id)->where('type', 'attack')->sole();
+        $this->assertSame('response_time_spike', $incident->meta['reason']);
+        $this->assertSame(100, $incident->meta['baseline_ms']);
+        $this->assertSame(400, $incident->meta['response_time_ms']);
+        NotificationFacade::assertSentTimes(AttackAnomalyDetected::class, User::count());
+    }
+
+    public function test_a_check_under_three_times_the_recent_baseline_is_not_a_spike(): void
+    {
+        NotificationFacade::fake();
+        Http::fake();
+        $website = Website::factory()->create();
+        $at = now()->subHours(3);
+        foreach ([...array_fill(0, 15, 50), ...array_fill(0, 10, 100)] as $ms) {
+            $website->checks()->create([
+                'is_up' => true, 'status_code' => 200, 'response_time_ms' => $ms,
+                'checked_at' => $at = $at->copy()->addMinutes(5),
+            ]);
+        }
+
+        // 3x the last-10 baseline (100ms) is 300ms; an unbounded average (70ms) would flag 250ms.
+        $this->detectSpike($website, 250);
+
+        $this->assertSame(0, Incident::where('website_id', $website->id)->where('type', 'attack')->count());
+        NotificationFacade::assertNothingSent();
     }
 
     /**

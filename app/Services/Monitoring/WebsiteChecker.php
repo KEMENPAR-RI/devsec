@@ -15,6 +15,13 @@ use App\Notifications\WebsiteRecoveredNotification;
 use App\Services\Notifications\MailSettings;
 use App\Services\Notifications\WebhookNotifier;
 use App\Services\Security\OutboundUrlGuard;
+use Carbon\CarbonInterface;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\FnStream;
+use GuzzleHttp\Psr7\Utils as Psr7Utils;
+use GuzzleHttp\TransferStats;
+use GuzzleHttp\Utils as GuzzleUtils;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Notifications\Notification as NotificationClass;
 use Illuminate\Support\Carbon;
@@ -22,6 +29,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
+use Psr\Http\Message\RequestInterface;
 use RuntimeException;
 use Throwable;
 
@@ -31,27 +39,42 @@ use Throwable;
  */
 class WebsiteChecker
 {
-    /**
-     * How far ahead a domain expiry is worth shouting about.
-     *
-     * Longer than the 14 days used for TLS, on purpose: a certificate can be
-     * reissued in minutes, while renewing a .go.id domain runs through a
-     * procurement process that does not move in a fortnight.
-     */
-    public const DOMAIN_WARNING_DAYS = 45;
+    // Body bytes kept per response; only hashed and measured here, so 2 MB is plenty.
+    public const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+    // Slack on top of the per-attempt timeout shared by retries and the SSL fallback.
+    public const DEADLINE_MARGIN_SECONDS = 5;
+
+    // Less time than this left is not worth another attempt.
+    public const MIN_ATTEMPT_SECONDS = 5;
+
+    // cURL errnos for TLS/certificate failures: 35, 51, 58, 60, 77, 83.
+    public const TLS_ERRNOS = [35, 51, 58, 60, 77, 83];
+
+    // Transfer time of the current attempt (summed over its redirect hops), from handler stats.
+    protected ?float $transferSeconds = null;
+
+    // End of the current check's total budget, across retries and the SSL fallback.
+    protected ?CarbonInterface $deadline = null;
+
+    // Shared across one run so RDAP lookups are deduped per apex.
+    protected ?DomainExpiry $domainExpiry = null;
 
     public function check(Website $website): WebsiteCheck
     {
+        $startedAt = now();
         $start = microtime(true);
+        $this->transferSeconds = null;
 
         $isUp = false;
         $statusCode = null;
         $contentHash = null;
         $contentLength = null;
         $errorMessage = null;
+        $errorType = null;
 
         try {
-            $response = $this->fetchWithSslFallback($website->url);
+            $response = $this->fetchWithSslFallback($website->url, $this->timeoutFor($website));
 
             $statusCode = $response->status();
             $body = $response->body();
@@ -61,12 +84,15 @@ class WebsiteChecker
 
             if (! $isUp) {
                 $errorMessage = "HTTP {$statusCode}";
+                $errorType = 'http';
             }
         } catch (Throwable $e) {
             $errorMessage = $e->getMessage();
+            $errorType = $this->errorTypeFor($e);
         }
 
-        $responseTimeMs = (int) round((microtime(true) - $start) * 1000);
+        // Final attempt only; wall clock is the fallback when no stats exist (faked client).
+        $responseTimeMs = (int) round(($this->transferSeconds ?? (microtime(true) - $start)) * 1000);
 
         // A response that arrives past the site's own acceptable-latency threshold is
         // treated the same as no response at all: for practical purposes the site is
@@ -75,6 +101,7 @@ class WebsiteChecker
         if ($isUp && $responseTimeMs > $website->response_time_threshold_ms) {
             $isUp = false;
             $errorMessage = "Response time {$responseTimeMs}ms melebihi ambang batas {$website->response_time_threshold_ms}ms";
+            $errorType = 'slow';
         }
 
         // Recorded either way: the uptime history has to stay honest through a
@@ -89,6 +116,7 @@ class WebsiteChecker
             'content_hash' => $contentHash,
             'content_length' => $contentLength,
             'error_message' => $errorMessage,
+            'error_type' => $errorType,
             'checked_at' => now(),
         ]);
 
@@ -99,10 +127,25 @@ class WebsiteChecker
         if ($isUp && ! $underMaintenance) {
             $this->detectResponseTimeAnomaly($website, $check);
             $this->detectContentAnomaly($website, $check);
-            $this->maybeCheckSsl($website);
         }
 
-        $website->update(['last_checked_at' => now()]);
+        // Also when the handshake itself failed: the inspector says why.
+        if (($isUp || $errorType === 'ssl') && ! $underMaintenance) {
+            // Must not cost the check its last_checked_at (bad cert encoding, SMTP down).
+            try {
+                $this->maybeCheckSsl($website);
+            } catch (Throwable $e) {
+                Log::warning("WebsiteChecker: cek SSL gagal untuk {$website->url}: {$e->getMessage()}");
+            }
+        }
+
+        // A failed lookup is no drift evidence, and retrying it every minute is just resolver load.
+        if (! $underMaintenance && $errorType !== 'dns') {
+            $this->detectIpDrift($website);
+        }
+
+        // Start time, not end time, so the check interval does not drift by the probe's duration.
+        $website->update(['last_checked_at' => $startedAt]);
 
         return $check;
     }
@@ -117,8 +160,11 @@ class WebsiteChecker
      * @throws Throwable when both the initial attempt and (if applicable) the
      *                   no-verify retry fail
      */
-    protected function fetchWithSslFallback(string $url)
+    protected function fetchWithSslFallback(string $url, int $timeout = 20)
     {
+        // Started before the guard: its DNS lookup counts against the check's budget.
+        $this->deadline = now()->addSeconds($timeout + self::DEADLINE_MARGIN_SECONDS);
+
         // Refused before the socket opens: a stored URL can point somewhere it was
         // never allowed to (added before this guard existed, or repointed by DNS).
         if ($reason = OutboundUrlGuard::reason($url)) {
@@ -126,10 +172,14 @@ class WebsiteChecker
         }
 
         try {
-            return $this->httpClient()->get($url);
+            return $this->httpClient(timeout: $timeout)->get($url);
         } catch (Throwable $e) {
-            if (str_starts_with($url, 'https://') && Str::contains(Str::lower($e->getMessage()), ['ssl', 'certificate'])) {
-                $response = $this->httpClient(verifySsl: false)->get($url);
+            // errno, not message text: the message also carries the URL. Skipped once the budget is spent.
+            $remaining = $this->remainingSeconds();
+
+            if (str_starts_with($url, 'https://') && in_array($this->curlErrno($e), self::TLS_ERRNOS, true) && $remaining >= self::MIN_ATTEMPT_SECONDS) {
+                $this->transferSeconds = null;
+                $response = $this->httpClient(verifySsl: false, timeout: min($timeout, $remaining))->get($url);
                 Log::warning("WebsiteChecker: {$url} diambil tanpa verifikasi SSL (curl tidak memercayai sertifikatnya, padahal browser biasa menerimanya).");
 
                 return $response;
@@ -145,7 +195,7 @@ class WebsiteChecker
      * (handles a transient blip - e.g. a slow TLS handshake - without immediately
      * counting it as a failed check).
      */
-    protected function httpClient(bool $verifySsl = true): PendingRequest
+    protected function httpClient(bool $verifySsl = true, int|float $timeout = 20): PendingRequest
     {
         return Http::withHeaders([
             'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
@@ -154,12 +204,19 @@ class WebsiteChecker
         ])
             // httpOptions() caps redirects and re-checks each hop's address, so a
             // 302 cannot land somewhere the guard above already refused.
-            ->withOptions(['verify' => $verifySsl] + OutboundUrlGuard::httpOptions())
-            // 20s hard ceiling - comfortably above the 15s default response_time_threshold_ms
-            // (see the websites table default) so a legitimately slow-but-reachable site
-            // (common for shared-hosting government/institutional sites) gets counted as a
-            // real, measured "down due to slow response" rather than an opaque connection timeout.
-            ->timeout(20)
+            ->withOptions([
+                'verify' => $verifySsl,
+                'on_stats' => function (TransferStats $stats): void {
+                    // Faked responses carry no transfer time; check() then falls back to the wall clock.
+                    if ($stats->getTransferTime() !== null) {
+                        $this->transferSeconds = ($this->transferSeconds ?? 0.0) + $stats->getTransferTime();
+                    }
+                },
+            ] + OutboundUrlGuard::httpOptions())
+            ->setHandler($this->cappedBodyHandler())
+            // Derived from the site's threshold (see timeoutFor()) so a slow-but-reachable
+            // site is measured as "slow" rather than cut off as an opaque timeout.
+            ->timeout($timeout)
             // 10s to connect, not less. The sites monitored here are mostly
             // government/institutional ones on shared hosting, where a TLS
             // handshake routinely takes longer than a commodity host would: at 5s
@@ -174,7 +231,126 @@ class WebsiteChecker
             // dot on the dashboard and, past down_threshold_failures, a downtime
             // incident and an email to every admin. The cost of a retry is one more
             // request; the cost of skipping it is a false alarm.
-            ->retry(2, 300, throw: false);
+            //
+            // A timeout is not retried: it already waited the full budget, and the
+            // next scheduled check (one minute later while unconfirmed) verifies it.
+            // Nor is anything retried once the check's total budget is spent.
+            // A TLS error is deterministic: its budget goes to the no-verify fallback instead.
+            // Laravel passes null for a 3xx without Location (e.g. 304): that is a response, not a failure.
+            ->retry(2, function (): int {
+                $this->transferSeconds = null;
+
+                return 300;
+            }, fn (?Throwable $e, PendingRequest $request): bool => $e !== null
+                && ! $this->isTimeout($e)
+                && ! in_array($this->curlErrno($e), self::TLS_ERRNOS, true)
+                && $this->fitsBudget($request, $timeout), throw: false);
+    }
+
+    /** Whether another attempt fits the check's deadline; if so, caps its timeout to the time left. */
+    protected function fitsBudget(PendingRequest $request, int|float $timeout): bool
+    {
+        $remaining = $this->remainingSeconds();
+
+        if ($remaining < self::MIN_ATTEMPT_SECONDS) {
+            return false;
+        }
+
+        $request->timeout(min($timeout, $remaining));
+
+        return true;
+    }
+
+    /** Seconds left before the current check's deadline; unbounded outside a check. */
+    protected function remainingSeconds(): float
+    {
+        return $this->deadline ? now()->diffInMilliseconds($this->deadline) / 1000 : INF;
+    }
+
+    /** cURL errno from the underlying Guzzle exception, if any. */
+    protected function curlErrno(Throwable $e): ?int
+    {
+        for ($current = $e; $current; $current = $current->getPrevious()) {
+            if ($current instanceof ConnectException || $current instanceof RequestException) {
+                $errno = $current->getHandlerContext()['errno'] ?? null;
+
+                return is_numeric($errno) ? (int) $errno : null;
+            }
+        }
+
+        return null;
+    }
+
+    /** clamp(threshold + 5s, 10s, 30s): long enough to measure "slow", short enough for the worker. */
+    protected function timeoutFor(Website $website): int
+    {
+        return (int) min(30, max(10, ceil($website->response_time_threshold_ms / 1000) + 5));
+    }
+
+    /**
+     * The default Guzzle handler, but each response body is buffered only up to
+     * MAX_BODY_BYTES: the rest is acknowledged and dropped, so curl still finishes
+     * normally and a huge page cannot exhaust the worker's memory. Below
+     * RedirectMiddleware, so every hop is also pinned to its vetted IPs.
+     */
+    protected function cappedBodyHandler(?callable $handler = null): callable
+    {
+        // $handler only for tests that must reach a local server.
+        $handler ??= OutboundUrlGuard::pinningHandler(GuzzleUtils::chooseHandler());
+
+        return function (RequestInterface $request, array $options) use ($handler) {
+            $buffer = Psr7Utils::streamFor('');
+            $written = 0;
+
+            $options['sink'] = FnStream::decorate($buffer, [
+                'write' => function (string $data) use ($buffer, &$written): int {
+                    if ($written < self::MAX_BODY_BYTES) {
+                        $written += $buffer->write(substr($data, 0, self::MAX_BODY_BYTES - $written));
+                    }
+
+                    return strlen($data);
+                },
+            ]);
+
+            return $handler($request, $options);
+        };
+    }
+
+    protected function isTimeout(Throwable $e): bool
+    {
+        // errno first: the message also carries the URL; text only when no errno exists (e.g. faked).
+        if ($errno = $this->curlErrno($e)) {
+            return $errno === 28;
+        }
+
+        return str_contains($e->getMessage(), 'cURL error 28') || Str::contains(Str::lower($e->getMessage()), 'timed out');
+    }
+
+    /** Coarse failure class for website_checks.error_type, read off the transport error. */
+    protected function errorTypeFor(Throwable $e): string
+    {
+        // OutboundUrlGuard refusals (up front or on a redirect hop) are bare RuntimeExceptions.
+        if ($e::class === RuntimeException::class) {
+            return 'blocked';
+        }
+
+        if ($errno = $this->curlErrno($e)) {
+            return match (true) {
+                $errno === 28 => 'timeout',
+                $errno === 6 => 'dns',
+                in_array($errno, self::TLS_ERRNOS, true) => 'ssl',
+                default => 'connect',
+            };
+        }
+
+        $message = Str::lower($e->getMessage());
+
+        return match (true) {
+            $this->isTimeout($e) => 'timeout',
+            Str::contains($message, ['curl error 6:', 'could not resolve']) => 'dns',
+            Str::contains($message, ['ssl', 'certificate', 'tls']) => 'ssl',
+            default => 'connect',
+        };
     }
 
     protected function handleUpDown(Website $website, WebsiteCheck $check, bool $underMaintenance = false): void
@@ -183,12 +359,32 @@ class WebsiteChecker
             $website->increment('consecutive_failures');
             $website->refresh();
 
-            if ($website->last_status !== 'down' && $website->consecutive_failures >= $website->down_threshold_failures) {
-                $website->update(['last_status' => 'down']);
+            if ($website->consecutive_failures >= $website->down_threshold_failures) {
+                $wasDown = $website->last_status === 'down';
+
+                if (! $wasDown) {
+                    $website->update(['last_status' => 'down']);
+                }
 
                 // Scheduled: the state is recorded, but nobody is woken up for an
                 // outage they arranged themselves.
                 if ($underMaintenance) {
+                    return;
+                }
+
+                // Already down: an offline-paused site is left alone so a deploy cannot flood admins.
+                if ($wasDown && $website->isPausedForOffline()) {
+                    return;
+                }
+
+                $firstFailedAt = $this->streakStartedAt($website, $check);
+
+                // Already down: only an outage with no incident yet (it began in a maintenance
+                // window) gets one; an open or hand-resolved incident of this streak is enough.
+                if ($wasDown && $website->incidents()
+                    ->where('type', 'downtime')
+                    ->where(fn ($q) => $q->open()->orWhere('detected_at', '>=', $firstFailedAt))
+                    ->exists()) {
                     return;
                 }
 
@@ -204,9 +400,11 @@ class WebsiteChecker
                     'title' => "{$website->name} tidak dapat diakses",
                     'description' => $check->error_message ?? 'Website gagal merespons pada beberapa kali percobaan berturut-turut.',
                     'meta' => [
+                        'first_failed_at' => $firstFailedAt->toIso8601String(),
                         'consecutive_failures' => $website->consecutive_failures,
                         'status_code' => $check->status_code,
                         'error_message' => $check->error_message,
+                        'error_type' => $check->error_type,
                         ...($diagnosis ? [
                             'likely_cause' => $diagnosis['cause'],
                             'cause_evidence' => $diagnosis['evidence'],
@@ -232,17 +430,32 @@ class WebsiteChecker
             $website->update(['last_status' => 'up', 'consecutive_failures' => 0]);
 
             $incident = $website->incidents()->open()->where('type', 'downtime')->latest('detected_at')->first();
-            $incident?->resolve();
 
-            // A "pulih" email for an outage nobody was told about is just noise.
-            if (! $underMaintenance) {
-                $this->notifyAdmins(new WebsiteRecoveredNotification($website, $incident));
+            // No incident resolved means nobody was told about an outage: a "pulih" email is noise.
+            if ($incident) {
+                $incident->resolve();
+
+                if (! $underMaintenance) {
+                    $this->notifyAdmins(new WebsiteRecoveredNotification($website, $incident));
+                }
             }
         } elseif ($website->consecutive_failures > 0) {
             $website->update(['consecutive_failures' => 0, 'last_status' => 'up']);
         } elseif ($website->last_status === 'unknown') {
             $website->update(['last_status' => 'up']);
         }
+    }
+
+    /** When the current failure streak began: the oldest of the last consecutive_failures checks. */
+    protected function streakStartedAt(Website $website, WebsiteCheck $check): CarbonInterface
+    {
+        $checkedAt = $website->checks()
+            ->latest('checked_at')
+            ->latest('id')
+            ->offset(max($website->consecutive_failures - 1, 0))
+            ->value('checked_at');
+
+        return $checkedAt ? Carbon::parse($checkedAt) : $check->checked_at;
     }
 
     /**
@@ -258,7 +471,8 @@ class WebsiteChecker
             ->where('id', '!=', $check->id)
             ->latest('checked_at')
             ->limit(10)
-            ->avg('response_time_ms');
+            ->pluck('response_time_ms')
+            ->avg();
 
         if (! $recentAverage || $recentAverage < 50) {
             return;
@@ -333,24 +547,193 @@ class WebsiteChecker
 
         $website->update(['ssl_checked_at' => now()]);
 
-        $expiresAt = $this->certificateExpiryDate($website->url);
+        $cert = $this->inspectCertificate($website->url);
 
-        if ($expiresAt && $expiresAt->isBefore(now()->addDays(14)) && ! $this->hasRecentOpenIncident($website, 'ssl', null)) {
-            $incident = Incident::create([
-                'website_id' => $website->id,
-                'type' => 'ssl',
-                'severity' => 'warning',
-                'title' => "Sertifikat SSL {$website->name} akan kedaluwarsa",
-                'description' => 'Sertifikat SSL akan kedaluwarsa pada '.$expiresAt->translatedFormat('d F Y').'.',
-                'meta' => ['expires_at' => $expiresAt->toIso8601String()],
-                'status' => 'open',
-                'detected_at' => now(),
-            ]);
+        if ($cert === null) {
+            return;
+        }
 
-            // An expiring certificate is the one incident type nobody finds out
-            // about by the site going down - by then it already has. hasRecentOpenIncident()
-            // above is what keeps this to one warning per certificate, not one a day.
-            $this->notifyAdmins(new SslExpiringNotification($website, $incident));
+        // Unreachable handshake: keep the last known certificate, record only why.
+        if (! $cert['reachable']) {
+            $website->update(['ssl_error' => Str::limit((string) $cert['error'], 250)]);
+
+            return;
+        }
+
+        $website->update([
+            'ssl_expires_at' => $cert['expires_at'],
+            'ssl_issuer' => $cert['issuer'],
+            'ssl_names' => $cert['names'],
+            'ssl_chain_valid' => $cert['chain_valid'],
+            'ssl_hostname_match' => $cert['hostname_match'],
+            'ssl_error' => $cert['error'] ? Str::limit($cert['error'], 250) : null,
+        ]);
+
+        $problems = $this->sslProblems($website, $cert);
+        $open = $website->incidents()->where('type', 'ssl')->open()->latest('detected_at')->get();
+
+        // expiring and expired are one problem at two stages; legacy rows carry no reason.
+        $group = fn (?string $reason) => in_array($reason ?? 'expiring', ['expiring', 'expired'], true) ? 'expiry' : $reason;
+
+        // Each problem stands alone: one that is fixed closes even while another persists.
+        $open->reject(fn (Incident $incident) => isset($problems[$group($incident->meta['reason'] ?? null)]))
+            ->each(fn (Incident $incident) => $incident->resolve());
+
+        foreach ($problems as $key => $problem) {
+            $existing = $open->first(fn (Incident $incident) => $group($incident->meta['reason'] ?? null) === $key);
+
+            if (! $existing) {
+                $incident = Incident::create([
+                    'website_id' => $website->id,
+                    'type' => 'ssl',
+                    'severity' => $problem['severity'],
+                    'title' => $problem['title'],
+                    'description' => $problem['description'],
+                    'meta' => $problem['meta'],
+                    'status' => 'open',
+                    'detected_at' => now(),
+                ]);
+
+                // Nobody finds out about a certificate problem by the site going down - by then it already has.
+                $this->notifyAdmins(new SslExpiringNotification($website, $incident));
+
+                continue;
+            }
+
+            // Crossing the critical threshold re-alerts once.
+            if ($existing->severity === 'warning' && $problem['severity'] === 'critical' && empty($existing->meta['escalated'])) {
+                $existing->update([
+                    'severity' => 'critical',
+                    'title' => $problem['title'],
+                    'description' => $problem['description'],
+                    'meta' => [...($existing->meta ?? []), ...$problem['meta'], 'escalated' => true],
+                ]);
+
+                $this->notifyAdmins(new SslExpiringNotification($website, $existing));
+            } elseif (($existing->meta['reason'] ?? 'expiring') !== $problem['meta']['reason']) {
+                // Same problem, later stage (expiring -> expired): keep the record current, no second email.
+                $existing->update([
+                    'title' => $problem['title'],
+                    'description' => $problem['description'],
+                    'meta' => [...($existing->meta ?? []), ...$problem['meta']],
+                ]);
+            }
+        }
+    }
+
+    /** Test seam: the certificate as CertificateInspector::inspect() reports it. */
+    protected function inspectCertificate(string $url): ?array
+    {
+        return app(CertificateInspector::class)->inspect($url);
+    }
+
+    /**
+     * Everything wrong with a certificate, keyed by problem group (expiry, hostname,
+     * chain); empty when healthy. Days are calendar days in the app timezone.
+     *
+     * @return array<string, array{severity: string, title: string, description: string, meta: array<string, mixed>}>
+     */
+    protected function sslProblems(Website $website, array $cert): array
+    {
+        $tz = config('app.timezone');
+        $expiresAt = $cert['expires_at']?->copy()->setTimezone($tz);
+        $host = parse_url($website->url, PHP_URL_HOST);
+        $days = $expiresAt ? (int) now($tz)->startOfDay()->diffInDays($expiresAt->copy()->startOfDay(), false) : null;
+        $date = $expiresAt?->translatedFormat('d F Y');
+        $found = [];
+
+        $expiry = match (true) {
+            $expiresAt && $expiresAt->isPast() => ['critical', 'expired',
+                "Sertifikat SSL {$website->name} sudah kedaluwarsa",
+                "Sertifikat SSL kedaluwarsa sejak {$date}. Browser menolak membuka situs ini."],
+            $days !== null && $days <= (int) config('monitoring.ssl.critical_days', 3) => ['critical', 'expiring',
+                "Sertifikat SSL {$website->name} akan kedaluwarsa",
+                "Sertifikat SSL akan kedaluwarsa pada {$date}."],
+            $days !== null && $days <= (int) config('monitoring.ssl.warning_days', 14) => ['warning', 'expiring',
+                "Sertifikat SSL {$website->name} akan kedaluwarsa",
+                "Sertifikat SSL akan kedaluwarsa pada {$date}."],
+            default => null,
+        };
+
+        if ($expiry) {
+            $found['expiry'] = $expiry;
+        }
+
+        if ($cert['hostname_match'] === false) {
+            $found['hostname'] = ['critical', 'hostname',
+                "Sertifikat SSL {$website->name} tidak cocok dengan nama host",
+                $cert['names']
+                    ? "Sertifikat tidak berlaku untuk {$host} (berlaku untuk: ".Str::limit(implode(', ', $cert['names']), 200).').'
+                    : "Sertifikat tidak memuat Subject Alternative Name (SAN), sehingga browser menolaknya untuk {$host}."];
+        }
+
+        if ($cert['chain_valid'] === false) {
+            $found['chain'] = ['warning', 'chain',
+                "Rantai sertifikat SSL {$website->name} tidak valid",
+                'Rantai sertifikat tidak dapat diverifikasi ke CA tepercaya (intermediate tidak lengkap atau penerbit tidak dikenal).'];
+        }
+
+        return array_map(fn (array $problem) => [
+            'severity' => $problem[0],
+            'title' => $problem[2],
+            'description' => $problem[3],
+            'meta' => array_filter([
+                'reason' => $problem[1],
+                'expires_at' => $expiresAt?->toIso8601String(),
+                'issuer' => $cert['issuer'],
+                'host' => $host,
+                'names' => $cert['names'],
+                'chain_valid' => $cert['chain_valid'],
+                'hostname_match' => $cert['hostname_match'],
+                'error' => $cert['error'],
+            ], fn ($value) => $value !== null),
+        ], $found);
+    }
+
+    /**
+     * Pulls the daily DNS check forward when the addresses the guard just resolved
+     * differ from the stored A/AAAA baseline - throttled to once an hour.
+     * Skipped for CDN/load-balanced sites, whose addresses rotate by design.
+     */
+    protected function detectIpDrift(Website $website): void
+    {
+        $baseline = $website->dns_records ?? [];
+        $host = parse_url($website->url, PHP_URL_HOST);
+
+        if (! $host || $website->dns_ip_rotates || (! isset($baseline['A']) && ! isset($baseline['AAAA']))) {
+            return;
+        }
+
+        if ($website->dns_ip_drift_at && $website->dns_ip_drift_at->isAfter(now()->subHour())) {
+            return;
+        }
+
+        // Memoized by the guard during this check's fetch: no extra lookup.
+        [$reason, $addresses] = OutboundUrlGuard::addressesFor(strtolower($host));
+
+        if ($reason !== null || $addresses === []) {
+            return;
+        }
+
+        // Same normalisation as the stored baseline (mask, sort, cap), or a >MAX_VALUES set drifts forever.
+        $monitor = app(DnsMonitor::class);
+        $v4 = $monitor->normalize('A', array_filter($addresses, fn (string $ip) => (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)));
+        $v6 = $monitor->normalize('AAAA', array_filter($addresses, fn (string $ip) => (bool) filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)));
+
+        // A family the resolver did not answer for is no evidence of drift.
+        $drifted = (isset($baseline['A']) && $v4 !== [] && $v4 !== $baseline['A'])
+            || (isset($baseline['AAAA']) && $v6 !== [] && $v6 !== $baseline['AAAA']);
+
+        if (! $drifted) {
+            return;
+        }
+
+        $website->update(['dns_ip_drift_at' => now()]);
+
+        try {
+            $this->checkDns($website, force: true);
+        } catch (Throwable $e) {
+            Log::warning("WebsiteChecker: cek DNS dini gagal untuk {$website->url}: {$e->getMessage()}");
         }
     }
 
@@ -366,9 +749,9 @@ class WebsiteChecker
      * so the check that would explain a dead site must not be skipped precisely
      * when the site is dead.
      */
-    public function checkDns(Website $website): void
+    public function checkDns(Website $website, bool $force = false): void
     {
-        if ($website->dns_checked_at && $website->dns_checked_at->isAfter(now()->subDay())) {
+        if (! $force && $website->dns_checked_at && $website->dns_checked_at->isAfter(now()->subDay())) {
             return;
         }
 
@@ -396,16 +779,31 @@ class WebsiteChecker
             return;
         }
 
+        // Pre-apex baseline: its NS/MX were read off the host, still comparable only when host is the apex.
+        if (! isset($previous['apex']) && ($current['apex'] ?? null) === [strtolower($host)]) {
+            $previous['apex'] = $current['apex'];
+        }
+
         $changes = $monitor->diff($previous, $current);
 
-        if ($changes === [] || $this->hasRecentOpenIncident($website, 'dns', null)) {
+        if ($changes === []) {
+            return;
+        }
+
+        $severity = $monitor->severityFor($changes, (bool) $website->dns_ip_rotates);
+        $open = $website->incidents()->where('type', 'dns')->open()->latest('detected_at')->first();
+
+        // Already open: record the new change on it rather than lose it with the overwritten baseline.
+        if ($open) {
+            $this->appendDnsChange($website, $open, $changes, $severity);
+
             return;
         }
 
         $incident = Incident::create([
             'website_id' => $website->id,
             'type' => 'dns',
-            'severity' => $monitor->severityFor($changes),
+            'severity' => $severity,
             'title' => "Record DNS {$website->name} berubah",
             'description' => 'Record '.implode(', ', array_keys($changes)).' berbeda dari yang terakhir tercatat.',
             'meta' => ['changes' => $changes],
@@ -414,6 +812,32 @@ class WebsiteChecker
         ]);
 
         $this->notifyAdmins(new DnsChangedNotification($website, $incident));
+    }
+
+    /**
+     * Adds a later change to an open DNS incident: meta.history keeps each event
+     * (last 20), meta.changes stays the cumulative original -> latest view.
+     * A warning that turns critical (e.g. NS moved after MX) re-alerts once.
+     */
+    protected function appendDnsChange(Website $website, Incident $incident, array $changes, string $severity): void
+    {
+        $meta = $incident->meta ?? [];
+        $meta['history'] = array_slice([...($meta['history'] ?? []), ['detected_at' => now()->toIso8601String(), 'changes' => $changes]], -20);
+
+        foreach ($changes as $type => $change) {
+            $meta['changes'][$type] = ['dari' => $meta['changes'][$type]['dari'] ?? $change['dari'], 'ke' => $change['ke']];
+        }
+
+        $escalate = $incident->severity === 'warning' && $severity === 'critical' && empty($meta['escalated']);
+
+        $incident->update([
+            'meta' => $escalate ? [...$meta, 'escalated' => true] : $meta,
+            'severity' => $escalate ? 'critical' : $incident->severity,
+        ]);
+
+        if ($escalate) {
+            $this->notifyAdmins(new DnsChangedNotification($website, $incident));
+        }
     }
 
     /**
@@ -432,62 +856,63 @@ class WebsiteChecker
 
         $website->update(['domain_checked_at' => now()]);
 
-        if ($found = app(DomainExpiry::class)->lookUp($website->url)) {
-            $website->update(['domain_expires_at' => $found]);
+        // One instance per checker run, so sites sharing an apex share one RDAP lookup.
+        $this->domainExpiry ??= app(DomainExpiry::class);
+
+        if ($found = $this->domainExpiry->lookUp($website->url)) {
+            $website->update(['domain_expires_at' => $found, 'domain_expiry_source' => 'rdap']);
         }
 
         $expiresAt = $website->fresh()->domain_expires_at;
 
-        if (! $expiresAt || $expiresAt->isAfter(now()->addDays(self::DOMAIN_WARNING_DAYS))) {
+        if (! $expiresAt) {
             return;
         }
 
-        if ($this->hasRecentOpenIncident($website, 'domain', null)) {
+        // Renewed (or a corrected date): the warning no longer applies.
+        if ($expiresAt->isAfter(now()->addDays((int) config('monitoring.domain.warning_days', 45)))) {
+            $website->incidents()->open()->where('type', 'domain')->each(fn (Incident $incident) => $incident->resolve());
+
+            return;
+        }
+
+        $days = (int) now()->startOfDay()->diffInDays($expiresAt->copy()->startOfDay(), false);
+        // Past the date is not a warning any more - the domain is gone.
+        $severity = $expiresAt->isPast() || $days <= (int) config('monitoring.domain.critical_days', 3) ? 'critical' : 'warning';
+        $title = $expiresAt->isPast() ? "Domain {$website->name} sudah kedaluwarsa" : "Domain {$website->name} akan kedaluwarsa";
+        $description = 'Registrasi domain berakhir pada '.$expiresAt->translatedFormat('d F Y').'.';
+        $open = $website->incidents()->open()->where('type', 'domain')->latest('detected_at')->first();
+
+        if ($open) {
+            // Crossing the critical threshold re-alerts once; a later stage only refreshes the record.
+            if ($open->severity === 'warning' && $severity === 'critical' && empty($open->meta['escalated'])) {
+                $open->update([
+                    'severity' => 'critical',
+                    'title' => $title,
+                    'description' => $description,
+                    'meta' => [...($open->meta ?? []), 'expires_at' => $expiresAt->toIso8601String(), 'escalated' => true],
+                ]);
+
+                $this->notifyAdmins(new DomainExpiringNotification($website, $open));
+            } elseif ($open->title !== $title) {
+                $open->update(['title' => $title, 'description' => $description]);
+            }
+
             return;
         }
 
         $incident = Incident::create([
             'website_id' => $website->id,
             'type' => 'domain',
-            // Past the date is not a warning any more - the domain is gone.
-            'severity' => $expiresAt->isPast() ? 'critical' : 'warning',
-            'title' => "Domain {$website->name} akan kedaluwarsa",
-            'description' => 'Registrasi domain berakhir pada '.$expiresAt->translatedFormat('d F Y').'.',
+            'severity' => $severity,
+            'title' => $title,
+            'description' => $description,
             'meta' => ['expires_at' => $expiresAt->toIso8601String()],
             'status' => 'open',
             'detected_at' => now(),
         ]);
 
         $this->notifyAdmins(new DomainExpiringNotification($website, $incident));
-    }
-
-    protected function certificateExpiryDate(string $url): ?Carbon
-    {
-        $host = parse_url($url, PHP_URL_HOST);
-
-        if (! $host) {
-            return null;
-        }
-
-        $port = parse_url($url, PHP_URL_PORT) ?? 443;
-
-        try {
-            $context = stream_context_create(['ssl' => ['capture_peer_cert' => true, 'verify_peer' => false, 'verify_peer_name' => false]]);
-            $client = @stream_socket_client("ssl://{$host}:{$port}", $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $context);
-
-            if (! $client) {
-                return null;
-            }
-
-            $params = stream_context_get_params($client);
-            fclose($client);
-
-            $cert = openssl_x509_parse($params['options']['ssl']['peer_certificate']);
-
-            return isset($cert['validTo_time_t']) ? Carbon::createFromTimestamp($cert['validTo_time_t']) : null;
-        } catch (Throwable) {
-            return null;
-        }
     }
 
     protected function hasRecentOpenIncident(Website $website, string $type, ?string $reason): bool

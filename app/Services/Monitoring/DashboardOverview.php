@@ -29,6 +29,12 @@ class DashboardOverview
 
     public const HISTORY_SIZE = 24;
 
+    /** Fresh window of the shared real-time snapshot (seconds); served stale for as long again. */
+    public const REALTIME_TTL = 15;
+
+    /** Upper bound on a background refresh's lock, so a crashed refresh can't block the key. */
+    protected const REFRESH_LOCK_SECONDS = 30;
+
     /** Live list order: status group, then load level, then name. */
     protected const SORT_GROUP = [
         'attack' => 0, 'down' => 1, 'offline' => 2, 'internal' => 3,
@@ -62,6 +68,32 @@ class DashboardOverview
         )])->all();
 
         return ['websites' => $websites, 'statuses' => $statuses];
+    }
+
+    /**
+     * Summary, live list and load counts from one site load, shared by every viewer.
+     * Holds no user or permission data, so one global key is safe.
+     *
+     * @return array{summary: array, live_sites: list<array>, load_counts: array<string, int>}
+     */
+    public function realtime(): array
+    {
+        return $this->flexible('dashboard:realtime', self::REALTIME_TTL, function () {
+            $sites = $this->sites();
+            $loadLevels = Website::loadLevels($sites['websites']);
+
+            return [
+                'summary' => $this->summary($sites['statuses']),
+                'live_sites' => $this->liveSites($sites['websites'], $sites['statuses'], $loadLevels),
+                'load_counts' => $this->loadCounts($loadLevels),
+            ];
+        });
+    }
+
+    /** Stale-while-revalidate: one locked background refresh instead of a stampede on expiry. */
+    protected function flexible(string $key, int $ttl, callable $callback): array
+    {
+        return Cache::flexible($key, [$ttl, $ttl * 2], $callback, ['seconds' => self::REFRESH_LOCK_SECONDS]);
     }
 
     /**
@@ -140,7 +172,7 @@ class DashboardOverview
         $timezone = Dates::timezone();
         $key = 'dashboard:perf:'.$range.':'.($websiteId ?? 'all').':'.$timezone;
 
-        return Cache::remember($key, self::RANGES[$range][2], fn () => $this->computePerformance($range, $websiteId, $timezone));
+        return $this->flexible($key, self::RANGES[$range][2], fn () => $this->computePerformance($range, $websiteId, $timezone));
     }
 
     protected function computePerformance(string $range, ?int $websiteId, string $timezone): array

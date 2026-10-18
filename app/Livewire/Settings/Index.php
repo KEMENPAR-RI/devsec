@@ -364,7 +364,7 @@ class Index extends Component
             'defaultCheckIntervalMinutes' => ['required', 'integer', 'min:1', 'max:1440'],
             'defaultJudolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'defaultDownThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
-            'defaultResponseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:60000'],
+            'defaultResponseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:25000'],
             'tvPollSeconds' => ['required', 'integer', 'min:10', 'max:3600'],
             'twoFactorRequired' => ['boolean'],
             'webhookEnabled' => ['boolean'],

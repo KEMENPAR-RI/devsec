@@ -3,9 +3,11 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasUuid;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class WebsiteCheck extends Model
 {
@@ -21,6 +23,7 @@ class WebsiteCheck extends Model
         'content_hash',
         'content_length',
         'error_message',
+        'error_type',
         'checked_at',
     ];
 
@@ -30,6 +33,14 @@ class WebsiteCheck extends Model
             'is_up' => 'boolean',
             'checked_at' => 'datetime',
         ];
+    }
+
+    /** Fits varchar(255) as valid UTF-8: transport errors embed remote-controlled URLs, and strict mode rejects overflow. */
+    protected function errorMessage(): Attribute
+    {
+        return Attribute::make(
+            set: fn (?string $value) => $value === null ? null : Str::limit(mb_scrub($value, 'UTF-8'), 250),
+        );
     }
 
     public function website(): BelongsTo

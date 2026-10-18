@@ -5,10 +5,15 @@ namespace App\Livewire\Websites;
 use App\Jobs\CheckWebsiteJob;
 use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\Website;
+use App\Models\WebsiteCheck;
 use App\Rules\PublicUrl;
 use App\Services\AppSettings;
 use App\Services\Security\OutboundUrlGuard;
 use App\Support\Url as SiteUrl;
+use Illuminate\Bus\UniqueLock;
+use Illuminate\Contracts\Cache\Repository as Cache;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Layout;
@@ -53,6 +58,8 @@ class Index extends Component
 
     public bool $isInternalOnly = false;
 
+    public bool $dnsIpRotates = false;
+
     /**
      * Typed by hand for the registries that publish no RDAP - .id among them.
      * A lookup that comes back empty never clears it.
@@ -84,7 +91,7 @@ class Index extends Component
     {
         $this->authorize('situs.create');
 
-        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'domainExpiresAt']);
+        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'dnsIpRotates', 'domainExpiresAt']);
 
         // Defaults come from Pengaturan > Konfigurasi Aplikasi rather than being
         // hard-coded here, so an operator can set them once for every new site.
@@ -110,6 +117,7 @@ class Index extends Component
         $this->responseTimeThresholdMs = $website->response_time_threshold_ms;
         $this->isActive = $website->is_active;
         $this->isInternalOnly = $website->is_internal_only;
+        $this->dnsIpRotates = (bool) $website->dns_ip_rotates;
         $this->domainExpiresAt = $website->domain_expires_at?->format('Y-m-d') ?? '';
         $this->showModal = true;
     }
@@ -128,9 +136,10 @@ class Index extends Component
             'checkIntervalMinutes' => ['required', 'integer', 'min:1', 'max:1440'],
             'judolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'downThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
-            'responseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:60000'],
+            'responseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:25000'],
             'isActive' => ['boolean'],
             'isInternalOnly' => ['boolean'],
+            'dnsIpRotates' => ['boolean'],
             'domainExpiresAt' => ['nullable', 'date'],
         ];
     }
@@ -155,8 +164,17 @@ class Index extends Component
             'response_time_threshold_ms' => $data['responseTimeThresholdMs'],
             'is_active' => $data['isActive'],
             'is_internal_only' => $data['isInternalOnly'],
+            'dns_ip_rotates' => $data['dnsIpRotates'],
             'domain_expires_at' => $data['domainExpiresAt'] ?: null,
         ]);
+
+        // Only a date the operator actually changed is "manual" - re-saving an RDAP date untouched keeps its source.
+        if (! $data['domainExpiresAt']) {
+            $website->domain_expiry_source = null;
+        } elseif ($website->isDirty('domain_expires_at')) {
+            $website->domain_expiry_source = 'manual';
+        }
+
         $website->save();
 
         $this->showModal = false;
@@ -464,8 +482,45 @@ class Index extends Component
     {
         $this->authorize('situs.update');
 
-        CheckWebsiteJob::dispatch($website);
+        $job = new CheckWebsiteJob($website);
+
+        // Take the unique lock here so a dropped duplicate can be reported; Bus::dispatch skips the second acquire.
+        if (! (new UniqueLock(app(Cache::class)))->acquire($job)) {
+            $this->toastInfo("Pengecekan {$website->name} sudah dalam antrean.");
+
+            return;
+        }
+
+        Bus::dispatch($job);
         $this->toastSuccess("Pengecekan {$website->name} dikirim ke antrean.");
+    }
+
+    /**
+     * 7-day uptime per site on the page in one query; same semantics as Website::uptimePercentage().
+     *
+     * @return array<int, ?float>
+     */
+    protected function uptimes(LengthAwarePaginator $websites, int $days = 7): array
+    {
+        $ids = $websites->getCollection()->pluck('id');
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        $rows = WebsiteCheck::query()
+            ->whereIn('website_id', $ids)
+            ->where('checked_at', '>=', now()->subDays($days))
+            ->groupBy('website_id')
+            ->toBase()
+            ->selectRaw('website_id, COUNT(*) AS total, SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count')
+            ->get()
+            ->keyBy('website_id');
+
+        // Sites without checks in the window stay null, like uptimePercentage().
+        return $ids->mapWithKeys(fn (int $id) => [$id => isset($rows[$id]) && (int) $rows[$id]->total > 0
+            ? round((int) $rows[$id]->up_count / (int) $rows[$id]->total * 100, 1)
+            : null])->all();
     }
 
     public function render()
@@ -484,6 +539,7 @@ class Index extends Component
             'attackedIds' => Website::attackedIds($websites),
             'maintenanceIds' => Website::maintenanceIds($websites),
             'loadLevels' => Website::loadLevels($websites),
+            'uptimes' => $this->uptimes($websites),
             'filteredCount' => $this->filteredQuery()->count(),
         ]);
     }

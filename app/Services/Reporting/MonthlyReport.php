@@ -6,6 +6,7 @@ use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
+use App\Models\WebsiteCheckDaily;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
@@ -98,8 +99,52 @@ class MonthlyReport
      */
     protected function uptimeByWebsite(Carbon $start, Carbon $end): array
     {
+        // Raw checks are pruned whole days at a time; days before the oldest survivor come from the daily rollup.
+        $oldest = WebsiteCheck::query()->min('checked_at');
+        $rawFrom = $oldest === null ? $start : Carbon::parse($oldest)->startOfDay();
+
+        if ($rawFrom->lte($start)) {
+            return $this->rawUptime($start, $end);
+        }
+
+        $raw = $rawFrom->lte($end) ? $this->rawUptime($rawFrom, $end) : [];
+
+        $daily = WebsiteCheckDaily::query()
+            ->selectRaw('website_id, SUM(total_checks) as total, SUM(up_checks) as up')
+            ->selectRaw('SUM(response_ms_sum) as ms_sum, SUM(timed_checks) as ms_count')
+            ->whereBetween('day', [$start->toDateString(), $rawFrom->copy()->subDay()->min($end)->toDateString()])
+            ->groupBy('website_id')
+            ->toBase()
+            ->get()
+            ->keyBy('website_id');
+
+        $stats = [];
+
+        foreach ($daily->keys()->merge(array_keys($raw))->unique() as $websiteId) {
+            $r = $raw[$websiteId] ?? null;
+            $d = $daily[$websiteId] ?? null;
+
+            // Response time weighted by the number of timed checks on each side.
+            $msCount = (int) ($r->ms_count ?? 0) + (int) ($d->ms_count ?? 0);
+            $msSum = (int) ($r->ms_sum ?? 0) + (int) ($d->ms_sum ?? 0);
+
+            $stats[$websiteId] = (object) [
+                'total' => (int) ($r->total ?? 0) + (int) ($d->total ?? 0),
+                'up' => (int) ($r->up ?? 0) + (int) ($d->up ?? 0),
+                'avg_ms' => $msCount > 0 ? $msSum / $msCount : null,
+            ];
+        }
+
+        return $stats;
+    }
+
+    /**
+     * @return array<int, object>
+     */
+    protected function rawUptime(Carbon $start, Carbon $end): array
+    {
         return WebsiteCheck::query()
-            ->selectRaw('website_id, COUNT(*) as total, SUM(is_up) as up, AVG(response_time_ms) as avg_ms')
+            ->selectRaw('website_id, COUNT(*) as total, SUM(is_up) as up, AVG(response_time_ms) as avg_ms, COUNT(response_time_ms) as ms_count, SUM(response_time_ms) as ms_sum')
             ->whereBetween('checked_at', [$start, $end])
             ->groupBy('website_id')
             ->get()

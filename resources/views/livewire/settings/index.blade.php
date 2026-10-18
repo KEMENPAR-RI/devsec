@@ -678,7 +678,7 @@
             <div class="flex flex-col gap-2">
                 <label for="defaultResponseTimeThresholdMs" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ambang Batas Response Time (ms)</label>
                 <input
-                    wire:model="defaultResponseTimeThresholdMs" id="defaultResponseTimeThresholdMs" type="number" min="200" max="60000" step="100"
+                    wire:model="defaultResponseTimeThresholdMs" id="defaultResponseTimeThresholdMs" type="number" min="200" max="25000" step="100"
                     class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('defaultResponseTimeThresholdMs') border-red-400 @enderror"
                 >
                 @error('defaultResponseTimeThresholdMs') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror

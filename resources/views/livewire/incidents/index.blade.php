@@ -122,7 +122,7 @@
 
                                 <div x-show="open" x-cloak x-transition class="px-5 pb-4 sm:pl-[5.75rem]">
                                     @if ($incident->description)
-                                        <p class="mt-1 break-words text-sm text-zinc-600 dark:text-zinc-300">{{ $incident->description }}</p>
+                                        <p class="mt-1 break-words text-sm text-zinc-600 dark:text-zinc-300">{{ $incident->displayDescription() }}</p>
                                     @endif
 
                                     @if (! empty($lines))

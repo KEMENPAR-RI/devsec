@@ -10,18 +10,20 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 #[Layout('components.layouts.app')]
 class Dashboard extends Component
 {
-    /** The picked site's uuid - no real primary key reaches the browser. */
+    /** The picked site's uuid - no real primary key reaches the browser; set only via selectWebsite(). */
+    #[Locked]
     public ?string $selectedWebsiteUuid = null;
 
     /** Chart range: one of DashboardOverview::RANGES. */
     public string $range = DashboardOverview::DEFAULT_RANGE;
 
-    /** Per-request memo of the site list + statuses + load levels (not serialized). */
+    /** Per-request memo of the cached real-time snapshot (not serialized). */
     protected ?array $snapshot = null;
 
     /** Per-request memo of performance(), keyed by range + site (metrics and series share it). */
@@ -30,6 +32,14 @@ class Dashboard extends Component
     public function mount(): void
     {
         $this->authorize('dashboard.view');
+    }
+
+    /** Arrays (or nested paths) can't be coerced into the string property, so reject them before the set. */
+    public function updatingRange(mixed $value, ?string $key = null): void
+    {
+        if (is_array($value) || is_object($value) || $key !== null) {
+            abort(422);
+        }
     }
 
     public function updatedRange(mixed $value): void
@@ -55,16 +65,10 @@ class Dashboard extends Component
         return app(DashboardOverview::class);
     }
 
-    /** @return array{websites: Collection<int, Website>, statuses: array<int, string>, loadLevels: array<int, array{level: string, response_time_ms: int|null}>} */
+    /** @return array{summary: array, live_sites: list<array>, load_counts: array<string, int>} */
     protected function snapshot(): array
     {
-        if ($this->snapshot === null) {
-            $sites = $this->overview()->sites();
-            $sites['loadLevels'] = Website::loadLevels($sites['websites']);
-            $this->snapshot = $sites;
-        }
-
-        return $this->snapshot;
+        return $this->snapshot ??= $this->overview()->realtime();
     }
 
     /** @return array{series: list<array{label: string, ms: ?int, uptime: ?float, up: ?bool}>, uptime: ?float, avg_ms: ?int} */
@@ -88,7 +92,7 @@ class Dashboard extends Component
     #[Computed]
     public function summary(): array
     {
-        return $this->overview()->summary($this->snapshot()['statuses']);
+        return $this->snapshot()['summary'];
     }
 
     /** @return array{uptime: ?float, avg_ms: ?int, open_incidents: int, new_judol: int} */
@@ -133,16 +137,14 @@ class Dashboard extends Component
     #[Computed]
     public function liveSites(): array
     {
-        $snapshot = $this->snapshot();
-
-        return $this->overview()->liveSites($snapshot['websites'], $snapshot['statuses'], $snapshot['loadLevels']);
+        return $this->snapshot()['live_sites'];
     }
 
     /** @return array<string, int> */
     #[Computed]
     public function loadCounts(): array
     {
-        return $this->overview()->loadCounts($this->snapshot()['loadLevels']);
+        return $this->snapshot()['load_counts'];
     }
 
     #[Computed]

@@ -126,6 +126,8 @@ class JudolEvidenceController extends Controller
     {
         return Http::withHeaders(['User-Agent' => JudolScanner::BROWSER_USER_AGENT])
             ->withOptions(['verify' => $verifySsl])
+            // Connects only to the IPs isPubliclyRoutable() vetted - no second lookup to rebind.
+            ->setHandler(OutboundUrlGuard::pinnedHandler())
             ->timeout(8)
             ->connectTimeout(4)
             // A redirect is a second address, and one this app never recorded - so

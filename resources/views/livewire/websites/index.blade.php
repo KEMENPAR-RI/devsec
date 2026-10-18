@@ -154,6 +154,8 @@
                                 isset($maintenanceIds[$website->id]),
                             );
                             $load = $loadLevels[$website->id] ?? ['level' => 'unknown', 'response_time_ms' => null];
+                            $uptime = $uptimes[$website->id] ?? null;
+                            $uptimeText = $uptime === null ? '—' : $uptime.'% uptime';
                         @endphp
 
                         <x-status-dot :status="$statusKey" />
@@ -170,7 +172,7 @@
                             </div>
                             
                             <p class="mt-1 flex flex-wrap items-center gap-2 text-xs md:hidden">
-                                <span class="font-mono text-zinc-400 dark:text-zinc-500">{{ $website->uptimePercentage() }}% uptime</span>
+                                <span class="font-mono text-zinc-400 dark:text-zinc-500">{{ $uptimeText }}</span>
                                 @unless ($website->is_active)
                                     <span class="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
                                 @endunless
@@ -185,7 +187,7 @@
                             <span class="hidden w-24 justify-center md:flex">
                                 <x-load-badge :level="$load['level']" :response-time="$load['response_time_ms']" />
                             </span>
-                            <span class="hidden w-28 text-center font-mono md:block">{{ $website->uptimePercentage() }}% uptime</span>
+                            <span class="hidden w-28 text-center font-mono md:block">{{ $uptimeText }}</span>
                             <span class="hidden w-20 text-center md:block">
                                 @unless ($website->is_active)
                                     <span class="rounded-full bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
@@ -342,6 +344,15 @@
                             <span class="block text-xs text-zinc-400 dark:text-zinc-500">Kalau gagal dicek dari sini, ditampilkan kuning ("Terbatas") - bukan merah ("Down") - karena kemungkinan memang tidak terjangkau dari luar jaringan itu, bukan benar-benar mati.</span>
                         </span>
                     </label>
+
+                    <label class="flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
+                        <input type="checkbox" wire:model="dnsIpRotates" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                        <span>
+                            IP berganti-ganti (CDN/load balancer)
+                            <span class="block text-xs text-zinc-400 dark:text-zinc-500">Perubahan IP A/AAAA dicatat sebagai peringatan, bukan kritis - centang bila situs memang di belakang CDN atau load balancer.</span>
+                        </span>
+                    </label>
+                    @error('dnsIpRotates') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
 
                     <div class="mt-2 flex justify-end gap-2">
                         <button type="button" wire:click="$set('showModal', false)" class="rounded-lg px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-300 dark:hover:bg-zinc-800">

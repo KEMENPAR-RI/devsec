@@ -32,9 +32,18 @@ class Website extends Model
         'last_checked_at',
         'judol_scanned_at',
         'ssl_checked_at',
+        'ssl_expires_at',
+        'ssl_issuer',
+        'ssl_names',
+        'ssl_chain_valid',
+        'ssl_hostname_match',
+        'ssl_error',
         'dns_records',
         'dns_checked_at',
+        'dns_ip_rotates',
+        'dns_ip_drift_at',
         'domain_expires_at',
+        'domain_expiry_source',
         'domain_checked_at',
         'security_score',
         'security_grade',
@@ -57,10 +66,11 @@ class Website extends Model
             'id', 'uuid', 'created_at', 'updated_at',
             'last_status', 'consecutive_failures', 'last_checked_at',
             'judol_scanned_at', 'ssl_checked_at',
+            'ssl_expires_at', 'ssl_issuer', 'ssl_names', 'ssl_chain_valid', 'ssl_hostname_match', 'ssl_error',
             // DNS drift is reported as its own incident, with a readable diff -
             // dumping the raw record set into the audit log too would bury the
             // operator edits this log exists for.
-            'dns_records', 'dns_checked_at', 'domain_checked_at',
+            'dns_records', 'dns_checked_at', 'domain_checked_at', 'dns_ip_drift_at', 'domain_expiry_source',
             // The grade is measured, not decided by anyone - it belongs on the
             // site page, not in the who-changed-what trail.
             'security_score', 'security_grade', 'security_findings', 'security_checked_at',
@@ -76,8 +86,14 @@ class Website extends Model
             'last_checked_at' => 'datetime',
             'judol_scanned_at' => 'datetime',
             'ssl_checked_at' => 'datetime',
+            'ssl_expires_at' => 'datetime',
+            'ssl_names' => 'array',
+            'ssl_chain_valid' => 'boolean',
+            'ssl_hostname_match' => 'boolean',
             'dns_records' => 'array',
             'dns_checked_at' => 'datetime',
+            'dns_ip_rotates' => 'boolean',
+            'dns_ip_drift_at' => 'datetime',
             'domain_expires_at' => 'date',
             'domain_checked_at' => 'datetime',
             'security_score' => 'integer',
@@ -142,8 +158,20 @@ class Website extends Model
             return $this->last_checked_at === null || $this->last_checked_at->addDay()->isPast();
         }
 
-        return $this->last_checked_at === null
-            || $this->last_checked_at->addMinutes($this->check_interval_minutes)->isPast();
+        if ($this->last_checked_at === null) {
+            return true;
+        }
+
+        // An unconfirmed failure is re-checked every minute instead of waiting a full interval.
+        $verifying = $this->last_status !== 'down'
+            && $this->consecutive_failures > 0
+            && $this->consecutive_failures < $this->down_threshold_failures;
+
+        // 30s early so the every-minute scheduler does not stretch the interval by a tick.
+        return $this->last_checked_at
+            ->addMinutes($verifying ? 1 : $this->check_interval_minutes)
+            ->subSeconds(30)
+            ->isPast();
     }
 
     /**
@@ -521,7 +549,12 @@ class Website extends Model
      */
     public function loadLevel(?float $baselineMs = null): string
     {
-        $last = $this->checks()->latest('checked_at')->first();
+        // Same window + tie-break as loadLevels(), so the detail page matches the dashboard.
+        $last = $this->checks()
+            ->where('checked_at', '>=', now()->subDays(WebsiteCheck::RANKED_WINDOW_DAYS))
+            ->latest('checked_at')
+            ->latest('id')
+            ->first();
 
         // A failed check has no meaningful latency to grade: it either timed out or
         // never connected, and the status column is already saying so.
@@ -557,13 +590,17 @@ class Website extends Model
      */
     public function loadBaseline(?int $exceptCheckId = null): ?float
     {
+        // Averaged in PHP: avg() on the builder would drop the LIMIT and average all history.
         $average = $this->checks()
             ->where('is_up', true)
             ->whereNotNull('response_time_ms')
+            ->where('checked_at', '>=', now()->subDays(WebsiteCheck::RANKED_WINDOW_DAYS))
             ->when($exceptCheckId, fn ($q) => $q->where('id', '!=', $exceptCheckId))
             ->latest('checked_at')
+            ->latest('id')
             ->limit(self::LOAD_BASELINE_CHECKS)
-            ->avg('response_time_ms');
+            ->pluck('response_time_ms')
+            ->avg();
 
         return $average ? (float) $average : null;
     }
@@ -595,9 +632,8 @@ class Website extends Model
         $latest = self::rankedChecks($ids, 1)
             ->keyBy('website_id');
 
-        // Baselines from the successful checks inside the same window loadBaseline()
-        // uses, averaged per site - and, like it, excluding the check being graded so
-        // a spike cannot inflate the average it is measured against.
+        // Baselines: the last LOAD_BASELINE_CHECKS successful checks in the ranked window,
+        // excluding the check being graded - the same rows loadBaseline() averages.
         // One extra row per site covers the excluded latest check.
         $baselines = self::rankedChecks($ids, self::LOAD_BASELINE_CHECKS + 1, true)
             ->groupBy('website_id')
@@ -723,16 +759,20 @@ class Website extends Model
     }
 
     /**
-     * Uptime percentage over the last N days, based on recorded checks.
+     * Uptime percentage over the last N days, based on recorded checks; null when there are none.
      */
-    public function uptimePercentage(int $days = 7): float
+    public function uptimePercentage(int $days = 7): ?float
     {
-        $checks = $this->checks()->where('checked_at', '>=', now()->subDays($days))->get(['is_up']);
+        $row = $this->checks()
+            ->where('checked_at', '>=', now()->subDays($days))
+            ->toBase()
+            ->selectRaw('COUNT(*) AS total, SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count')
+            ->first();
 
-        if ($checks->isEmpty()) {
-            return 100.0;
+        if (! $row || (int) $row->total === 0) {
+            return null;
         }
 
-        return round($checks->where('is_up', true)->count() / $checks->count() * 100, 1);
+        return round((int) $row->up_count / (int) $row->total * 100, 1);
     }
 }

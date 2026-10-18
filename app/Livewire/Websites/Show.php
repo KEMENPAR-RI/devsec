@@ -8,10 +8,17 @@ use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\MaintenanceWindow;
 use App\Models\Website;
 use App\Rules\PublicUrl;
+use App\Services\Monitoring\DashboardOverview;
 use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\SecurityGrader;
+use App\Services\Monitoring\UptimeHistory;
 use App\Support\Dates;
 use App\Support\Url as SiteUrl;
+use Illuminate\Bus\UniqueLock;
+use Illuminate\Contracts\Cache\Repository as Cache;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Bus;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 use Throwable;
@@ -39,6 +46,12 @@ class Show extends Component
 
     public string $maintenanceEndsAt = '';
 
+    /** Chart range: one of DashboardOverview::RANGES. */
+    public string $range = DashboardOverview::DEFAULT_RANGE;
+
+    /** Per-request memo of performance(), keyed by range (series and rangeMetrics share it). */
+    protected array $performance = [];
+
     public function mount(Website $website): void
     {
         $this->authorize('situs.view');
@@ -50,8 +63,89 @@ class Show extends Component
     {
         $this->authorize('situs.update');
 
-        CheckWebsiteJob::dispatch($this->website);
+        $job = new CheckWebsiteJob($this->website);
+
+        // Take the unique lock here so a dropped duplicate can be reported; Bus::dispatch skips the second acquire.
+        if (! (new UniqueLock(app(Cache::class)))->acquire($job)) {
+            $this->toastInfo('Pengecekan sudah dalam antrean.');
+
+            return;
+        }
+
+        Bus::dispatch($job);
         $this->toastSuccess('Pengecekan dikirim ke antrean.');
+    }
+
+    /** Arrays (or nested paths) can't be coerced into the string property, so reject them before the set. */
+    public function updatingRange(mixed $value, ?string $key = null): void
+    {
+        if (is_array($value) || is_object($value) || $key !== null) {
+            abort(422);
+        }
+    }
+
+    public function updatedRange(mixed $value): void
+    {
+        $this->range = DashboardOverview::normalizeRange(is_string($value) ? $value : null);
+    }
+
+    /** @return array{series: list<array{label: string, ms: ?int, uptime: ?float, up: ?bool}>, uptime: ?float, avg_ms: ?int} */
+    protected function performance(): array
+    {
+        $range = DashboardOverview::normalizeRange($this->range);
+
+        return $this->performance[$range] ??= app(DashboardOverview::class)->performance($range, $this->website->id);
+    }
+
+    /** @return list<array{label: string, ms: ?int, uptime: ?float, up: ?bool}> */
+    #[Computed]
+    public function series(): array
+    {
+        return $this->performance()['series'];
+    }
+
+    /** @return array{uptime: ?float, avg_ms: ?int} */
+    #[Computed]
+    public function rangeMetrics(): array
+    {
+        $performance = $this->performance();
+
+        return ['uptime' => $performance['uptime'], 'avg_ms' => $performance['avg_ms']];
+    }
+
+    /** @return array{'24h': ?float, '7d': ?float, '30d': ?float} */
+    #[Computed]
+    public function uptimeSummary(): array
+    {
+        return app(UptimeHistory::class)->summary($this->website->id);
+    }
+
+    /** @return list<array{uuid: string, started_at: Carbon, ended_at: ?Carbon, duration_seconds: int, ongoing: bool, cause: ?string, status_code: ?int}> */
+    #[Computed]
+    public function downtimes(): array
+    {
+        return app(UptimeHistory::class)->downtimes($this->website->id);
+    }
+
+    #[Computed]
+    public function downtimeTotal30d(): int
+    {
+        return app(UptimeHistory::class)->downtimeSeconds($this->website->id, 30);
+    }
+
+    /** @return array{failures: int, threshold: int}|null set while a failure streak is still below the down threshold */
+    #[Computed]
+    public function verification(): ?array
+    {
+        $website = $this->website;
+
+        if ($website->last_status === 'down'
+            || $website->consecutive_failures <= 0
+            || $website->consecutive_failures >= $website->down_threshold_failures) {
+            return null;
+        }
+
+        return ['failures' => (int) $website->consecutive_failures, 'threshold' => (int) $website->down_threshold_failures];
     }
 
     public function scanJudolNow(): void
@@ -186,7 +280,7 @@ class Show extends Component
 
     public function render()
     {
-        $checks = $this->website->checks()->latest('checked_at')->limit(30)->get()->reverse()->values();
+        $checks = $this->website->checks()->latest('checked_at')->latest('id')->limit(30)->get()->reverse()->values();
 
         return view('livewire.websites.show', [
             'checks' => $checks,

@@ -2,6 +2,10 @@
 
 namespace App\Services\Security;
 
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Utils as GuzzleUtils;
+use Illuminate\Support\Facades\Log;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\UriInterface;
@@ -21,11 +25,20 @@ use RuntimeException;
  */
 class OutboundUrlGuard
 {
-    /** How long a host's verdict is trusted. Short enough that a DNS change is picked up. */
-    protected const VERDICT_TTL_SECONDS = 300;
+    /** How long a host's verdict is trusted. Freshness only: the fetch is pinned to the vetted IPs. */
+    protected const VERDICT_TTL_SECONDS = 60;
 
-    /** Resolved verdicts keyed by host: [reason, expires_at]. DNS is slow and asked repeatedly. */
+    /** Most addresses pinned per host; the rest are still vetted. */
+    protected const MAX_PINNED_ADDRESSES = 8;
+
+    /** Resolved verdicts keyed by host: [reason, addresses, expires_at]. DNS is slow and asked repeatedly. */
     protected static array $memo = [];
+
+    /** Test seam: host => addresses, used instead of the system resolver when set. */
+    protected static ?array $fakeDns = null;
+
+    /** Test seam: the transport under pinnedHandler(), instead of Guzzle's default. */
+    protected static $fakeTransport = null;
 
     /** Ranges PHP's own filters miss: CGNAT, plus IPv4-mapped IPv6 handled in normalize(). */
     protected const EXTRA_BLOCKED_CIDRS = ['100.64.0.0/10', '192.0.0.0/24', '198.18.0.0/15'];
@@ -52,6 +65,12 @@ class OutboundUrlGuard
             return 'Alamat tidak boleh memuat username atau password.';
         }
 
+        return static::memoized(strtolower($host))[0];
+    }
+
+    /** [reason, vetted addresses] for a host, from the same memo entry as reason(). */
+    public static function addressesFor(string $host): array
+    {
         return static::memoized(strtolower($host));
     }
 
@@ -62,16 +81,20 @@ class OutboundUrlGuard
      * an expiry, a host that changes DNS keeps whichever answer it got on the
      * worker's very first job.
      */
-    protected static function memoized(string $host): ?string
+    protected static function memoized(string $host): array
     {
-        [$reason, $expiresAt] = static::$memo[$host] ?? [null, 0];
+        [$reason, $addresses, $expiresAt] = static::$memo[$host] ?? [null, [], 0];
 
         if ($expiresAt < time()) {
-            $reason = static::resolveReason($host);
-            static::$memo[$host] = [$reason, time() + static::VERDICT_TTL_SECONDS];
+            [$reason, $addresses] = static::resolveReason($host);
+
+            // A miss is not memoized: the retry after a DNS blip must ask the resolver again.
+            if ($reason !== null || $addresses !== []) {
+                static::$memo[$host] = [$reason, $addresses, time() + static::VERDICT_TTL_SECONDS];
+            }
         }
 
-        return $reason;
+        return [$reason, $addresses];
     }
 
     public static function allows(string $url): bool
@@ -95,51 +118,115 @@ class OutboundUrlGuard
                 'referer' => false,
                 'on_redirect' => function (RequestInterface $request, ResponseInterface $response, UriInterface $uri): void {
                     if ($reason = static::reason((string) $uri)) {
-                        throw new RuntimeException("Pengalihan ke {$uri} ditolak: {$reason}");
+                        Log::warning('OutboundUrlGuard: redirect refused', ['to' => (string) $uri, 'reason' => $reason]);
+
+                        throw new RuntimeException("Pengalihan ditolak: {$reason}");
                     }
                 },
             ],
         ];
     }
 
-    /** Drops every memoized verdict - for tests, and after a DNS change. */
+    /**
+     * Wraps a Guzzle handler so every request it sends (each redirect hop, retry
+     * and fallback) connects only to the addresses vetted for that request's host,
+     * via CURLOPT_RESOLVE - curl never resolves the name a second time itself.
+     */
+    public static function pinningHandler(callable $inner): callable
+    {
+        return function (RequestInterface $request, array $options) use ($inner) {
+            $uri = $request->getUri();
+
+            if ($reason = static::reason((string) $uri)) {
+                return Create::rejectionFor(new RuntimeException($reason));
+            }
+
+            $host = strtolower($uri->getHost());
+
+            // An IP literal is already vetted by reason() and needs no RESOLVE.
+            if (! filter_var(trim($host, '[]'), FILTER_VALIDATE_IP)) {
+                $addresses = array_slice(static::addressesFor($host)[1], 0, static::MAX_PINNED_ADDRESSES);
+
+                // Without a pin curl would resolve on its own - the rebinding gap - so refuse instead.
+                if ($addresses === []) {
+                    return Create::rejectionFor(new ConnectException("cURL error 6: Could not resolve host: {$host}", $request, null, ['errno' => 6]));
+                }
+
+                $port = $uri->getPort() ?? ($uri->getScheme() === 'https' ? 443 : 80);
+                $pinned = array_map(fn (string $ip) => str_contains($ip, ':') ? "[{$ip}]" : $ip, $addresses);
+                $options['curl'][CURLOPT_RESOLVE] = ["{$host}:{$port}:".implode(',', $pinned)];
+            }
+
+            // A proxy would resolve the name itself, and RESOLVE does not apply behind one.
+            $options['proxy'] = '';
+
+            return $inner($request, $options);
+        };
+    }
+
+    /** Guzzle's default handler wrapped in pinningHandler(), for any outbound Http client. */
+    public static function pinnedHandler(): callable
+    {
+        return static::pinningHandler(static::$fakeTransport ?? GuzzleUtils::chooseHandler());
+    }
+
+    /** Test seam: pinnedHandler() hands requests to $transport until flush(). */
+    public static function fakeTransport(callable $transport): void
+    {
+        static::$fakeTransport = $transport;
+    }
+
+    /** Test seam: answers lookups from $map (host => addresses) until flush(). */
+    public static function fakeDns(array $map): void
+    {
+        static::$fakeDns = array_change_key_case($map);
+    }
+
+    /** Drops every memoized verdict and any fake DNS - for tests, and after a DNS change. */
     public static function flush(): void
     {
         static::$memo = [];
+        static::$fakeDns = null;
+        static::$fakeTransport = null;
     }
 
-    protected static function resolveReason(string $host): ?string
+    /** [reason, addresses] for a host; addresses are empty for an IP literal or a refusal. */
+    protected static function resolveReason(string $host): array
     {
         $host = trim($host, '[]');
 
         if (in_array(strtolower($host), static::BLOCKED_HOSTS, true) || str_ends_with(strtolower($host), '.localhost')) {
-            return 'Alamat menunjuk ke server ini sendiri.';
+            return ['Alamat menunjuk ke server ini sendiri.', []];
         }
 
         if (filter_var($host, FILTER_VALIDATE_IP)) {
-            return static::isPublic($host) ? null : static::privateAddressMessage($host);
+            return [static::isPublic($host) ? null : static::privateAddressMessage($host, $host), []];
         }
 
         $addresses = static::lookUp($host);
 
         // Unresolvable is not the same as internal: a site whose DNS is briefly
-        // broken must still be addable, and the fetch will fail on its own merits.
+        // broken must still be addable; pinningHandler() refuses to send it anyway.
         if ($addresses === []) {
-            return null;
+            return [null, []];
         }
 
         foreach ($addresses as $address) {
             if (! static::isPublic($address)) {
-                return static::privateAddressMessage($address);
+                return [static::privateAddressMessage($host, $address), []];
             }
         }
 
-        return null;
+        return [null, $addresses];
     }
 
     /** Every A and AAAA record for a host, as plain strings. */
     protected static function lookUp(string $host): array
     {
+        if (static::$fakeDns !== null) {
+            return static::$fakeDns[strtolower($host)] ?? [];
+        }
+
         $addresses = gethostbynamel($host) ?: [];
 
         // gethostbynamel is IPv4-only, and a host that is internal over IPv6 while
@@ -153,6 +240,12 @@ class OutboundUrlGuard
         }
 
         return array_values(array_unique($addresses));
+    }
+
+    /** Public wrapper: whether an address is routable on the public internet. */
+    public static function isPublicAddress(string $address): bool
+    {
+        return static::isPublic($address);
     }
 
     protected static function isPublic(string $address): bool
@@ -195,8 +288,11 @@ class OutboundUrlGuard
         return (ip2long($address) & $mask) === (ip2long($subnet) & $mask);
     }
 
-    protected static function privateAddressMessage(string $address): string
+    /** Generic for the user (no IP oracle); the detail goes to the log only. */
+    protected static function privateAddressMessage(string $host, string $address): string
     {
-        return "Alamat ini mengarah ke jaringan internal ({$address}) dan tidak boleh dipantau.";
+        Log::warning('OutboundUrlGuard: internal address refused', ['host' => $host, 'address' => $address]);
+
+        return 'Alamat ini mengarah ke jaringan internal dan tidak boleh dipantau.';
     }
 }

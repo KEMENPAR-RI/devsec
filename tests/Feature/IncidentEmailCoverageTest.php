@@ -58,10 +58,36 @@ class IncidentEmailCoverageTest extends TestCase
             'last_status' => 'down',
             'consecutive_failures' => 3,
         ]);
+        // The all-clear answers a down email, so it needs the incident that email announced.
+        Incident::create([
+            'website_id' => $website->id,
+            'type' => 'downtime',
+            'severity' => 'critical',
+            'title' => 'Down',
+            'status' => 'open',
+            'detected_at' => now()->subMinutes(10),
+        ]);
 
         (new WebsiteChecker)->check($website);
 
         $this->assertEmailed(WebsiteRecoveredNotification::class);
+        $this->assertSame(0, Incident::where('website_id', $website->id)->open()->count());
+    }
+
+    public function test_recovery_without_a_resolved_incident_emails_nobody(): void
+    {
+        // Down with no incident: e.g. it went down inside a maintenance window.
+        Http::fake(['quiet-up.example' => Http::response('ok', 200)]);
+        $website = Website::factory()->create([
+            'url' => 'http://quiet-up.example',
+            'last_status' => 'down',
+            'consecutive_failures' => 3,
+        ]);
+
+        (new WebsiteChecker)->check($website);
+
+        Notification::assertNotSentTo($this->admin, WebsiteRecoveredNotification::class);
+        $this->assertSame('up', $website->fresh()->last_status);
     }
 
     public function test_a_response_time_spike_emails(): void
@@ -140,6 +166,39 @@ class IncidentEmailCoverageTest extends TestCase
         $this->assertSame(1, Incident::where('type', 'ssl')->count());
     }
 
+    public function test_an_expired_certificate_emails(): void
+    {
+        Http::fake(['expired.example' => Http::response('ok', 200)]);
+        $website = Website::factory()->create(['url' => 'https://expired.example', 'ssl_checked_at' => null]);
+
+        $this->checkerWithCertificate(['expires_at' => now()->subDays(2), 'chain_valid' => null])->check($website);
+
+        $this->assertEmailed(SslExpiringNotification::class);
+        $this->assertSslIncident($website, 'expired', 'critical');
+    }
+
+    public function test_a_hostname_mismatch_emails(): void
+    {
+        Http::fake(['mismatch.example' => Http::response('ok', 200)]);
+        $website = Website::factory()->create(['url' => 'https://mismatch.example', 'ssl_checked_at' => null]);
+
+        $this->checkerWithCertificate(['names' => ['other.example'], 'hostname_match' => false])->check($website);
+
+        $this->assertEmailed(SslExpiringNotification::class);
+        $this->assertSslIncident($website, 'hostname', 'critical');
+    }
+
+    public function test_an_untrusted_chain_emails(): void
+    {
+        Http::fake(['chain.example' => Http::response('ok', 200)]);
+        $website = Website::factory()->create(['url' => 'https://chain.example', 'ssl_checked_at' => null]);
+
+        $this->checkerWithCertificate(['chain_valid' => false, 'error' => 'SSL operation failed: certificate verify failed'])->check($website);
+
+        $this->assertEmailed(SslExpiringNotification::class);
+        $this->assertSslIncident($website, 'chain', 'warning');
+    }
+
     public function test_judol_emails(): void
     {
         JudolKeyword::firstOrCreate(['keyword' => 'slot gacor'], ['is_active' => true]);
@@ -168,6 +227,14 @@ class IncidentEmailCoverageTest extends TestCase
         });
     }
 
+    protected function assertSslIncident(Website $website, string $reason, string $severity): void
+    {
+        $incident = Incident::where('website_id', $website->id)->where('type', 'ssl')->sole();
+
+        $this->assertSame($reason, $incident->meta['reason']);
+        $this->assertSame($severity, $incident->severity);
+    }
+
     /** Asserts the notification went out AND that email was one of its channels. */
     protected function assertEmailed(string $notificationClass): void
     {
@@ -185,13 +252,30 @@ class IncidentEmailCoverageTest extends TestCase
     /** A checker whose TLS probe returns a fixed date instead of opening a socket. */
     protected function checkerWithCertificateExpiring(Carbon $expiresAt): WebsiteChecker
     {
-        return new class($expiresAt) extends WebsiteChecker
-        {
-            public function __construct(protected Carbon $expiresAt) {}
+        return $this->checkerWithCertificate(['expires_at' => $expiresAt]);
+    }
 
-            protected function certificateExpiryDate(string $url): ?Carbon
+    /** A checker whose TLS probe returns a healthy certificate, with $overrides applied. */
+    protected function checkerWithCertificate(array $overrides): WebsiteChecker
+    {
+        $cert = $overrides + [
+            'reachable' => true,
+            'expires_at' => now()->addMonths(6),
+            'issuer' => "R3 (Let's Encrypt)",
+            'names' => ['ssl.example'],
+            'chain_valid' => true,
+            'hostname_match' => true,
+            'protocol' => 'TLSv1.3',
+            'error' => null,
+        ];
+
+        return new class($cert) extends WebsiteChecker
+        {
+            public function __construct(protected array $cert) {}
+
+            protected function inspectCertificate(string $url): ?array
             {
-                return $this->expiresAt;
+                return $this->cert;
             }
         };
     }

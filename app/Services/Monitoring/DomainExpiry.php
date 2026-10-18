@@ -2,9 +2,14 @@
 
 namespace App\Services\Monitoring;
 
+use App\Services\Security\OutboundUrlGuard;
+use GuzzleHttp\Psr7\FnStream;
+use GuzzleHttp\Psr7\Utils as Psr7Utils;
+use GuzzleHttp\Utils as GuzzleUtils;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Psr\Http\Message\RequestInterface;
 use Throwable;
 
 /**
@@ -29,6 +34,15 @@ class DomainExpiry
     /** The IANA bootstrap service, which redirects to whichever registry is authoritative. */
     protected const RDAP_BASE = 'https://rdap.org/domain/';
 
+    // How long one apex's answer is reused within a run.
+    protected const CACHE_SECONDS = 3600;
+
+    // RDAP answers are a few KB; anything past this is dropped, not buffered.
+    public const MAX_BODY_BYTES = 1024 * 1024;
+
+    /** apex => [?Carbon, cached_at]: sites sharing an apex cost one RDAP call. */
+    protected array $cache = [];
+
     /**
      * The expiry date for a URL's domain, or null when nobody will tell us.
      */
@@ -36,14 +50,36 @@ class DomainExpiry
     {
         $domain = $this->registrableDomain($url);
 
-        if (! $domain) {
+        if ($domain && function_exists('idn_to_ascii') && preg_match('/[^\x20-\x7e]/', $domain)) {
+            $domain = idn_to_ascii($domain, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46) ?: null;
+        }
+
+        // Only a plain hostname may reach the RDAP path: no "/", "?", "#" or "@" smuggled in.
+        if (! $domain || ! preg_match('/^[a-z0-9.-]+$/', strtolower($domain))) {
             return null;
         }
 
+        $domain = strtolower($domain);
+
+        if (isset($this->cache[$domain]) && $this->cache[$domain][1] > time() - self::CACHE_SECONDS) {
+            return $this->cache[$domain][0]?->copy();
+        }
+
+        $found = $this->fetch($domain);
+        $this->cache[$domain] = [$found, time()];
+
+        return $found?->copy();
+    }
+
+    protected function fetch(string $domain): ?Carbon
+    {
         try {
+            // Guard + pinning like every other outbound call: rdap.org redirects to registries nobody vetted.
             $response = Http::acceptJson()
                 ->timeout(10)
                 ->connectTimeout(5)
+                ->withOptions(OutboundUrlGuard::httpOptions())
+                ->setHandler($this->cappedBodyHandler(OutboundUrlGuard::pinningHandler(GuzzleUtils::chooseHandler())))
                 ->get(self::RDAP_BASE.$domain);
         } catch (Throwable $e) {
             Log::info("DomainExpiry: RDAP tidak dapat dihubungi untuk {$domain}: {$e->getMessage()}");
@@ -58,6 +94,27 @@ class DomainExpiry
         }
 
         return $this->expiryFromEvents($response->json('events') ?? []);
+    }
+
+    /** Same capped-sink pattern as WebsiteChecker::cappedBodyHandler(): memory stays bounded. */
+    protected function cappedBodyHandler(callable $handler): callable
+    {
+        return function (RequestInterface $request, array $options) use ($handler) {
+            $buffer = Psr7Utils::streamFor('');
+            $written = 0;
+
+            $options['sink'] = FnStream::decorate($buffer, [
+                'write' => function (string $data) use ($buffer, &$written): int {
+                    if ($written < self::MAX_BODY_BYTES) {
+                        $written += $buffer->write(substr($data, 0, self::MAX_BODY_BYTES - $written));
+                    }
+
+                    return strlen($data);
+                },
+            ]);
+
+            return $handler($request, $options);
+        };
     }
 
     /**

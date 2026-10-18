@@ -39,8 +39,25 @@ class Incident extends Model
         ];
     }
 
+    /** Shown instead of a guard refusal's stored text, which on pre-deploy rows names the internal IP. */
+    public const BLOCKED_MESSAGE = 'Alamat ini ditolak karena mengarah ke jaringan internal atau tidak diizinkan.';
+
     /** @var array{from: ?Carbon, to: Carbon}|null memoized outageWindow() result */
     protected ?array $outageWindow = null;
+
+    /** $text, or BLOCKED_MESSAGE when it is a guard refusal (error_type, or the old "jaringan internal (<ip>)" wording). */
+    public static function redactBlocked(?string $text, ?string $errorType = null): ?string
+    {
+        return $errorType === 'blocked' || str_contains((string) $text, 'jaringan internal (') ? self::BLOCKED_MESSAGE : $text;
+    }
+
+    /** description for display: a downtime row refused by the guard gets the generic text. */
+    public function displayDescription(): ?string
+    {
+        return $this->type === 'downtime'
+            ? static::redactBlocked($this->description, $this->meta['error_type'] ?? null)
+            : $this->description;
+    }
 
     public function website(): BelongsTo
     {
@@ -136,7 +153,7 @@ class Incident extends Model
             'downtime' => [
                 'Mulai Antara' => $this->outageWindowLabel(),
                 'Kode Status HTTP' => isset($meta['status_code']) ? "HTTP {$meta['status_code']}" : 'Tidak ada respons',
-                'Pesan Error' => $meta['error_message'] ?? null,
+                'Pesan Error' => static::redactBlocked($meta['error_message'] ?? null, $meta['error_type'] ?? null),
                 'Kegagalan Berturut-turut' => isset($meta['consecutive_failures']) ? "{$meta['consecutive_failures']}x" : null,
                 // Deliberately labelled "Dugaan": this is inferred from the shape of
                 // our own checks, not observed on the server. See App\Services\Monitoring\OutageCause.
@@ -164,7 +181,16 @@ class Incident extends Model
                 'Ukuran Sekarang' => isset($meta['current_length']) ? number_format($meta['current_length']).' byte' : null,
             ],
             'ssl' => [
+                'Masalah' => match ($meta['reason'] ?? null) {
+                    'expiring' => 'Sertifikat akan kedaluwarsa',
+                    'expired' => 'Sertifikat sudah kedaluwarsa',
+                    'hostname' => 'Sertifikat tidak cocok dengan nama host',
+                    'chain' => 'Rantai sertifikat tidak valid',
+                    default => null,
+                },
                 'Kedaluwarsa Pada' => isset($meta['expires_at']) ? Carbon::parse($meta['expires_at'])->translatedFormat('d F Y') : null,
+                'Penerbit' => $meta['issuer'] ?? null,
+                'Host' => $meta['host'] ?? null,
             ],
             'dns' => [
                 // One line per record type, showing exactly what moved - an

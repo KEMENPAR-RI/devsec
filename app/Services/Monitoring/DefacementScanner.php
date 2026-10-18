@@ -225,6 +225,7 @@ class DefacementScanner
                 ->timeout(15)
                 ->connectTimeout(10)
                 ->withOptions(OutboundUrlGuard::httpOptions())
+                ->setHandler(OutboundUrlGuard::pinnedHandler())
                 ->get($url);
         } catch (Throwable) {
             return null;
