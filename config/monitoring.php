@@ -18,6 +18,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Cek Ulang Situs Offline
+    |--------------------------------------------------------------------------
+    |
+    | Situs yang sudah down 24 jam atau lebih dicek setiap sekian menit (5-60;
+    | di luar itu atau non-angka jatuh ke 10) sampai online lagi. Sebelum 24 jam
+    | dan setelah online, situs memakai interval normalnya. Tidak berlaku untuk
+    | scan judol.
+    |
+    */
+    'offline_recheck_minutes' => filter_var(env('MONITORING_OFFLINE_RECHECK_MINUTES', 10), FILTER_VALIDATE_INT, [
+        'options' => ['default' => 10, 'min_range' => 5, 'max_range' => 60],
+    ]),
+
+    /*
+    |--------------------------------------------------------------------------
     | Sertifikat SSL
     |--------------------------------------------------------------------------
     |

@@ -143,23 +143,13 @@ class Website extends Model
     /**
      * Whether this website's check interval has elapsed (or it has never been checked).
      *
-     * A site that has been down for a full day straight drops to one automatic probe
-     * every 24 hours: every check is a request that times out, and after a day of
-     * them the next one is not news. "Cek Sekarang" still dispatches the job directly
-     * and bypasses this - see App\Livewire\Websites\Show::checkNow(). One successful
-     * check clears last_status back to 'up' and the normal cadence resumes on its own.
-     *
-     * Note the asymmetry with isOffline(): this must not cost a query per site, so
-     * it reads consecutive_failures (already on the row) rather than the open
-     * incident. The two agree in practice - a site accumulates a day of failures
-     * precisely when its downtime incident is a day old.
+     * A site down for a full day (isPausedForOffline()) is re-checked every
+     * monitoring.offline_recheck_minutes (see effectiveCheckIntervalMinutes()) until
+     * it recovers. One successful check clears last_status back to 'up' and the
+     * normal interval resumes on its own.
      */
     public function isDueForCheck(): bool
     {
-        if ($this->isPausedForOffline()) {
-            return $this->last_checked_at === null || $this->last_checked_at->addDay()->isPast();
-        }
-
         if ($this->last_checked_at === null) {
             return true;
         }
@@ -171,15 +161,35 @@ class Website extends Model
 
         // 30s early so the every-minute scheduler does not stretch the interval by a tick.
         return $this->last_checked_at
-            ->addMinutes($verifying ? 1 : $this->check_interval_minutes)
+            ->addMinutes($verifying ? 1 : $this->effectiveCheckIntervalMinutes())
             ->subSeconds(30)
             ->isPast();
     }
 
     /**
-     * Whether automatic checking has been suspended because the site has been down
-     * for at least a day - the same threshold isOffline() colours the dot gray at,
-     * derived from the failure streak so a list of sites costs no extra queries.
+     * Minutes between automatic checks: the site's own interval (also during the
+     * first day of an outage), or monitoring.offline_recheck_minutes once it has been
+     * down a full day. Reads only the row and config, so it is safe to call per site
+     * in a loop.
+     */
+    public function effectiveCheckIntervalMinutes(): int
+    {
+        if (! $this->isPausedForOffline()) {
+            return max((int) $this->check_interval_minutes, 1);
+        }
+
+        // Out-of-range or non-numeric values fall back to 10, never to 1.
+        return filter_var(config('monitoring.offline_recheck_minutes'), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 10, 'min_range' => 5, 'max_range' => 60],
+        ]);
+    }
+
+    /**
+     * Whether the site has been down for at least a day - the same threshold
+     * isOffline() colours the dot gray at, derived from the failure streak so a
+     * list of sites costs no extra queries. Switches checking to the offline
+     * re-check interval (effectiveCheckIntervalMinutes()); WebsiteChecker uses it to
+     * stay quiet about a known long outage.
      */
     public function isPausedForOffline(): bool
     {
@@ -187,9 +197,10 @@ class Website extends Model
             return false;
         }
 
-        // How many consecutive failures a full day of checking would produce. A site
-        // checked every 5 minutes reaches a day at 288; one checked hourly at 24.
-        $failuresPerDay = (int) ceil(1440 / max($this->check_interval_minutes, 1));
+        // How many consecutive failures a full day at the site's own interval produces:
+        // 288 at 5 minutes, 24 hourly. Must not use effectiveCheckIntervalMinutes()
+        // (it depends on this); failures only grow while down, so once reached it holds.
+        $failuresPerDay = (int) ceil(1440 / max((int) $this->check_interval_minutes, 1));
 
         return $this->consecutive_failures >= $failuresPerDay;
     }

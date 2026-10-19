@@ -200,7 +200,7 @@ class UptimeVerificationTest extends TestCase
         $this->assertFalse($website->isDueForCheck());
     }
 
-    public function test_the_long_down_backoff_still_wins_over_verification(): void
+    public function test_a_long_outage_is_still_checked_at_the_offline_interval(): void
     {
         $this->travelTo(Carbon::parse('2026-10-18 10:00:00'));
         $website = $this->site([
@@ -208,12 +208,12 @@ class UptimeVerificationTest extends TestCase
             'down_threshold_failures' => 3,
             'consecutive_failures' => 288,
             'last_status' => 'down',
-            'last_checked_at' => now()->subHours(23),
+            'last_checked_at' => now()->subSeconds(9 * 60 + 29),
         ]);
 
         $this->assertFalse($website->isDueForCheck());
 
-        $website->last_checked_at = now()->subHours(25);
+        $website->last_checked_at = now()->subSeconds(9 * 60 + 31);
         $this->assertTrue($website->isDueForCheck());
     }
 
