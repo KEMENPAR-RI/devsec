@@ -66,13 +66,23 @@ class Show extends Component
         $job = new CheckWebsiteJob($this->website);
 
         // Take the unique lock here so a dropped duplicate can be reported; Bus::dispatch skips the second acquire.
-        if (! (new UniqueLock(app(Cache::class)))->acquire($job)) {
+        $lock = new UniqueLock(app(Cache::class));
+
+        if (! $lock->acquire($job)) {
             $this->toastInfo('Pengecekan sudah dalam antrean.');
 
             return;
         }
 
-        Bus::dispatch($job);
+        try {
+            Bus::dispatch($job);
+        } catch (Throwable $e) {
+            // Otherwise the button stays "already queued" until uniqueFor expires.
+            $lock->release($job);
+
+            throw $e;
+        }
+
         $this->toastSuccess('Pengecekan dikirim ke antrean.');
     }
 
@@ -152,7 +162,26 @@ class Show extends Component
     {
         $this->authorize('situs.update');
 
-        ScanWebsiteForJudolJob::dispatch($this->website);
+        $job = new ScanWebsiteForJudolJob($this->website);
+
+        // Same pattern as checkNow(): report a crawl that is already queued instead of dropping it silently.
+        $lock = new UniqueLock(app(Cache::class));
+
+        if (! $lock->acquire($job)) {
+            $this->toastInfo('Pemindaian judol situs ini sudah dalam antrean.');
+
+            return;
+        }
+
+        try {
+            Bus::dispatch($job);
+        } catch (Throwable $e) {
+            // Otherwise the button stays "already queued" until uniqueFor expires.
+            $lock->release($job);
+
+            throw $e;
+        }
+
         $this->toastSuccess('Pemindaian judol (full crawl) dikirim ke antrean. Bisa makan waktu beberapa menit untuk situs besar.');
     }
 

@@ -4,6 +4,7 @@ namespace App\Livewire\Websites;
 
 use App\Jobs\CheckWebsiteJob;
 use App\Livewire\Concerns\InteractsWithToasts;
+use App\Models\AuditLog;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Rules\PublicUrl;
@@ -20,6 +21,7 @@ use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
+use Throwable;
 
 #[Layout('components.layouts.app')]
 class Index extends Component
@@ -38,6 +40,10 @@ class Index extends Component
     #[Url]
     public string $activity = '';
 
+    /** '' for all, otherwise 'priority' or 'secondary'. */
+    #[Url]
+    public string $category = '';
+
     public bool $showModal = false;
 
     public ?Website $editing = null;
@@ -48,7 +54,7 @@ class Index extends Component
 
     public int $checkIntervalMinutes = 5;
 
-    public int $judolScanIntervalMinutes = 60;
+    public int $judolScanIntervalMinutes = 360;
 
     public int $downThresholdFailures = 3;
 
@@ -59,6 +65,8 @@ class Index extends Component
     public bool $isInternalOnly = false;
 
     public bool $dnsIpRotates = false;
+
+    public bool $isPriority = false;
 
     /**
      * Typed by hand for the registries that publish no RDAP - .id among them.
@@ -91,7 +99,7 @@ class Index extends Component
     {
         $this->authorize('situs.create');
 
-        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'dnsIpRotates', 'domainExpiresAt']);
+        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'dnsIpRotates', 'isPriority', 'domainExpiresAt']);
 
         // Defaults come from Pengaturan > Konfigurasi Aplikasi rather than being
         // hard-coded here, so an operator can set them once for every new site.
@@ -118,6 +126,7 @@ class Index extends Component
         $this->isActive = $website->is_active;
         $this->isInternalOnly = $website->is_internal_only;
         $this->dnsIpRotates = (bool) $website->dns_ip_rotates;
+        $this->isPriority = (bool) $website->is_priority;
         $this->domainExpiresAt = $website->domain_expires_at?->format('Y-m-d') ?? '';
         $this->showModal = true;
     }
@@ -140,6 +149,7 @@ class Index extends Component
             'isActive' => ['boolean'],
             'isInternalOnly' => ['boolean'],
             'dnsIpRotates' => ['boolean'],
+            'isPriority' => ['boolean'],
             'domainExpiresAt' => ['nullable', 'date'],
         ];
     }
@@ -165,6 +175,7 @@ class Index extends Component
             'is_active' => $data['isActive'],
             'is_internal_only' => $data['isInternalOnly'],
             'dns_ip_rotates' => $data['dnsIpRotates'],
+            'is_priority' => $data['isPriority'],
             'domain_expires_at' => $data['domainExpiresAt'] ?: null,
         ]);
 
@@ -315,11 +326,12 @@ class Index extends Component
         'responseTimeThresholdMs' => false,
         'isActive' => false,
         'isInternalOnly' => false,
+        'isPriority' => false,
     ];
 
     public int $massCheckIntervalMinutes = 5;
 
-    public int $massJudolScanIntervalMinutes = 60;
+    public int $massJudolScanIntervalMinutes = 360;
 
     public int $massDownThresholdFailures = 3;
 
@@ -329,6 +341,8 @@ class Index extends Component
 
     public bool $massIsInternalOnly = false;
 
+    public bool $massIsPriority = false;
+
     /** The mass-edit form field for each toggle, and the column it writes to. */
     protected const MASS_FIELDS = [
         'checkIntervalMinutes' => ['massCheckIntervalMinutes', 'check_interval_minutes'],
@@ -337,7 +351,11 @@ class Index extends Component
         'responseTimeThresholdMs' => ['massResponseTimeThresholdMs', 'response_time_threshold_ms'],
         'isActive' => ['massIsActive', 'is_active'],
         'isInternalOnly' => ['massIsInternalOnly', 'is_internal_only'],
+        'isPriority' => ['massIsPriority', 'is_priority'],
     ];
+
+    /** Upper bound on sites one mass edit may touch. */
+    protected const MASS_MAX_SITES = 1000;
 
     /** Ticking the header box selects every site the current filter matches. */
     public function toggleSelectAll(bool $checked): void
@@ -378,10 +396,20 @@ class Index extends Component
     {
         $this->authorize('situs.update');
 
-        $applying = array_keys(array_filter($this->massApply));
+        // Unknown keys from the client are ignored instead of hitting an undefined MASS_FIELDS index.
+        $applying = array_keys(array_filter(array_intersect_key($this->massApply, self::MASS_FIELDS)));
 
-        if ($applying === [] || $this->selected === []) {
+        // $selected comes from the client: strings only, and capped so one request cannot bloat the audit line.
+        $selected = array_values(array_filter($this->selected, 'is_string'));
+
+        if ($applying === [] || $selected === []) {
             $this->addError('massApply', 'Pilih minimal satu setelan yang ingin diubah.');
+
+            return;
+        }
+
+        if (count($selected) > self::MASS_MAX_SITES) {
+            $this->addError('massApply', 'Edit massal maksimal '.self::MASS_MAX_SITES.' situs sekaligus.');
 
             return;
         }
@@ -403,7 +431,12 @@ class Index extends Component
             $changes[$column] = $this->{$property};
         }
 
-        $count = Website::whereIn('uuid', $this->selected)->update($changes);
+        // Only sites that really exist are updated and named in the audit line.
+        $uuids = Website::whereIn('uuid', $selected)->pluck('uuid')->all();
+        $count = Website::whereIn('uuid', $uuids)->update($changes);
+
+        // The bulk update bypasses the Auditable model events, so log it as one line.
+        AuditLog::record('situs.diubah-massal', "{$count} situs", $changes + ['situs' => $uuids]);
 
         $this->showMassModal = false;
         $this->selected = [];
@@ -423,16 +456,32 @@ class Index extends Component
         $this->selected = [];
     }
 
+    public function updatingCategory(): void
+    {
+        $this->resetPage();
+        $this->selected = [];
+    }
+
     public function clearFilters(): void
     {
-        $this->reset('search', 'status', 'activity');
+        $this->reset('search', 'status', 'activity', 'category');
         $this->resetPage();
         $this->selected = [];
     }
 
     public function hasFilters(): bool
     {
-        return $this->search !== '' || $this->status !== '' || $this->activity !== '';
+        return $this->search !== '' || $this->status !== '' || $this->activity !== '' || $this->categoryFilter() !== null;
+    }
+
+    /** is_priority value for the category filter; null for '' or any unknown value from the URL. */
+    protected function categoryFilter(): ?bool
+    {
+        return match ($this->category) {
+            'priority' => true,
+            'secondary' => false,
+            default => null,
+        };
     }
 
     /** The list the current filters match, without pagination. */
@@ -443,6 +492,7 @@ class Index extends Component
                 ->where('name', 'like', "%{$this->search}%")
                 ->orWhere('url', 'like', "%{$this->search}%")))
             ->when($this->activity !== '', fn ($q) => $q->where('is_active', $this->activity === 'active'))
+            ->when($this->categoryFilter() !== null, fn ($q) => $q->where('is_priority', $this->categoryFilter()))
             ->when($this->status !== '', fn ($q) => $q->whereIn('id', $this->idsMatchingStatus()));
     }
 
@@ -462,6 +512,7 @@ class Index extends Component
                 ->where('name', 'like', "%{$this->search}%")
                 ->orWhere('url', 'like', "%{$this->search}%")))
             ->when($this->activity !== '', fn ($q) => $q->where('is_active', $this->activity === 'active'))
+            ->when($this->categoryFilter() !== null, fn ($q) => $q->where('is_priority', $this->categoryFilter()))
             ->get();
 
         $offline = Website::offlineIds($websites);
@@ -485,13 +536,23 @@ class Index extends Component
         $job = new CheckWebsiteJob($website);
 
         // Take the unique lock here so a dropped duplicate can be reported; Bus::dispatch skips the second acquire.
-        if (! (new UniqueLock(app(Cache::class)))->acquire($job)) {
+        $lock = new UniqueLock(app(Cache::class));
+
+        if (! $lock->acquire($job)) {
             $this->toastInfo("Pengecekan {$website->name} sudah dalam antrean.");
 
             return;
         }
 
-        Bus::dispatch($job);
+        try {
+            Bus::dispatch($job);
+        } catch (Throwable $e) {
+            // Otherwise the button stays "already queued" until uniqueFor expires.
+            $lock->release($job);
+
+            throw $e;
+        }
+
         $this->toastSuccess("Pengecekan {$website->name} dikirim ke antrean.");
     }
 
@@ -530,6 +591,12 @@ class Index extends Component
         $websites = $this->filteredQuery()
             // Newest first: a freshly added site is the one being checked on.
             ->latest()
+            // Counted in the page query itself, so the row badges add no per-row queries.
+            ->withCount([
+                'incidents as open_incidents_count' => fn ($q) => $q->open(),
+                // Only unreviewed findings, like DashboardOverview::newJudolCount().
+                'judolDetections' => fn ($q) => $q->where('status', 'new'),
+            ])
             ->paginate(10);
 
         return view('livewire.websites.index', [

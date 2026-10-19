@@ -9,6 +9,7 @@ use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -51,7 +52,7 @@ class BlockedHomepageScanTest extends TestCase
     {
         JudolKeyword::firstOrCreate(['keyword' => 'togel singapore'], ['is_active' => true]);
 
-        Http::fake(fn () => throw new \Illuminate\Http\Client\ConnectionException('cURL error 28: Operation timed out'));
+        Http::fake(fn () => throw new ConnectionException('cURL error 28: Operation timed out'));
 
         $website = Website::factory()->create(['url' => 'http://dead.example']);
 

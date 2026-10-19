@@ -4,7 +4,9 @@ namespace App\Notifications;
 
 use App\Models\Incident;
 use App\Models\Website;
+use App\Notifications\Concerns\QueuesOnChecks;
 use App\Notifications\Concerns\SendsIncidentEmail;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Carbon;
 
@@ -15,9 +17,9 @@ use Illuminate\Support\Carbon;
  * the content is clean - right until the registration lapses and the whole domain
  * stops resolving. The warning only has value ahead of the date.
  */
-class DomainExpiringNotification extends Notification
+class DomainExpiringNotification extends Notification implements ShouldQueue
 {
-    use SendsIncidentEmail;
+    use QueuesOnChecks, SendsIncidentEmail;
 
     public function __construct(public Website $website, public Incident $incident) {}
 

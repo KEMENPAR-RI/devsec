@@ -114,7 +114,7 @@ class Index extends Component
 
     public int $defaultCheckIntervalMinutes = 5;
 
-    public int $defaultJudolScanIntervalMinutes = 60;
+    public int $defaultJudolScanIntervalMinutes = 360;
 
     public int $defaultDownThresholdFailures = 3;
 

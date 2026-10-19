@@ -432,7 +432,7 @@ class UptimeVerificationTest extends TestCase
         $job = new CheckWebsiteJob($website);
 
         $this->assertSame((string) $website->id, $job->uniqueId());
-        $this->assertSame(180, $job->uniqueFor);
+        $this->assertSame(900, $job->uniqueFor);
         $this->assertSame(150, $job->timeout);
     }
 

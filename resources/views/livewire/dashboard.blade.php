@@ -245,7 +245,7 @@
         </section>
 
         {{-- Performance chart --}}
-        <section class="{{ $cardBase }} lg:col-span-2 lg:col-start-1 lg:row-start-1">
+        <section class="{{ $cardBase }} flex flex-col lg:col-span-2 lg:col-start-1 lg:row-start-1">
             <div class="{{ $cardHead }}">
                 <div class="min-w-0">
                     <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Performa</h2>
@@ -334,10 +334,12 @@
                 </div>
             </div>
 
-            <div class="p-5 transition-opacity" wire:loading.class="opacity-50" wire:target="range,selectWebsite">
+            <div class="flex flex-1 flex-col p-5 transition-opacity" wire:loading.class="opacity-50" wire:target="range,selectWebsite">
                 <x-line-chart
+                    class="flex-1"
                     :series="$series"
                     :height="220"
+                    :fill="true"
                     :threshold="$selectedSite?->response_time_threshold_ms"
                     :empty="$liveSites->isEmpty()
                         ? 'Belum ada situs yang dipantau.'

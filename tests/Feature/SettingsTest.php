@@ -14,6 +14,10 @@ use App\Services\Monitoring\JudolAiClassifier;
 use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolScanner;
 use App\Services\Notifications\MailSettings;
+use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Response;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
@@ -128,6 +132,40 @@ class SettingsTest extends TestCase
         $this->assertSame('sk-ant-real-key', $client->apiKey);
         $this->assertSame('', $client->authToken);
         $this->assertSame('api.anthropic.com', (fn () => $this->getBaseUrl())->call($client)->getHost());
+    }
+
+    public function test_client_is_bounded_by_configured_timeout_and_retries(): void
+    {
+        config(['judol.ai.timeout' => 12.5, 'judol.ai.max_retries' => 0]);
+
+        $client = (new JudolAiSettings)->client('sk-ant-test', 'ws-1');
+        $options = (fn () => $this->options)->call($client);
+
+        $this->assertSame(12.5, $options->timeout);
+        $this->assertSame(0, $options->maxRetries);
+        $this->assertSame(['anthropic-workspace-id' => 'ws-1'], $options->extraHeaders);
+        // The SDK doesn't enforce `timeout` itself; the transport must.
+        $this->assertInstanceOf(GuzzleClient::class, $options->transporter);
+        $this->assertSame(12.5, $options->transporter->getConfig('timeout'));
+    }
+
+    public function test_client_caps_a_large_retry_after(): void
+    {
+        config(['judol.ai.max_retry_delay' => 10]);
+
+        $transporter = (fn () => $this->options)->call((new JudolAiSettings)->client('sk-ant-test'))->transporter;
+        $transporter->getConfig('handler')->setHandler(new MockHandler([
+            new Response(429, ['retry-after' => '600', 'retry-after-ms' => '600000']),
+            new Response(429, ['retry-after' => '3']),
+        ]));
+
+        $request = new Request('POST', 'https://api.anthropic.com/v1/messages');
+
+        $capped = $transporter->sendRequest($request);
+        $this->assertSame('10', $capped->getHeaderLine('retry-after'));
+        $this->assertSame('10000', $capped->getHeaderLine('retry-after-ms'));
+
+        $this->assertSame('3', $transporter->sendRequest($request)->getHeaderLine('retry-after'));
     }
 
     public function test_scanner_skips_ai_when_only_env_has_a_key(): void

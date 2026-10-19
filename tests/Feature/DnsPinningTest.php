@@ -211,6 +211,7 @@ class DnsPinningTest extends TestCase
 
     public function test_an_unresolvable_site_is_a_dns_failure_without_reaching_curl(): void
     {
+        Http::allowStrayRequests(); // unresolvable: pinningHandler() refuses before any socket
         Notification::fake();
         Sleep::fake();
         User::factory()->create();
@@ -255,6 +256,7 @@ class DnsPinningTest extends TestCase
 
     public function test_qa_retry_redirect_and_ssl_fallback_through_the_checker_are_all_pinned(): void
     {
+        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
         Notification::fake();
         Sleep::fake();
         User::factory()->create();
@@ -366,6 +368,7 @@ class DnsPinningTest extends TestCase
      */
     public function test_qa_the_retry_after_a_dns_blip_asks_the_resolver_again(): void
     {
+        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
         Notification::fake();
         Sleep::fake();
         User::factory()->create();
@@ -529,6 +532,7 @@ class DnsPinningTest extends TestCase
 
     public function test_the_judol_crawler_connects_only_to_vetted_addresses(): void
     {
+        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
         OutboundUrlGuard::fakeDns(['judol.test' => ['93.184.216.34']]);
         OutboundUrlGuard::fakeTransport($this->transport());
 
@@ -541,6 +545,7 @@ class DnsPinningTest extends TestCase
 
     public function test_the_defacement_scanner_connects_only_to_vetted_addresses(): void
     {
+        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
         OutboundUrlGuard::fakeDns(['deface.test' => ['93.184.216.34']]);
         OutboundUrlGuard::fakeTransport($this->transport());
         $fetch = new ReflectionMethod(DefacementScanner::class, 'fetch');
@@ -555,6 +560,7 @@ class DnsPinningTest extends TestCase
 
     public function test_the_judol_evidence_fetch_connects_only_to_vetted_addresses(): void
     {
+        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
         OutboundUrlGuard::fakeDns(['img.test' => ['93.184.216.34']]);
         OutboundUrlGuard::fakeTransport($this->transport());
 

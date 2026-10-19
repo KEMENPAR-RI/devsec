@@ -508,6 +508,7 @@ class DomainMonitoringTest extends TestCase
 
     public function test_a_dns_failure_is_no_drift_evidence(): void
     {
+        Http::allowStrayRequests(); // unresolvable: pinningHandler() refuses before any socket
         Notification::fake();
         Sleep::fake();
         OutboundUrlGuard::fakeDns([]);

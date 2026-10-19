@@ -355,6 +355,19 @@ class TvDisplayTest extends TestCase
         $this->get(route('tv'))->assertSeeInOrder(['ZZZ Down', 'AAA Online']);
     }
 
+    public function test_priority_sites_lead_their_status_group_without_exposing_the_flag(): void
+    {
+        $this->siteWithCheck('AAA Online', 'up');
+        $this->siteWithCheck('BBB Down', 'down');
+        $this->siteWithCheck('ZZZ Priority Online', 'up')->update(['is_priority' => true]);
+
+        $cards = app(TvBoard::class)->build()['kartu'];
+
+        // A non-priority problem still outranks a priority site that is up.
+        $this->assertSame(['BBB Down', 'ZZZ Priority Online', 'AAA Online'], array_column($cards, 'name'));
+        $this->assertArrayNotHasKey('priority', $cards[1]);
+    }
+
     public function test_livewire_component_renders_with_no_public_properties(): void
     {
         $this->siteWithCheck('Livewire Site', 'up');

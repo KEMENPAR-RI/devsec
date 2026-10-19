@@ -117,7 +117,7 @@ class AppSettings
 
     public function defaultJudolScanIntervalMinutes(): int
     {
-        return (int) (Setting::get('default_judol_scan_interval_minutes') ?: 60);
+        return (int) (Setting::get('default_judol_scan_interval_minutes') ?: 360);
     }
 
     public function defaultDownThresholdFailures(): int

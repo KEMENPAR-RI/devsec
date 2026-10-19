@@ -5,8 +5,12 @@ namespace App\Services\Monitoring;
 use Anthropic\Client;
 use Anthropic\RequestOptions;
 use App\Models\Setting;
+use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Log;
+use Psr\Http\Message\ResponseInterface;
 use RuntimeException;
 use Throwable;
 
@@ -115,14 +119,51 @@ class JudolAiSettings
             throw new RuntimeException('Belum ada Anthropic API key yang dikonfigurasi. Atur di halaman Pengaturan.');
         }
 
+        $timeout = (float) config('judol.ai.timeout', 30);
+
+        // The SDK only records `timeout`; the transport is what actually enforces it.
         return new Client(
             apiKey: $apiKey,
             authToken: '',
             webhookKey: '',
             baseUrl: 'https://api.anthropic.com',
-            requestOptions: blank($workspaceId)
-                ? null
-                : RequestOptions::with(extraHeaders: ['anthropic-workspace-id' => $workspaceId]),
+            requestOptions: RequestOptions::with(
+                timeout: $timeout,
+                maxRetries: (int) config('judol.ai.max_retries', 1),
+                extraHeaders: blank($workspaceId) ? null : ['anthropic-workspace-id' => $workspaceId],
+                transporter: $this->transporter($timeout),
+            ),
         );
+    }
+
+    /**
+     * The SDK sleeps for whatever retry-after says, uncapped - so cap it here,
+     * before the SDK reads the response.
+     */
+    protected function transporter(float $timeout): GuzzleClient
+    {
+        $maxDelay = (float) config('judol.ai.max_retry_delay', 10);
+
+        $stack = HandlerStack::create();
+        $stack->push(Middleware::mapResponse(function (ResponseInterface $response) use ($maxDelay) {
+            if ($response->hasHeader('retry-after')) {
+                $value = $response->getHeaderLine('retry-after');
+                $seconds = is_numeric($value) ? (float) $value : (float) max(0, (strtotime($value) ?: 0) - time());
+                $response = $response->withHeader('retry-after', (string) min($seconds, $maxDelay));
+            }
+
+            if ($response->hasHeader('retry-after-ms')) {
+                $ms = (float) $response->getHeaderLine('retry-after-ms');
+                $response = $response->withHeader('retry-after-ms', (string) min($ms, $maxDelay * 1000));
+            }
+
+            return $response;
+        }));
+
+        return new GuzzleClient([
+            'handler' => $stack,
+            'timeout' => $timeout,
+            'connect_timeout' => min(10.0, $timeout),
+        ]);
     }
 }

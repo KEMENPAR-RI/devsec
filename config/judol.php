@@ -145,7 +145,7 @@ return [
     |
     */
     'max_sitemap_urls' => 50,
-    'max_pages' => 60,
+    'max_pages' => 30,
     'max_depth' => 3,
 
     /*
@@ -153,7 +153,7 @@ return [
     |
     | max_pages membatasi JUMLAH halaman, bukan LAMANYA - dan yang ditegakkan
     | oleh queue adalah waktu. Situs lambat (~16 detik per halaman pada hosting
-    | bersama) menembus $timeout job jauh sebelum halaman ke-60, lalu dibunuh
+    | bersama) menembus $timeout job jauh sebelum halaman terakhir, lalu dibunuh
     | queue:work dengan SIGKILL: worker ikut mati, systemd me-restart, job yang
     | sama diambil lagi - dan gagal lagi, selamanya.
     |
@@ -162,7 +162,15 @@ return [
     | berikutnya. Harus lebih kecil dari ScanWebsiteForJudolJob::$timeout (300)
     | dengan margin untuk satu fetch terakhir yang sedang berjalan.
     */
-    'max_seconds' => 240,
+    'max_seconds' => 120,
+
+    /*
+    | Rem dispatch websites:scan-judol per tick (tidak berlaku untuk --now/--sync):
+    | lewati bila antrean scans sudah sepanjang max_queue, dan kirim paling
+    | banyak max_dispatch_per_tick situs per menit.
+    */
+    'max_queue' => (int) env('JUDOL_MAX_QUEUE', 20),
+    'max_dispatch_per_tick' => (int) env('JUDOL_MAX_DISPATCH_PER_TICK', 5),
 
     /*
     |--------------------------------------------------------------------------
@@ -192,6 +200,19 @@ return [
         // Maksimum gambar per halaman yang dikirim ke Claude untuk dibaca (biaya naik
         // seiring jumlah gambar; kebanyakan halaman spam cukup terwakili oleh 1-3 gambar).
         'max_images' => 3,
+
+        // Batas waktu per request ke API Anthropic (detik) dan jumlah retry. Total
+        // terburuk ~ timeout x (1 + max_retries) + jeda retry - harus jauh di bawah
+        // ScanWebsiteForJudolJob::$timeout (300).
+        'timeout' => (float) env('JUDOL_AI_TIMEOUT', 30),
+        'max_retries' => (int) env('JUDOL_AI_MAX_RETRIES', 1),
+
+        // Batas atas jeda retry (detik): header retry-after dari API dipotong ke nilai ini.
+        'max_retry_delay' => (float) env('JUDOL_AI_MAX_RETRY_DELAY', 10),
+
+        // Total waktu panggilan AI per satu scan (detik). Bila habis, sisa halaman
+        // dinilai tanpa AI (seperti AI nonaktif) dan job tetap selesai.
+        'budget_seconds' => (float) env('JUDOL_AI_BUDGET_SECONDS', 120),
 
         /*
         | Pemeriksaan tautan keluar (JudolLinkClassifier).

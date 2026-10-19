@@ -77,6 +77,16 @@
                     </select>
 
                     <select
+                        wire:model.live="category"
+                        aria-label="Saring berdasarkan kategori"
+                        class="rounded-lg border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    >
+                        <option value="">Semua kategori</option>
+                        <option value="priority">Prioritas</option>
+                        <option value="secondary">Sekunder</option>
+                    </select>
+
+                    <select
                         wire:model.live="activity"
                         aria-label="Saring berdasarkan pemantauan"
                         class="rounded-lg border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
@@ -161,9 +171,13 @@
                         <x-status-dot :status="$statusKey" />
 
                         <div class="min-w-0 flex-1">
-                            <a href="{{ route('situs.show', $website) }}" wire:navigate class="truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
-                                {{ $website->name }}
-                            </a>
+                            <div class="flex min-w-0 items-center gap-1.5">
+                                <a href="{{ route('situs.show', $website) }}" wire:navigate class="truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
+                                    {{ $website->name }}
+                                </a>
+                                {{-- Beside the name, not in the column group, so it survives every breakpoint. --}}
+                                <x-priority-badge :priority="$website->is_priority" compact />
+                            </div>
                             <p class="truncate text-xs text-zinc-500 dark:text-zinc-400">{{ $website->url }}</p>
 
                             <div class="mt-2 flex flex-wrap items-center gap-2 md:hidden">
@@ -177,6 +191,9 @@
                                     <span class="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
                                 @endunless
                             </p>
+
+                            {{-- Below the URL until 2xl: the column group has no room for it earlier. --}}
+                            <x-site-health-badges :website="$website" class="mt-2 flex flex-wrap 2xl:hidden" />
                         </div>
 
                         <div class="hidden shrink-0 items-center gap-3 text-xs text-zinc-500 sm:flex dark:text-zinc-400">
@@ -188,6 +205,7 @@
                                 <x-load-badge :level="$load['level']" :response-time="$load['response_time_ms']" />
                             </span>
                             <span class="hidden w-28 text-center font-mono md:block">{{ $uptimeText }}</span>
+                            <x-site-health-badges :website="$website" columns class="hidden 2xl:flex" />
                             <span class="hidden w-20 text-center md:block">
                                 @unless ($website->is_active)
                                     <span class="rounded-full bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">Nonaktif</span>
@@ -262,97 +280,113 @@
                 x-transition:enter="transition ease-out duration-150"
                 x-transition:enter-start="opacity-0 scale-95"
                 x-transition:enter-end="opacity-100 scale-100"
-                class="relative w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl shadow-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-900"
+                class="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl shadow-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-900"
             >
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">{{ $editing ? 'Ubah Situs' : 'Tambah Situs' }}</h2>
 
                 <form wire:submit="save" class="mt-4 flex flex-col gap-4">
-                    <div class="flex flex-col gap-1.5">
-                        <label for="name" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nama Situs</label>
-                        <input
-                            id="name" type="text" wire:model="name" placeholder="Contoh: Website Utama"
-                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                        >
-                        @error('name') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                    </div>
+                    {{-- Two columns from md: values on the left, behaviour toggles on the right. --}}
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-x-6">
+                        <div class="flex flex-col gap-4">
+                            <div class="flex flex-col gap-1.5">
+                                <label for="name" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nama Situs</label>
+                                <input
+                                    id="name" type="text" wire:model="name" placeholder="Contoh: Website Utama"
+                                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                                >
+                                @error('name') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                            </div>
 
-                    <div class="flex flex-col gap-1.5">
-                        <label for="url" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">URL</label>
-                        <input
-                            id="url" type="text" wire:model="url" placeholder="https://contoh.com"
-                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                        >
-                        @error('url') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                    </div>
+                            <div class="flex flex-col gap-1.5">
+                                <label for="url" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">URL</label>
+                                <input
+                                    id="url" type="text" wire:model="url" placeholder="https://contoh.com"
+                                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                                >
+                                @error('url') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                            </div>
 
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="flex flex-col gap-1.5">
-                            <label for="checkIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Cek Uptime (menit)</label>
-                            <input
-                                id="checkIntervalMinutes" type="number" min="1" wire:model="checkIntervalMinutes"
-                                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                            >
-                            @error('checkIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="flex flex-col gap-1.5">
+                                    <label for="checkIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Cek Uptime (menit)</label>
+                                    <input
+                                        id="checkIntervalMinutes" type="number" min="1" wire:model="checkIntervalMinutes"
+                                        class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                                    >
+                                    @error('checkIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                                </div>
+                                <div class="flex flex-col gap-1.5">
+                                    <label for="judolScanIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Scan Judol (menit)</label>
+                                    <input
+                                        id="judolScanIntervalMinutes" type="number" min="5" wire:model="judolScanIntervalMinutes"
+                                        class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                                    >
+                                    @error('judolScanIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col gap-1.5">
+                                <label for="downThresholdFailures" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ambang Batas Down</label>
+                                <input
+                                    id="downThresholdFailures" type="number" min="1" wire:model="downThresholdFailures"
+                                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                                >
+                                @error('downThresholdFailures') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                            </div>
+
+                            <div class="flex flex-col gap-1.5">
+                                <label for="responseTimeThresholdMs" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ambang Batas Response Time (ms)</label>
+                                <input
+                                    id="responseTimeThresholdMs" type="number" min="200" step="100" wire:model="responseTimeThresholdMs"
+                                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                                >
+                                @error('responseTimeThresholdMs') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                            </div>
                         </div>
-                        <div class="flex flex-col gap-1.5">
-                            <label for="judolScanIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Scan Judol (menit)</label>
-                            <input
-                                id="judolScanIntervalMinutes" type="number" min="5" wire:model="judolScanIntervalMinutes"
-                                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                            >
-                            @error('judolScanIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+
+                        <div class="flex flex-col gap-4">
+                            <div class="flex flex-col gap-1.5">
+                                <label for="domainExpiresAt" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Masa Berlaku Domain <span class="font-normal text-zinc-400">(opsional)</span></label>
+                                <input
+                                    id="domainExpiresAt" type="date" wire:model="domainExpiresAt"
+                                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white @error('domainExpiresAt') border-red-400 @enderror"
+                                >
+                                <p class="text-xs text-zinc-400 dark:text-zinc-500">Terisi otomatis bila registri domainnya menyediakan RDAP. Registri .id belum, jadi untuk domain .go.id isikan manual - peringatan dikirim 45 hari sebelum tanggal ini.</p>
+                                @error('domainExpiresAt') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                            </div>
+
+                            <label class="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
+                                <input type="checkbox" wire:model="isActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                Pantau situs ini
+                            </label>
+
+                            <label class="flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
+                                <input type="checkbox" wire:model="isInternalOnly" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                <span>
+                                    Hanya bisa diakses dari jaringan internal/instansi
+                                    <span class="block text-xs text-zinc-400 dark:text-zinc-500">Kalau gagal dicek dari sini, ditampilkan kuning ("Terbatas") - bukan merah ("Down") - karena kemungkinan memang tidak terjangkau dari luar jaringan itu, bukan benar-benar mati.</span>
+                                </span>
+                            </label>
+
+                            <label class="flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
+                                <input type="checkbox" wire:model="dnsIpRotates" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                <span>
+                                    IP berganti-ganti (CDN/load balancer)
+                                    <span class="block text-xs text-zinc-400 dark:text-zinc-500">Perubahan IP A/AAAA dicatat sebagai peringatan, bukan kritis - centang bila situs memang di belakang CDN atau load balancer.</span>
+                                </span>
+                            </label>
+                            @error('dnsIpRotates') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+
+                            <label class="flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
+                                <input type="checkbox" wire:model="isPriority" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                <span>
+                                    Situs prioritas
+                                    <span class="block text-xs text-zinc-400 dark:text-zinc-500">Dicek lebih dulu di antrean saat server sibuk - interval ceknya tetap sama.</span>
+                                </span>
+                            </label>
+                            @error('isPriority') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
                         </div>
                     </div>
-
-                    <div class="flex flex-col gap-1.5">
-                        <label for="downThresholdFailures" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ambang Batas Down</label>
-                        <input
-                            id="downThresholdFailures" type="number" min="1" wire:model="downThresholdFailures"
-                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                        >
-                        @error('downThresholdFailures') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                    </div>
-
-                    <div class="flex flex-col gap-1.5">
-                        <label for="responseTimeThresholdMs" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ambang Batas Response Time (ms)</label>
-                        <input
-                            id="responseTimeThresholdMs" type="number" min="200" step="100" wire:model="responseTimeThresholdMs"
-                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                        >
-                        @error('responseTimeThresholdMs') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                    </div>
-
-                    <div class="flex flex-col gap-1.5">
-                        <label for="domainExpiresAt" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Masa Berlaku Domain <span class="font-normal text-zinc-400">(opsional)</span></label>
-                        <input
-                            id="domainExpiresAt" type="date" wire:model="domainExpiresAt"
-                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white @error('domainExpiresAt') border-red-400 @enderror"
-                        >
-                        <p class="text-xs text-zinc-400 dark:text-zinc-500">Terisi otomatis bila registri domainnya menyediakan RDAP. Registri .id belum, jadi untuk domain .go.id isikan manual - peringatan dikirim 45 hari sebelum tanggal ini.</p>
-                        @error('domainExpiresAt') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                    </div>
-
-                    <label class="flex items-center gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
-                        <input type="checkbox" wire:model="isActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                        Pantau situs ini
-                    </label>
-
-                    <label class="flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
-                        <input type="checkbox" wire:model="isInternalOnly" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                        <span>
-                            Hanya bisa diakses dari jaringan internal/instansi
-                            <span class="block text-xs text-zinc-400 dark:text-zinc-500">Kalau gagal dicek dari sini, ditampilkan kuning ("Terbatas") - bukan merah ("Down") - karena kemungkinan memang tidak terjangkau dari luar jaringan itu, bukan benar-benar mati.</span>
-                        </span>
-                    </label>
-
-                    <label class="flex items-start gap-2.5 text-sm text-zinc-700 dark:text-zinc-300">
-                        <input type="checkbox" wire:model="dnsIpRotates" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                        <span>
-                            IP berganti-ganti (CDN/load balancer)
-                            <span class="block text-xs text-zinc-400 dark:text-zinc-500">Perubahan IP A/AAAA dicatat sebagai peringatan, bukan kritis - centang bila situs memang di belakang CDN atau load balancer.</span>
-                        </span>
-                    </label>
-                    @error('dnsIpRotates') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
 
                     <div class="mt-2 flex justify-end gap-2">
                         <button type="button" wire:click="$set('showModal', false)" class="rounded-lg px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 active:scale-[0.98] dark:text-zinc-300 dark:hover:bg-zinc-800">
@@ -452,13 +486,15 @@
             x-transition.opacity
             class="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
             @keydown.escape.window="$wire.showMassModal = false"
+            role="dialog"
+            aria-modal="true"
         >
             <div x-show="$wire.showMassModal" x-transition.opacity wire:click="$set('showMassModal', false)" class="absolute inset-0 bg-zinc-900/50"></div>
 
             <div
                 x-show="$wire.showMassModal"
                 x-transition
-                class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl shadow-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-900"
+                class="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-xl shadow-zinc-900/10 dark:border-zinc-800 dark:bg-zinc-900"
             >
                 <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Ubah Setelan Massal</h2>
                 <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
@@ -478,46 +514,71 @@
                         ];
                     @endphp
 
-                    @foreach ($massFields as $key => $field)
-                        <div class="flex flex-col gap-1.5">
-                            <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                                <input type="checkbox" wire:model.live="massApply.{{ $key }}" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                                {{ $field['label'] }}
-                            </label>
-                            {{-- Disabled until its toggle is on, so it is obvious the number
-                            sitting there is not about to be applied. --}}
-                            <input
-                                type="number" min="{{ $field['min'] }}" step="{{ $field['step'] }}"
-                                wire:model="{{ $field['model'] }}"
-                                @disabled(! ($massApply[$key] ?? false))
-                                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white dark:disabled:bg-zinc-800/40 dark:disabled:text-zinc-600"
-                            >
-                            @error($field['model']) <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                    {{-- Two columns from md: numeric settings on the left, flags and category on the right. --}}
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-x-6">
+                        <div class="flex flex-col gap-4">
+                            @foreach ($massFields as $key => $field)
+                                <div class="flex flex-col gap-1.5">
+                                    <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                                        <input type="checkbox" wire:model.live="massApply.{{ $key }}" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                        {{ $field['label'] }}
+                                    </label>
+                                    {{-- Disabled until its toggle is on, so it is obvious the number
+                                    sitting there is not about to be applied. --}}
+                                    <input
+                                        type="number" min="{{ $field['min'] }}" step="{{ $field['step'] }}"
+                                        wire:model="{{ $field['model'] }}"
+                                        @disabled(! ($massApply[$key] ?? false))
+                                        class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white dark:disabled:bg-zinc-800/40 dark:disabled:text-zinc-600"
+                                    >
+                                    @error($field['model']) <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+                                </div>
+                            @endforeach
                         </div>
-                    @endforeach
 
-                    <div class="flex flex-col gap-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60">
-                        <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                            <input type="checkbox" wire:model.live="massApply.isActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                            Ubah status pantau
-                        </label>
-                        @if ($massApply['isActive'] ?? false)
-                            <label class="ml-7 flex items-center gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
-                                <input type="checkbox" wire:model="massIsActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                                Pantau situs ini
-                            </label>
-                        @endif
+                        <div class="flex flex-col gap-4">
+                            <div class="flex flex-col gap-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Status</p>
+                                <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                                    <input type="checkbox" wire:model.live="massApply.isActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                    Ubah status pantau
+                                </label>
+                                @if ($massApply['isActive'] ?? false)
+                                    <label class="ml-7 flex items-center gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
+                                        <input type="checkbox" wire:model="massIsActive" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                        Pantau situs ini
+                                    </label>
+                                @endif
 
-                        <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                            <input type="checkbox" wire:model.live="massApply.isInternalOnly" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                            Ubah status jaringan internal
-                        </label>
-                        @if ($massApply['isInternalOnly'] ?? false)
-                            <label class="ml-7 flex items-center gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
-                                <input type="checkbox" wire:model="massIsInternalOnly" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
-                                Hanya bisa diakses dari jaringan internal/instansi
-                            </label>
-                        @endif
+                                <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                                    <input type="checkbox" wire:model.live="massApply.isInternalOnly" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                    Ubah status jaringan internal
+                                </label>
+                                @if ($massApply['isInternalOnly'] ?? false)
+                                    <label class="ml-7 flex items-center gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
+                                        <input type="checkbox" wire:model="massIsInternalOnly" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                        Hanya bisa diakses dari jaringan internal/instansi
+                                    </label>
+                                @endif
+                            </div>
+
+                            <div class="flex flex-col gap-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Kategori</p>
+                                <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                                    <input type="checkbox" wire:model.live="massApply.isPriority" class="h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                    Ubah kategori
+                                </label>
+                                @if ($massApply['isPriority'] ?? false)
+                                    <label class="ml-7 flex items-start gap-2.5 text-sm text-zinc-600 dark:text-zinc-400">
+                                        <input type="checkbox" wire:model="massIsPriority" class="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent-600 focus:ring-accent-500/30 dark:border-zinc-700">
+                                        <span>
+                                            Situs prioritas
+                                            <span class="block text-xs text-zinc-400 dark:text-zinc-500">Dicek lebih dulu di antrean saat server sibuk. Tidak dicentang = Sekunder.</span>
+                                        </span>
+                                    </label>
+                                @endif
+                            </div>
+                        </div>
                     </div>
 
                     <div class="mt-2 flex justify-end gap-2">

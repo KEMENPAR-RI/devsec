@@ -4,12 +4,14 @@ namespace App\Notifications;
 
 use App\Models\Incident;
 use App\Models\Website;
+use App\Notifications\Concerns\QueuesOnChecks;
 use App\Notifications\Concerns\SendsIncidentEmail;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 
-class WebsiteDownNotification extends Notification
+class WebsiteDownNotification extends Notification implements ShouldQueue
 {
-    use SendsIncidentEmail;
+    use QueuesOnChecks, SendsIncidentEmail;
 
     public function __construct(public Website $website, public Incident $incident) {}
 

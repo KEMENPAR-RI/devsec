@@ -6,6 +6,7 @@ use App\Models\Incident;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Services\AppSettings;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 
@@ -85,6 +86,7 @@ class TvBoard
                 'up_since_ts' => $upSince?->timestamp ?? 0,
                 'up_for' => $upSince ? $this->upFor(max(0, now()->timestamp - $upSince->timestamp)) : '',
                 'last_down_at' => $lastDown?->translatedFormat('d M Y, H:i') ?? 'Belum pernah',
+                'priority' => (bool) $site->is_priority,
             ];
 
             if ($key === 'up') {
@@ -109,7 +111,11 @@ class TvBoard
         usort($internal, fn ($a, $b) => strcmp($a['name'], $b['name']));
         usort($mati, fn ($a, $b) => $b['occurred_at_ts'] <=> $a['occurred_at_ts']);
 
-        $kartu = array_merge($masalah, $online, $internal, $mati);
+        // Problems stay on top; within each status group priority sites come first.
+        $kartu = collect([$masalah, $online, $internal, $mati])
+            ->flatMap(fn ($group) => collect($group)->partition('priority')->flatten(1))
+            // The flag only drives ordering and is not exposed on the public board.
+            ->map(fn ($row) => Arr::except($row, 'priority'))->values()->all();
 
         return [
             'diperbarui' => now()->translatedFormat('d M Y, H:i:s'),

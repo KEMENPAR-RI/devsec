@@ -26,10 +26,17 @@ class CheckWebsiteJob implements ShouldBeUnique, ShouldQueue
     public int $timeout = 150;
 
     // One pending/running check per site: a scheduled run plus "Cek Sekarang" must
-    // not count the same outage twice toward down_threshold_failures.
-    public int $uniqueFor = 180;
+    // not count the same outage twice toward down_threshold_failures. Outlives a
+    // backlog wait so a still-queued check is not duplicated.
+    public int $uniqueFor = 900;
 
-    public function __construct(public Website $website) {}
+    public function __construct(public Website $website)
+    {
+        // Set here so every dispatch site routes the same way.
+        $this->onQueue($website->is_priority
+            ? config('monitoring.queues.checks_high')
+            : config('monitoring.queues.checks'));
+    }
 
     public function uniqueId(): string
     {

@@ -80,6 +80,11 @@ class JudolScanner
         '0' => 'o', '3' => 'e', '4' => 'a', '5' => 's', '7' => 't', '@' => 'a', '$' => 's',
     ];
 
+    /** Seconds spent in AI calls during the current scan (reset per scan). */
+    protected float $aiSeconds = 0.0;
+
+    protected bool $aiBudgetLogged = false;
+
     /**
      * Full-site scan: crawl every reachable page and flag new judol matches.
      *
@@ -87,6 +92,7 @@ class JudolScanner
      */
     public function scan(Website $website): int
     {
+        $this->resetAiBudget();
         $found = collect();
 
         // Per-page detections answer "which pages are dirty"; this answers "what was
@@ -441,7 +447,7 @@ class JudolScanner
     {
         $settings = app(JudolAiSettings::class);
 
-        if (! $settings->usable() || ! config('judol.ai.links.enabled', true) || $domains === []) {
+        if (! $settings->usable() || ! config('judol.ai.links.enabled', true) || $domains === [] || ! $this->aiWithinBudget()) {
             return [];
         }
 
@@ -451,7 +457,50 @@ class JudolScanner
             $links[$domain] = $anchors[$domain] ?? '';
         }
 
-        return app(JudolLinkClassifier::class)->gamblingDomains($links);
+        return $this->timedAi(fn () => app(JudolLinkClassifier::class)->gamblingDomains($links));
+    }
+
+    protected function resetAiBudget(): void
+    {
+        $this->aiSeconds = 0.0;
+        $this->aiBudgetLogged = false;
+    }
+
+    /**
+     * Once config('judol.ai.budget_seconds') is spent, the rest of the scan runs
+     * keyword/heuristics-only - as if AI were off - so a slow API can't eat the job's timeout.
+     */
+    protected function aiWithinBudget(): bool
+    {
+        $budget = (float) config('judol.ai.budget_seconds', 120);
+
+        if ($this->aiSeconds < $budget) {
+            return true;
+        }
+
+        if (! $this->aiBudgetLogged) {
+            $this->aiBudgetLogged = true;
+            Log::warning(sprintf('JudolScanner: anggaran waktu AI per scan habis (%.1f dari %.0f detik); sisa halaman dinilai tanpa AI.', $this->aiSeconds, $budget));
+        }
+
+        return false;
+    }
+
+    /**
+     * @template T
+     *
+     * @param  callable(): T  $call
+     * @return T
+     */
+    protected function timedAi(callable $call): mixed
+    {
+        $start = hrtime(true);
+
+        try {
+            return $call();
+        } finally {
+            $this->aiSeconds += (hrtime(true) - $start) / 1e9;
+        }
     }
 
     /**
@@ -462,6 +511,7 @@ class JudolScanner
      */
     public function scanUrlNow(Website $website, string $url): array
     {
+        $this->resetAiBudget();
         $result = $this->fetchWithError($url);
 
         if ($result['body'] === null) {
@@ -1291,13 +1341,13 @@ class JudolScanner
         // when there is one. On a link-only finding its answer would be worse than
         // useless: the visible article really is a clean article, so it would deny
         // the finding and delete a genuine backlink injection.
-        if ($aiSettings->usable() && $keywordsMatched) {
-            $verdict = app(JudolAiClassifier::class)->classify(
+        if ($aiSettings->usable() && $keywordsMatched && $this->aiWithinBudget()) {
+            $verdict = $this->timedAi(fn () => app(JudolAiClassifier::class)->classify(
                 $url,
                 $text,
                 $matched->all(),
                 $this->extractImages($html, $url),
-            );
+            ));
 
             $aiConfidentlyDenies = $verdict['is_judol'] === false
                 && $verdict['confidence'] >= $aiSettings->confidenceThreshold();
@@ -1418,7 +1468,7 @@ class JudolScanner
     {
         $settings = app(JudolAiSettings::class);
 
-        if (! $settings->usable() || ! config('judol.ai.links.enabled', true)) {
+        if (! $settings->usable() || ! config('judol.ai.links.enabled', true) || ! $this->aiWithinBudget()) {
             return [];
         }
 
@@ -1428,7 +1478,7 @@ class JudolScanner
             return [];
         }
 
-        $flagged = app(JudolLinkClassifier::class)->gamblingDomains($links);
+        $flagged = $this->timedAi(fn () => app(JudolLinkClassifier::class)->gamblingDomains($links));
 
         if ($flagged !== []) {
             Log::info("JudolScanner: {$url} menaut ke situs judi: ".implode(', ', $flagged));

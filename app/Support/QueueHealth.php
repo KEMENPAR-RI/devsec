@@ -49,6 +49,24 @@ class QueueHealth
     }
 
     /**
+     * Queues consumed by the same worker, in strict priority order (see deploy/):
+     * a long job on one queue of a group delays the rest without the worker being gone.
+     *
+     * @return array<int, array<int, string>>
+     */
+    protected function workerGroups(): array
+    {
+        return [
+            array_values(array_unique([
+                config('monitoring.queues.checks_high'),
+                config('monitoring.queues.checks'),
+                config('queue.connections.database.queue', 'default'),
+            ])),
+            [config('monitoring.queues.scans')],
+        ];
+    }
+
+    /**
      * Minutes the longest-waiting job has been sitting there, or null when the
      * queue is empty or cannot be inspected.
      */
@@ -77,6 +95,31 @@ class QueueHealth
      */
     public function isStalled(): bool
     {
-        return ($this->longestWaitMinutes() ?? 0) >= self::STALE_MINUTES;
+        if (($this->longestWaitMinutes() ?? 0) < self::STALE_MINUTES) {
+            return false;
+        }
+
+        // A capped scans backlog can legitimately wait past the threshold; it is
+        // only stalled when no worker serving that queue reserved a job recently.
+        $staleBefore = now()->subMinutes(self::STALE_MINUTES)->timestamp;
+        $groups = $this->workerGroups();
+
+        try {
+            return DB::table('jobs as waiting')
+                ->whereNull('waiting.reserved_at')
+                ->where('waiting.available_at', '<=', $staleBefore)
+                ->whereNotExists(fn ($query) => $query->from('jobs as busy')
+                    ->where('busy.reserved_at', '>', $staleBefore)
+                    ->where(function ($sameWorker) use ($groups) {
+                        $sameWorker->whereColumn('busy.queue', 'waiting.queue');
+
+                        foreach ($groups as $group) {
+                            $sameWorker->orWhere(fn ($q) => $q->whereIn('waiting.queue', $group)->whereIn('busy.queue', $group));
+                        }
+                    }))
+                ->exists();
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

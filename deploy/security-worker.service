@@ -1,4 +1,5 @@
-# Queue worker for the monitoring security (systemd).
+# Queue worker A - checks (systemd): checks-high, checks, default.
+# Worker B (judol scans) is deploy/security-worker-scans.service; install both.
 #
 # Every automatic website check and judol crawl is dispatched as a queued job, so
 # without this running the jobs table just fills up and the automatic monitoring
@@ -6,17 +7,21 @@
 # because those run inside the web request. See App\Support\QueueHealth.
 #
 # Install:
-#   sudo cp deploy/security-worker.service /etc/systemd/system/
+#   sudo cp deploy/security-worker.service deploy/security-worker-scans.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now security-worker
-#   sudo systemctl status security-worker
+#   sudo systemctl enable --now security-worker security-worker-scans
+#   sudo systemctl status security-worker security-worker-scans
 #
-# Adjust User, Group and the two paths below to match the server. WorkingDirectory
+# Adjust User, Group, WorkingDirectory and the PHP path (ls /www/server/php/) to match the server. WorkingDirectory
 # must be the directory that actually holds artisan - systemd fails the unit with
 # "status=200/CHDIR" before PHP ever runs if that path does not exist.
+#
+# --tries=1 is only the fallback: a job's own $tries wins (queued mail
+# notifications keep tries=3/backoff=60). --timeout must stay below
+# DB_QUEUE_RETRY_AFTER (320).
 
 [Unit]
-Description=Security queue worker
+Description=Security queue worker (checks)
 After=network.target mysql.service
 
 StartLimitIntervalSec=300
@@ -32,15 +37,30 @@ WorkingDirectory=/www/wwwroot/deadsec.apiprs.my.id
 Restart=always
 RestartSec=5
 
-ExecStart=/usr/bin/php artisan queue:work \
-    --queue=default \
+# Hardening. Only storage/ and bootstrap/cache are writable; both must exist or
+# the unit fails with 226/NAMESPACE. PrivateTmp hides /tmp/mysql.sock: keep
+# DB_HOST=127.0.0.1 (TCP), not localhost.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/www/wwwroot/deadsec.apiprs.my.id/storage /www/wwwroot/deadsec.apiprs.my.id/bootstrap/cache
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+ExecStart=/www/server/php/84/bin/php artisan queue:work database \
+    --queue=checks-high,checks,default \
     --sleep=3 \
     --tries=1 \
-    --timeout=300 \
-    --max-time=3600
+    --timeout=150 \
+    --max-time=3600 \
+    --memory=128 \
+    --max-jobs=500
 
 KillSignal=SIGTERM
-TimeoutStopSec=330
+TimeoutStopSec=180
 
 [Install]
 WantedBy=multi-user.target

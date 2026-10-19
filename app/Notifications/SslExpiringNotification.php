@@ -4,7 +4,9 @@ namespace App\Notifications;
 
 use App\Models\Incident;
 use App\Models\Website;
+use App\Notifications\Concerns\QueuesOnChecks;
 use App\Notifications\Concerns\SendsIncidentEmail;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Carbon;
 
@@ -13,9 +15,9 @@ use Illuminate\Support\Carbon;
  * untrusted chain (incident meta.reason). Expiry is raised ahead of the date
  * (config monitoring.ssl.*, see WebsiteChecker::maybeCheckSsl), so there is time to renew.
  */
-class SslExpiringNotification extends Notification
+class SslExpiringNotification extends Notification implements ShouldQueue
 {
-    use SendsIncidentEmail;
+    use QueuesOnChecks, SendsIncidentEmail;
 
     public function __construct(public Website $website, public Incident $incident) {}
 

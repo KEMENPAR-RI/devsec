@@ -4,7 +4,11 @@ namespace App\Console\Commands;
 
 use App\Jobs\CheckWebsiteJob;
 use App\Models\Website;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Cache\Repository as Cache;
+use Illuminate\Support\Facades\Bus;
+use Throwable;
 
 class CheckWebsites extends Command
 {
@@ -14,7 +18,7 @@ class CheckWebsites extends Command
 
     public function handle(): int
     {
-        $websites = Website::active()->get();
+        $websites = Website::active()->orderByDesc('is_priority')->orderBy('last_checked_at')->get();
         $due = $this->option('now') ? $websites : $websites->filter->isDueForCheck();
 
         if ($due->isEmpty()) {
@@ -23,15 +27,38 @@ class CheckWebsites extends Command
             return self::SUCCESS;
         }
 
+        $lock = new UniqueLock(app(Cache::class));
+        $sent = 0;
+
         foreach ($due as $website) {
+            $job = new CheckWebsiteJob($website);
+
+            // Still queued/running from an earlier tick or "Cek Sekarang": leave its timestamp alone.
+            if (! $lock->acquire($job)) {
+                continue;
+            }
+
             // Mark "just dispatched" before the check even runs - see ScanJudol for
             // why (same class of bug: a slow/hanging probe could otherwise still be
             // "due" on the next tick and get queued a second time).
-            $website->update(['last_checked_at' => now()]);
-            CheckWebsiteJob::dispatch($website);
+            try {
+                $website->update(['last_checked_at' => now()]);
+                Bus::dispatch($job);
+            } catch (Throwable $e) {
+                // Otherwise the site stays "already queued" until uniqueFor expires.
+                $lock->release($job);
+
+                throw $e;
+            }
+
+            $sent++;
         }
 
-        $this->info("Mengirim {$due->count()} pengecekan website ke antrean.");
+        $this->info("Mengirim {$sent} pengecekan website ke antrean.");
+
+        if ($sent < $due->count()) {
+            $this->line('Melewati '.($due->count() - $sent).' website yang pengecekannya masih dalam antrean.');
+        }
 
         return self::SUCCESS;
     }

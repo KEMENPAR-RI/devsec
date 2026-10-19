@@ -3,22 +3,27 @@
 Untuk pembaruan yang **tidak** menambah migrasi atau dependency (mayoritas
 kasus), urutannya:
 
+- [ ] `.env` server wajib berisi `DB_QUEUE_RETRY_AFTER=320` (harus > `--timeout` terbesar, 300) dan `DB_HOST=127.0.0.1` (worker systemd memakai `PrivateTmp`, socket `/tmp/mysql.sock` tidak terlihat).
+
 ```bash
 cd /www/wwwroot/deadsec.apiprs.my.id
+PHP=/www/server/php/84/bin/php           # sesuaikan versi: ls /www/server/php/
 
-php artisan down                     # opsional, aman dilewati untuk perubahan kecil
+$PHP artisan down                     # opsional, aman dilewati untuk perubahan kecil
 git pull origin main
 
 npm ci && npm run build              # WAJIB kalau ada blade yang berubah - lihat catatan
-php artisan migrate --force          # aman dijalankan meski tidak ada migrasi baru
+$PHP artisan migrate --force         # aman dijalankan meski tidak ada migrasi baru
 
-php artisan optimize:clear
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
+$PHP artisan optimize:clear
+$PHP artisan config:cache
+$PHP artisan route:cache
+$PHP artisan view:cache
 
-sudo systemctl restart security-worker
-php artisan up
+$PHP artisan queue:restart
+ls -d storage bootstrap/cache        # wajib ada, kalau tidak worker gagal 226/NAMESPACE
+sudo systemctl restart security-worker security-worker-scans
+$PHP artisan up
 ```
 
 ## Kenapa `npm run build` wajib walau tidak ada file CSS yang diubah
@@ -48,8 +53,8 @@ jadi selama sampai satu jam, web menampilkan versi baru sementara pengecekan
 otomatis masih berjalan dengan versi lama.
 
 ```bash
-sudo systemctl restart security-worker      # systemd
-sudo supervisorctl restart security-worker:* # supervisor
+sudo systemctl restart security-worker security-worker-scans          # systemd
+sudo supervisorctl restart security-worker:* security-worker-scans:* # supervisor
 ```
 
 ## Kalau pembaruan menambah migrasi
@@ -70,8 +75,8 @@ php artisan backup:database
 ## Memastikan deploy berhasil
 
 ```bash
-sudo systemctl status security-worker --no-pager    # harus active (running)
-php artisan queue:monitor default                   # harus mendekati 0
+sudo systemctl status security-worker security-worker-scans --no-pager  # keduanya active (running)
+$PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:scans  # harus mendekati 0
 tail -20 storage/logs/laravel.log                   # tidak ada error baru
 ```
 
@@ -83,8 +88,8 @@ Lalu buka dashboard dan pastikan halaman Situs tampil normal.
 git log --oneline -5
 git reset --hard <commit-sebelumnya>
 npm ci && npm run build
-php artisan optimize:clear && php artisan config:cache
-sudo systemctl restart security-worker
+$PHP artisan optimize:clear && $PHP artisan config:cache
+sudo systemctl restart security-worker security-worker-scans
 ```
 
 
@@ -121,23 +126,37 @@ dua kali.
 
 **systemd** (VPS/server sendiri):
 
+Ada dua worker, keduanya wajib dipasang:
+
+- `security-worker` - antrean `checks-high,checks,default` (uptime + email notifikasi), `--timeout=150`
+- `security-worker-scans` - antrean `scans` (crawl judol), `--timeout=300`
+
 ```bash
-sudo cp deploy/security-worker.service /etc/systemd/system/
+sudo cp deploy/security-worker.service deploy/security-worker-scans.service /etc/systemd/system/
+ls -d /www/wwwroot/deadsec.apiprs.my.id/storage /www/wwwroot/deadsec.apiprs.my.id/bootstrap/cache  # wajib ada (ReadWritePaths)
 sudo systemctl daemon-reload
-sudo systemctl enable --now security-worker
-sudo systemctl status security-worker
+sudo systemctl enable --now security-worker security-worker-scans
+sudo systemctl status security-worker security-worker-scans
 ```
 
-**supervisor** (cPanel/Plesk):
+**supervisor** (plugin Supervisor aaPanel, cPanel/Plesk) - satu file berisi dua program:
 
 ```bash
 sudo cp deploy/security-worker.supervisor.conf /etc/supervisor/conf.d/security-worker.conf
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl status security-worker:*
+sudo supervisorctl status
 ```
 
-Sesuaikan `User`, `Group`, dan path direktori di file-nya dengan server.
+systemd lebih disarankan: supervisor tidak bisa memakai hardening (`ProtectSystem=strict` dkk.) yang ada di file `.service`.
+
+Di plugin Supervisor aaPanel: tambah dua daemon, salin `command`, `directory`,
+dan `user` dari tiap `[program:...]` di file itu.
+
+Sesuaikan `User`, `Group`, path PHP (`/www/server/php/84/bin/php`) dan path
+direktori di file-nya dengan server. Kedua worker memakai `--memory=128` dan
+`--max-jobs`/`--max-time` supaya proses didaur-ulang sebelum memori membengkak
+(RAM server 1GB).
 
 ### 3. Hapus cron `--sync`
 
@@ -162,11 +181,11 @@ Ini satu-satunya baris cron yang dibutuhkan:
 
 ```bash
 # Harus mendekati 0 dan tidak terus bertambah.
-php artisan queue:monitor default
+$PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:scans
 
 # Harus menampilkan job yang diproses, bukan diam saja.
-sudo journalctl -u security-worker -f      # systemd
-tail -f storage/logs/worker.log             # supervisor
+sudo journalctl -u security-worker -u security-worker-scans -f   # systemd
+tail -f storage/logs/worker.log storage/logs/worker-scans.log    # supervisor
 ```
 
 Di halaman Deteksi Judol, peringatan "pekerjaan menunggu di antrean" akan hilang
@@ -180,6 +199,13 @@ terlama (`ScanWebsiteForJudolJob` = 300 detik). Saat ini 320, dan itu benar.
 Kalau nilainya lebih kecil, crawl yang berjalan lebih lama dari itu akan
 dilepas dan dijalankan ulang **sementara yang pertama masih berjalan**, berulang
 sampai kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
+
+Env terkait antrean (lihat `.env.example`, default sudah aman):
+
+- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS`, `MONITORING_QUEUE_SCANS` - nama antrean; kalau diubah, `--queue=` di file worker harus ikut diubah
+- `JUDOL_MAX_QUEUE` - batas job scan yang boleh menunggu di antrean `scans`
+- `JUDOL_MAX_DISPATCH_PER_TICK` - jumlah scan yang di-dispatch per tick scheduler
+- `MAIL_TIMEOUT` - timeout SMTP (detik) agar email lambat tidak menahan worker checks
 
 ## Website yang sedang mati tidak dipindai
 

@@ -1,6 +1,7 @@
 @props([
     'series' => [],
     'height' => 220,
+    'fill' => false,
     'threshold' => null,
     'empty' => 'Belum ada data pengecekan dalam rentang ini.',
 ])
@@ -45,36 +46,53 @@
     $last = $points->last(fn ($p) => $p['y'] !== null);
     $thresholdY = $threshold ? $toY((int) $threshold) : null;
 
-    $stripTone = function (array $p): string {
+    $stripState = function (array $p): string {
         $uptime = $p['uptime'] ?? ($p['up'] === null ? null : ($p['up'] ? 100 : 0));
 
         return match (true) {
-            $uptime === null => 'bg-zinc-200 dark:bg-zinc-700',
-            $uptime >= 99.95 => 'bg-emerald-500',
-            $uptime >= 95 => 'bg-amber-400',
-            default => 'bg-red-500',
+            $uptime === null => 'none',
+            $uptime >= 99.95 => 'ok',
+            $uptime >= 95 => 'warn',
+            default => 'down',
         };
     };
+    $stripStates = [
+        'ok' => ['tone' => 'bg-emerald-500', 'dot' => 'bg-emerald-400', 'label' => 'Normal', 'desc' => 'Semua cek berhasil'],
+        'warn' => ['tone' => 'bg-amber-400', 'dot' => 'bg-amber-300', 'label' => 'Gangguan', 'desc' => 'Sebagian cek gagal (uptime 95–99,9%)'],
+        'down' => ['tone' => 'bg-red-500', 'dot' => 'bg-red-400', 'label' => 'Down', 'desc' => 'Banyak cek gagal (uptime < 95%)'],
+        'none' => ['tone' => 'bg-zinc-200 dark:bg-zinc-700', 'dot' => 'bg-zinc-400', 'label' => 'Tidak ada data', 'desc' => 'Belum ada pengecekan'],
+    ];
+
+    // Bucket labels are start times, so a bucket ends where the next one begins.
+    $points = $points->map(fn (array $p, int $i) => $p + [
+        'range' => $p['label'].' – '.($points[$i + 1]['label'] ?? 'sekarang'),
+        'state' => $stripState($p),
+    ]);
 @endphp
 
 @if (! $hasData || $n === 0)
-    <div {{ $attributes->merge(['class' => 'flex flex-col items-center justify-center gap-2 text-center']) }} style="min-height: {{ (int) $height }}px">
+    <div {{ $attributes->merge(['class' => 'flex flex-col items-center justify-center gap-2 text-center'.($fill ? ' flex-1' : '')]) }} style="min-height: {{ (int) $height }}px">
         <x-phosphor-chart-line class="h-7 w-7 text-zinc-300 dark:text-zinc-600" />
         <p class="text-sm text-zinc-500 dark:text-zinc-400">{{ $empty }}</p>
     </div>
 @else
     <div
-        {{ $attributes->merge(['class' => 'relative']) }}
+        {{ $attributes->merge(['class' => 'relative'.($fill ? ' flex flex-col' : '')]) }}
         wire:key="line-chart-{{ md5(json_encode($points)) }}"
         x-data="{
             points: @js($points),
+            states: @js(collect($stripStates)->map(fn ($s) => ['dot' => $s['dot'], 'label' => $s['label'], 'desc' => $s['desc']])),
             index: null,
+            seg: null,
             get hovered() { return this.index === null ? null : this.points[this.index] },
-            pick(event) {
-                const rect = this.$refs.plot.getBoundingClientRect();
+            get focused() { const i = this.index ?? this.seg; return i === null ? null : this.points[i] },
+            get segment() { return this.seg === null ? null : this.points[this.seg] },
+            slot(event, el) {
+                const rect = el.getBoundingClientRect();
                 const i = Math.floor((event.clientX - rect.left) / rect.width * this.points.length);
-                this.index = Math.min(this.points.length - 1, Math.max(0, i));
+                return Math.min(this.points.length - 1, Math.max(0, i));
             },
+            pick(event) { this.seg = null; this.index = this.slot(event, this.$refs.plot) },
             step(delta) {
                 const i = (this.index ?? (delta > 0 ? -1 : this.points.length)) + delta;
                 this.index = Math.min(this.points.length - 1, Math.max(0, i));
@@ -82,12 +100,15 @@
             fmtMs(ms) { return ms === null ? 'Tidak ada data' : ms.toLocaleString('id-ID') + 'ms' },
             fmtUp(u) { return u === null ? '-' : (u >= 99.95 ? '100' : u.toFixed(1)) + '% uptime' },
         }"
-        @click.outside="index = null"
+        @click.outside="index = null; seg = null"
     >
         <div
             x-ref="plot"
-            class="relative touch-pan-y select-none rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
-            style="height: {{ (int) $height }}px"
+            @class([
+                'relative touch-pan-y select-none rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40',
+                'flex-1' => $fill,
+            ])
+            style="{{ $fill ? 'min-height' : 'height' }}: {{ (int) $height }}px"
             tabindex="0"
             role="img"
             aria-label="Grafik response time, {{ $n }} titik. Gunakan panah kiri/kanan untuk melihat nilai."
@@ -162,14 +183,14 @@
             @endif
 
             {{-- Crosshair + focused dot --}}
-            <template x-if="hovered">
+            <template x-if="focused">
                 <div class="pointer-events-none absolute inset-0">
-                    <span class="absolute bottom-[4%] top-[8%] w-px -translate-x-1/2 bg-zinc-300 dark:bg-zinc-600" :style="`left: ${hovered.x}%`"></span>
+                    <span class="absolute bottom-[4%] top-[8%] w-px -translate-x-1/2 bg-zinc-300 dark:bg-zinc-600" :style="`left: ${focused.x}%`"></span>
                     <span
-                        x-show="hovered.y !== null"
+                        x-show="focused.y !== null"
                         class="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white dark:ring-zinc-900"
-                        :class="hovered.up === false ? 'bg-red-500' : 'bg-accent-500 dark:bg-accent-400'"
-                        :style="`left: ${hovered.x}%; top: ${hovered.y}%`"
+                        :class="focused.up === false ? 'bg-red-500' : 'bg-accent-500 dark:bg-accent-400'"
+                        :style="`left: ${focused.x}%; top: ${focused.y}%`"
                     ></span>
                 </div>
             </template>
@@ -193,14 +214,50 @@
             </div>
         </div>
 
-        {{-- Uptime per bucket, same strip style as the TV card --}}
-        <div class="mt-3 flex h-2.5 w-full gap-0.5" aria-hidden="true">
-            @foreach ($points as $i => $p)
-                <span
-                    class="flex-1 rounded-sm transition-opacity {{ $stripTone($p) }}"
-                    :class="index !== null && index !== {{ $i }} ? 'opacity-40' : ''"
-                ></span>
-            @endforeach
+        {{-- Uptime per bucket, same strip style as the TV card; padded wrapper widens the hover target --}}
+        <div
+            class="relative mt-1.5 touch-pan-y py-1.5"
+            @pointermove="index = null; seg = slot($event, $refs.strip)"
+            @pointerdown="index = null; seg = slot($event, $refs.strip)"
+            @pointerleave="$event.pointerType === 'mouse' && (seg = null)"
+        >
+            <div x-ref="strip" class="flex h-2.5 w-full gap-0.5" role="list" aria-label="Status uptime per rentang waktu">
+                @foreach ($points as $i => $p)
+                    @php
+                        $state = $stripStates[$p['state']];
+                        $summary = $p['range'].': '.$state['label'].' - '.$state['desc']
+                            .($p['uptime'] !== null ? ', uptime '.number_format($p['uptime'], 1, ',', '.').'%' : '')
+                            .($p['ms'] !== null ? ', rata-rata '.number_format($p['ms'], 0, ',', '.').'ms' : '');
+                    @endphp
+                    <span
+                        role="listitem"
+                        title="{{ $summary }}"
+                        aria-label="{{ $summary }}"
+                        class="flex-1 rounded-sm transition-opacity {{ $state['tone'] }}"
+                        :class="(index ?? seg) !== null && (index ?? seg) !== {{ $i }} ? 'opacity-40' : ''"
+                    ></span>
+                @endforeach
+            </div>
+
+            {{-- Segment tooltip, same look as the point tooltip --}}
+            <div
+                x-show="segment" x-cloak
+                class="pointer-events-none absolute bottom-full z-10 w-max max-w-60 -translate-x-1/2 rounded-lg bg-zinc-900 px-2.5 py-1.5 text-xs text-white shadow-lg dark:bg-zinc-700"
+                :style="segment ? `left: clamp(7.5rem, ${segment.x}%, calc(100% - 7.5rem))` : ''"
+                aria-live="polite"
+            >
+                <p class="font-medium" x-text="segment?.range"></p>
+                <p class="mt-0.5 flex items-center gap-1.5">
+                    <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="segment ? states[segment.state].dot : ''"></span>
+                    <span x-text="segment ? states[segment.state].label : ''"></span>
+                </p>
+                <p class="text-zinc-400" x-text="segment ? states[segment.state].desc : ''"></p>
+                <p x-show="segment?.uptime !== null" class="text-zinc-300 dark:text-zinc-400">
+                    <span x-text="segment ? fmtMs(segment.ms) : ''"></span>
+                    &middot;
+                    <span x-text="segment ? fmtUp(segment.uptime) : ''"></span>
+                </p>
+            </div>
         </div>
 
         <div class="mt-2 flex justify-between gap-2 text-[11px] text-zinc-400 dark:text-zinc-500">
@@ -209,6 +266,12 @@
                 <span class="hidden truncate sm:block">{{ $points[intdiv($n, 2)]['label'] }}</span>
             @endif
             <span class="truncate text-right">{{ $points->last()['label'] }}</span>
+        </div>
+
+        <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-400 dark:text-zinc-500" aria-hidden="true">
+            @foreach ($stripStates as $state)
+                <span class="inline-flex items-center gap-1.5"><span class="h-1.5 w-2.5 rounded-sm {{ $state['tone'] }}"></span>{{ $state['label'] }}</span>
+            @endforeach
         </div>
     </div>
 @endif

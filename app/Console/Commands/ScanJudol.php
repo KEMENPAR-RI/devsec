@@ -4,7 +4,12 @@ namespace App\Console\Commands;
 
 use App\Jobs\ScanWebsiteForJudolJob;
 use App\Models\Website;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Cache\Repository as Cache;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Queue;
+use Throwable;
 
 class ScanJudol extends Command
 {
@@ -16,7 +21,8 @@ class ScanJudol extends Command
 
     public function handle(): int
     {
-        $websites = Website::active()->get();
+        // Priority sites first, then the longest-unscanned (never scanned sorts first).
+        $websites = Website::active()->orderByDesc('is_priority')->orderBy('judol_scanned_at')->get();
         $due = $this->option('now') ? $websites : $websites->filter->isDueForJudolScan();
 
         // Crawling a site that is currently down is pure waste - see
@@ -34,15 +40,42 @@ class ScanJudol extends Command
             return self::SUCCESS;
         }
 
+        $budget = $this->dispatchBudget();
+
+        if ($budget <= 0) {
+            return self::SUCCESS;
+        }
+
+        $lock = new UniqueLock(app(Cache::class));
+        $sent = 0;
+
         foreach ($due as $website) {
+            if ($sent >= $budget) {
+                break;
+            }
+
+            $job = new ScanWebsiteForJudolJob($website);
+
+            // A crawl for this site is still queued/running: no duplicate, no new timestamp.
+            if (! $lock->acquire($job)) {
+                continue;
+            }
+
             // Mark "just dispatched" *before* the crawl even starts, not after it
             // finishes: a full crawl can take minutes, so if the timestamp only
             // moved on completion, isDueForJudolScan() would still see this website
             // as due on every tick in between and queue a duplicate scan for it
             // while the first one is still in flight.
-            $website->update(['judol_scanned_at' => now()]);
+            try {
+                $website->update(['judol_scanned_at' => now()]);
+            } catch (Throwable $e) {
+                // Otherwise the site stays "already queued" until uniqueFor expires.
+                $lock->release($job);
 
-            $job = new ScanWebsiteForJudolJob($website);
+                throw $e;
+            }
+
+            $sent++;
 
             // --sync exists for a deployment with cron but no queue worker, which is
             // the normal shape of a shared-hosting or single-cron-line install. There,
@@ -57,17 +90,48 @@ class ScanJudol extends Command
                 continue;
             }
 
-            dispatch($job);
+            // Lock already held above; Bus::dispatch does not try to take it again.
+            try {
+                Bus::dispatch($job);
+            } catch (Throwable $e) {
+                $lock->release($job);
+
+                throw $e;
+            }
         }
 
         if ($this->option('sync')) {
-            $this->info("Selesai memindai {$due->count()} website.");
+            $this->info("Selesai memindai {$sent} website.");
 
             return self::SUCCESS;
         }
 
-        $this->info("Mengirim {$due->count()} pemindaian judol ke antrean.");
+        $this->info("Mengirim {$sent} pemindaian judol ke antrean.");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * How many crawls this tick may queue. --now and --sync are explicit operator
+     * runs and are not braked; the scheduled tick stops at the per-tick cap and
+     * never grows the scans queue past judol.max_queue.
+     */
+    protected function dispatchBudget(): int
+    {
+        if ($this->option('now') || $this->option('sync')) {
+            return PHP_INT_MAX;
+        }
+
+        $queue = config('monitoring.queues.scans');
+        $backlog = Queue::size($queue);
+        $room = (int) config('judol.max_queue', 20) - $backlog;
+
+        if ($room <= 0) {
+            $this->info("Antrean {$queue} masih berisi {$backlog} pemindaian, menunggu tick berikutnya.");
+
+            return 0;
+        }
+
+        return min((int) config('judol.max_dispatch_per_tick', 5), $room);
     }
 }

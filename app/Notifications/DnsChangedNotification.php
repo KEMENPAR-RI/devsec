@@ -4,7 +4,9 @@ namespace App\Notifications;
 
 use App\Models\Incident;
 use App\Models\Website;
+use App\Notifications\Concerns\QueuesOnChecks;
 use App\Notifications\Concerns\SendsIncidentEmail;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 
 /**
@@ -15,9 +17,9 @@ use Illuminate\Notifications\Notification;
  * migration the operator dismisses it in a second; if it was not, this is the
  * earliest anyone could possibly have known.
  */
-class DnsChangedNotification extends Notification
+class DnsChangedNotification extends Notification implements ShouldQueue
 {
-    use SendsIncidentEmail;
+    use QueuesOnChecks, SendsIncidentEmail;
 
     public function __construct(public Website $website, public Incident $incident) {}
 

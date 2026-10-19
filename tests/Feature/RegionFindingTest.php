@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Models\JudolFinding;
 use App\Models\Setting;
 use App\Models\Website;
+use App\Services\Monitoring\JudolAiClassifier;
+use App\Services\Monitoring\JudolAiSettings;
 use App\Services\Monitoring\JudolLinkClassifier;
 use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\PageRegion;
@@ -56,6 +58,15 @@ class RegionFindingTest extends TestCase
             public function summarize(array $domains): string
             {
                 return 'Menaut ke '.implode(', ', $domains);
+            }
+        });
+
+        // The page classifier too: unfaked, a keyword hit calls api.anthropic.com for real.
+        $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings) extends JudolAiClassifier
+        {
+            public function classify(string $url, string $text, array $matchedKeywords, array $imageUrls = []): array
+            {
+                return ['is_judol' => null, 'confidence' => 0.0, 'reasoning' => 'AI unavailable: faked in test'];
             }
         });
     }

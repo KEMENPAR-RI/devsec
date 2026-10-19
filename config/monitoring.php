@@ -50,4 +50,20 @@ return [
         'critical_days' => (int) env('MONITORING_DOMAIN_CRITICAL_DAYS', 3),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Nama Antrean
+    |--------------------------------------------------------------------------
+    |
+    | Pengecekan uptime dan crawl judol dipisah antrean supaya crawl yang lama
+    | tidak menahan pengecekan. Worker A: checks-high,checks,default.
+    | Worker B: scans. Notifikasi email dari pengecekan ikut checks-high.
+    |
+    */
+    'queues' => [
+        'checks_high' => env('MONITORING_QUEUE_CHECKS_HIGH', 'checks-high'),
+        'checks' => env('MONITORING_QUEUE_CHECKS', 'checks'),
+        'scans' => env('MONITORING_QUEUE_SCANS', 'scans'),
+    ],
+
 ];

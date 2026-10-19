@@ -23,6 +23,7 @@ class Website extends Model
         'url',
         'is_active',
         'is_internal_only',
+        'is_priority',
         'check_interval_minutes',
         'judol_scan_interval_minutes',
         'down_threshold_failures',
@@ -83,6 +84,7 @@ class Website extends Model
         return [
             'is_active' => 'boolean',
             'is_internal_only' => 'boolean',
+            'is_priority' => 'boolean',
             'last_checked_at' => 'datetime',
             'judol_scanned_at' => 'datetime',
             'ssl_checked_at' => 'datetime',

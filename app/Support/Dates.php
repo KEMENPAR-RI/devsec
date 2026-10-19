@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Services\AppSettings;
 use Carbon\CarbonInterface;
+use DateTimeInterface;
 use Illuminate\Support\Carbon;
 
 /**
@@ -111,5 +112,11 @@ class Dates
         return blank($value)
             ? ''
             : Carbon::parse($value)->timezone(static::timezone())->diffForHumans();
+    }
+
+    /** Calendar days from today to $date in the app timezone; negative once past, null when unknown. */
+    public static function daysUntil(?DateTimeInterface $date): ?int
+    {
+        return $date ? (int) now()->startOfDay()->diffInDays(Carbon::instance($date)->timezone(config('app.timezone'))->startOfDay(), false) : null;
     }
 }

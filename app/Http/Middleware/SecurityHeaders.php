@@ -146,7 +146,7 @@ class SecurityHeaders
             "connect-src 'self' https://www.google.com{$viteSocket}",
 
             // reCAPTCHA v3 renders in an invisible iframe served by google.com.
-            "frame-src https://www.google.com",
+            'frame-src https://www.google.com',
 
             // The CSP equivalent of X-Frame-Options: DENY, and the one modern
             // browsers actually consult.
@@ -192,8 +192,8 @@ class SecurityHeaders
      * instead of looking allowed while being ignored.
      *
      * @param  bool  $withSocket  also allow the ws:// form - only connect-src needs
-     *                              it, since stylesheets and scripts are fetched
-     *                              over HTTP and never over the socket
+     *                            it, since stylesheets and scripts are fetched
+     *                            over HTTP and never over the socket
      */
     protected function viteDevOrigins(bool $withSocket = false): string
     {

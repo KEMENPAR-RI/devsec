@@ -96,6 +96,7 @@
                             Jaringan Internal
                         </span>
                     @endif
+                    <x-priority-badge :priority="$website->is_priority" secondary />
                 </div>
 
                 {{-- The status spelled out under the name. The dot beside the heading
@@ -477,7 +478,7 @@
     {{-- Certificate, DNS & domain: everything here is read from $website, no extra queries. --}}
     @php
         // Calendar days in the app timezone - the same count the incident severity uses.
-        $daysLeft = fn ($date) => $date ? (int) now()->startOfDay()->diffInDays($date->copy()->timezone(config('app.timezone'))->startOfDay(), false) : null;
+        $daysLeft = fn ($date) => \App\Support\Dates::daysUntil($date);
         // Red when expired or $red days out, amber within $amber days.
         $expiryTone = fn (?int $d, int $red, int $amber) => match (true) {
             $d === null => 'text-zinc-400 dark:text-zinc-500',
