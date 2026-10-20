@@ -41,6 +41,10 @@ Schedule::command('db:backup')
 // past the retention window - see App\Console\Commands\PruneWebsiteChecks.
 Schedule::command('websites:prune-checks')->dailyAt('03:15')->withoutOverlapping(120);
 
+// Monitoring: content-change history, page snapshots and closed defacement
+// findings past the retention window - see App\Console\Commands\PruneContentHistory.
+Schedule::command('websites:prune-content')->dailyAt('03:20')->withoutOverlapping(120);
+
 // Audit: the only thing that removes a trail line, and it runs unattended - see
 // App\Console\Commands\PruneAuditLogs for why there is no button for this.
 Schedule::command('audit:prune')->dailyAt('03:30')->withoutOverlapping(120);

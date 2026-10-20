@@ -1,4 +1,12 @@
 <div class="mx-auto flex max-w-7xl flex-col gap-6" wire:poll.10s.visible>
+    @php
+        $weightLabels = [
+            3 => ['label' => 'Kuat', 'short' => 'K', 'class' => 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300'],
+            2 => ['label' => 'Sedang', 'short' => 'S', 'class' => 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'],
+            1 => ['label' => 'Lemah', 'short' => 'L', 'class' => 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300'],
+        ];
+    @endphp
+
     {{-- Header --}}
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -61,17 +69,17 @@
             {{-- Ambang batas --}}
             <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
                 <div class="flex flex-col gap-1.5">
-                    <label for="threshold" class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Ambang batas (jumlah kata kunci unik minimal per halaman)</label>
+                    <label for="threshold" class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Ambang skor (halaman ditandai bila skornya mencapai nilai ini)</label>
                     <input
                         wire:model="threshold"
                         id="threshold"
                         type="number"
                         min="1"
-                        max="20"
+                        max="50"
                         class="w-32 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white @error('threshold') border-red-400 @enderror"
                     >
                 </div>
-                @can('deteksi-judol.update')
+                @can(['deteksi-judol.update', 'deteksi-judol.delete'])
                     <button
                         type="button"
                         wire:click="saveThreshold"
@@ -80,7 +88,7 @@
                         class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
                         <x-loading-label target="saveThreshold" spinner="h-3.5 w-3.5" gap="gap-1.5">
-                            Simpan Ambang Batas
+                            Simpan Ambang Skor
                         </x-loading-label>
                     </button>
                 @endcan
@@ -88,11 +96,15 @@
                     <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
                 @enderror
             </div>
+            <p class="mt-2 text-xs leading-relaxed text-zinc-400">
+                Skor = jumlah bobot kata kunci unik (Kuat 3, Sedang 2, Lemah 1), +1 bila ada di teks tersembunyi, +1 bila ada di judul/meta/URL.
+                Satu kata kunci lemah saja tidak cukup untuk menandai halaman.
+            </p>
 
             @can('deteksi-judol.update')
                 {{-- Tambah kata kunci --}}
-                <form wire:submit="addKeyword" class="mt-5 flex items-start gap-2 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-                    <div class="flex-1">
+                <form wire:submit="addKeyword" class="mt-5 flex flex-wrap items-start gap-2 border-t border-zinc-100 pt-4 sm:flex-nowrap dark:border-zinc-800">
+                    <div class="w-full sm:w-auto sm:flex-1">
                         <input
                             wire:model="newKeyword"
                             type="text"
@@ -102,7 +114,20 @@
                         @error('newKeyword')
                             <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
                         @enderror
+                        @error('newKeywordWeight')
+                            <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
+                        @enderror
                     </div>
+                    <label for="newKeywordWeight" class="sr-only">Bobot kata kunci</label>
+                    <select
+                        wire:model="newKeywordWeight"
+                        id="newKeywordWeight"
+                        class="shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-2 text-xs text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    >
+                        @foreach ($weightLabels as $value => $weightLabel)
+                            <option value="{{ $value }}">{{ $weightLabel['label'] }}</option>
+                        @endforeach
+                    </select>
                     <button
                         type="submit"
                         wire:loading.attr="disabled"
@@ -135,7 +160,7 @@
                         'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' => $keyword->is_active,
                         'bg-zinc-50 text-zinc-400 line-through dark:bg-zinc-800/40 dark:text-zinc-600' => ! $keyword->is_active,
                     ])>
-                        @can('deteksi-judol.update')
+                        @can($keyword->is_active ? ['deteksi-judol.update', 'deteksi-judol.delete'] : 'deteksi-judol.update')
                             <button
                                 type="button"
                                 wire:click="toggleKeyword('{{ $keyword->uuid }}')"
@@ -148,6 +173,23 @@
                         @else
                             {{-- Read-only: the keyword stays visible, it just cannot be toggled. --}}
                             <span>{{ $keyword->keyword }}</span>
+                        @endcan
+                        @php $weight = $weightLabels[(int) $keyword->weight] ?? $weightLabels[3]; @endphp
+                        @can(['deteksi-judol.update', 'deteksi-judol.delete'])
+                            <select
+                                wire:change="setKeywordWeight('{{ $keyword->uuid }}', Number($event.target.value))"
+                                wire:loading.attr="disabled"
+                                wire:target="setKeywordWeight"
+                                aria-label="Bobot {{ $keyword->keyword }}"
+                                title="Bobot: {{ $weight['label'] }}"
+                                class="cursor-pointer appearance-none rounded px-1 py-0 text-[10px] font-semibold leading-4 focus:outline-none focus:ring-2 focus:ring-accent-500/40 {{ $weight['class'] }}"
+                            >
+                                @foreach ($weightLabels as $value => $weightLabel)
+                                    <option value="{{ $value }}" @selected((int) $keyword->weight === $value)>{{ $weightLabel['label'] }}</option>
+                                @endforeach
+                            </select>
+                        @else
+                            <span class="rounded px-1 text-[10px] font-semibold leading-4 {{ $weight['class'] }}" title="Bobot: {{ $weight['label'] }}">{{ $weight['label'] }}</span>
                         @endcan
                         @can('deteksi-judol.delete')
                             <button
@@ -170,6 +212,94 @@
         </div>
     </div>
 
+    {{-- Pengecualian frasa: konteks sah yang memuat kata kunci (bandar lampung, slot waktu). --}}
+    <div class="enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900" x-data="{ open: false }">
+        <button type="button" @click="open = !open" :aria-expanded="open" class="flex w-full items-center justify-between gap-2 px-5 py-4 text-left">
+            <span class="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                <x-phosphor-prohibit class="h-4 w-4 text-zinc-400" />
+                Pengecualian Frasa
+                <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ $exclusions->count() }} frasa</span>
+            </span>
+            <x-phosphor-caret-down class="h-4 w-4 text-zinc-400 transition" x-bind:class="open ? 'rotate-180' : ''" />
+        </button>
+
+        <div x-show="open" x-cloak class="border-t border-zinc-100 px-5 py-4 dark:border-zinc-800">
+            <p class="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                Kata kunci yang muncul di dalam frasa ini tidak dihitung - mis. "bandar" pada "bandar lampung" atau "slot" pada "slot waktu".
+                Temuan lama yang tidak lagi memenuhi ambang skor dibersihkan otomatis.
+            </p>
+
+            @can(['deteksi-judol.update', 'deteksi-judol.delete'])
+                <form wire:submit="addExclusion" class="mt-4 flex items-start gap-2">
+                    <div class="flex-1">
+                        <label for="newExclusion" class="sr-only">Frasa pengecualian baru</label>
+                        <input
+                            wire:model="newExclusion"
+                            id="newExclusion"
+                            type="text"
+                            maxlength="150"
+                            placeholder="mis. bandar udara"
+                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400 @error('newExclusion') border-red-400 @enderror"
+                        >
+                        @error('newExclusion')
+                            <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <button
+                        type="submit"
+                        wire:loading.attr="disabled"
+                        wire:target="addExclusion"
+                        class="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                        <x-loading-label target="addExclusion" loading="Menambahkan..." spinner="h-3.5 w-3.5" gap="gap-1.5">
+                            <x-phosphor-plus class="h-3.5 w-3.5 shrink-0" />
+                            <span>Tambah</span>
+                        </x-loading-label>
+                    </button>
+                </form>
+            @endcan
+
+            <div class="mt-4 flex max-h-60 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-zinc-100 p-3 dark:border-zinc-800">
+                @forelse ($exclusions as $exclusion)
+                    <span wire:key="pengecualian-{{ $exclusion->uuid }}" @class([
+                        'group inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition',
+                        'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300' => $exclusion->is_active,
+                        'bg-zinc-50 text-zinc-400 line-through dark:bg-zinc-800/40 dark:text-zinc-600' => ! $exclusion->is_active,
+                    ])>
+                        @can($exclusion->is_active ? 'deteksi-judol.update' : ['deteksi-judol.update', 'deteksi-judol.delete'])
+                            <button
+                                type="button"
+                                wire:click="toggleExclusion('{{ $exclusion->uuid }}')"
+                                wire:loading.attr="disabled"
+                                wire:target="toggleExclusion('{{ $exclusion->uuid }}')"
+                                title="{{ $exclusion->is_active ? 'Nonaktifkan' : 'Aktifkan' }}"
+                            >
+                                {{ $exclusion->phrase }}
+                            </button>
+                        @else
+                            <span>{{ $exclusion->phrase }}</span>
+                        @endcan
+                        @can('deteksi-judol.delete')
+                            <button
+                                type="button"
+                                wire:click="removeExclusion('{{ $exclusion->uuid }}')"
+                                wire:loading.attr="disabled"
+                                wire:target="removeExclusion('{{ $exclusion->uuid }}')"
+                                class="text-zinc-400 opacity-0 transition hover:text-red-500 focus:opacity-100 group-hover:opacity-100"
+                                title="Hapus"
+                                aria-label="Hapus pengecualian {{ $exclusion->phrase }}"
+                            >
+                                <x-phosphor-x class="h-3 w-3" wire:loading.remove wire:target="removeExclusion('{{ $exclusion->uuid }}')" />
+                                <x-phosphor-spinner class="h-3 w-3 animate-spin" wire:loading wire:target="removeExclusion('{{ $exclusion->uuid }}')" />
+                            </button>
+                        @endcan
+                    </span>
+                @empty
+                    <p class="text-sm text-zinc-500 dark:text-zinc-400">Belum ada pengecualian frasa.</p>
+                @endforelse
+            </div>
+        </div>
+    </div>
 
     @php
         $emptyMessage = $search
@@ -214,6 +344,12 @@
                             {{ $group['attack_label'] }}
                         </span>
 
+                        @if (isset($group['score']))
+                            <span class="rounded-full bg-zinc-900 px-2 py-0.5 font-mono text-xs font-semibold text-white dark:bg-white dark:text-zinc-900" title="Skor halaman (ambang {{ $threshold }})">
+                                Skor {{ $group['score'] }}
+                            </span>
+                        @endif
+
                         @if ($group['url_count'] > 1)
                             <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
                                 {{ $group['url_count'] }} halaman
@@ -236,7 +372,30 @@
                     @endif
 
                     <div class="mt-3 space-y-3 rounded-xl bg-zinc-50 px-4 py-3.5 dark:bg-zinc-800/40">
-                        @if ($group['keywords'])
+                        @if (! empty($group['match_details']))
+                            {{-- Per keyword: its weight, where it sat, and whether it was hidden. --}}
+                            <div>
+                                <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Kata kunci ditemukan</p>
+                                <div class="mt-1.5 flex flex-wrap gap-1.5">
+                                    @foreach ($group['match_details'] as $match)
+                                        @php $matchWeight = $weightLabels[(int) ($match['weight'] ?? 3)] ?? $weightLabels[3]; @endphp
+                                        <span class="inline-flex items-center gap-1.5 rounded-full bg-white py-0.5 pl-2 pr-1 text-xs font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+                                            {{ $match['keyword'] ?? '' }}
+                                            @if (! empty($match['sources']))
+                                                <span class="font-normal text-zinc-400">{{ implode(', ', (array) $match['sources']) }}</span>
+                                            @endif
+                                            @if (! empty($match['hidden']))
+                                                <span class="inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 text-[10px] font-semibold leading-4 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
+                                                    <x-phosphor-eye-slash class="h-3 w-3" />
+                                                    tersembunyi
+                                                </span>
+                                            @endif
+                                            <span class="rounded px-1 text-[10px] font-semibold leading-4 {{ $matchWeight['class'] }}">{{ $matchWeight['label'] }}</span>
+                                        </span>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @elseif ($group['keywords'])
                             <div>
                                 <p class="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Kata kunci ditemukan</p>
                                 <div class="mt-1.5 flex flex-wrap gap-1.5">
@@ -323,6 +482,12 @@
                                             @endif
                                             @if (($elementCount = $finding->affectedElementCount()) > 1)
                                                 <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-normal text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">{{ $elementCount }} elemen</span>
+                                            @endif
+                                            @if (collect($finding->evidence_nodes ?? [])->contains(fn ($node) => ! empty($node['hidden'])))
+                                                <span class="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-normal text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" title="Disembunyikan lewat CSS/atribut - tidak terlihat pengunjung, tetap terbaca mesin pencari">
+                                                    <x-phosphor-eye-slash class="h-3.5 w-3.5" />
+                                                    tersembunyi
+                                                </span>
                                             @endif
                                             @if ($finding->status !== 'new')
                                                 <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-normal text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">Sudah ditangani</span>
@@ -517,6 +682,20 @@
                         class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
                     ></textarea>
                     @error('bulkKeywords') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
+
+                    <div class="flex items-center gap-2">
+                        <label for="bulkKeywordWeight" class="text-xs font-medium text-zinc-500 dark:text-zinc-400">Bobot untuk semua kata kunci ini</label>
+                        <select
+                            wire:model="newKeywordWeight"
+                            id="bulkKeywordWeight"
+                            class="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                        >
+                            @foreach ($weightLabels as $value => $weightLabel)
+                                <option value="{{ $value }}">{{ $weightLabel['label'] }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    @error('newKeywordWeight') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
 
                     @if ($bulkKeywordResult)
                         <div class="flex flex-col gap-1.5 rounded-lg bg-zinc-50 p-3 text-xs dark:bg-zinc-800/60">

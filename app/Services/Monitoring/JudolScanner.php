@@ -2,10 +2,10 @@
 
 namespace App\Services\Monitoring;
 
+use App\Models\AuditLog;
 use App\Models\Incident;
 use App\Models\JudolDetection;
 use App\Models\JudolFinding;
-use App\Models\JudolKeyword;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\JudolContentDetected;
@@ -13,6 +13,7 @@ use App\Services\AppSettings;
 use App\Services\Notifications\MailSettings;
 use App\Services\Notifications\WebhookNotifier;
 use App\Services\Security\OutboundUrlGuard;
+use App\Support\ResponseSizeLimit;
 use DOMDocument;
 use DOMText;
 use Generator;
@@ -68,22 +69,20 @@ class JudolScanner
     /** Added/removed passages reported per change, so a rewritten page stays readable. */
     protected const MAX_DIFF_CHUNKS = 8;
 
-    /**
-     * Common leetspeak substitutions used to dodge keyword filters (e.g. "sl0t
-     * gac0r", "t0gel"). Applied as a second haystack alongside the raw text -
-     * cheap, local, no API call - so simple obfuscation still gets caught.
-     * Deliberately excludes '1' - it stands for both 'i' and 'l' depending on
-     * the word (s1tus vs s1ot), so a single substitution would corrupt as many
-     * words as it fixes.
-     */
-    protected const LEETSPEAK_MAP = [
-        '0' => 'o', '3' => 'e', '4' => 'a', '5' => 's', '7' => 't', '@' => 'a', '$' => 's',
-    ];
-
     /** Seconds spent in AI calls during the current scan (reset per scan). */
     protected float $aiSeconds = 0.0;
 
     protected bool $aiBudgetLogged = false;
+
+    /** @var array{complete: bool, gone: array<string, int>, attempted: array<string, true>} how the last crawl() ended */
+    protected array $crawlOutcome = ['complete' => false, 'gone' => [], 'attempted' => []];
+
+    protected ?JudolMatcher $matcher = null;
+
+    protected ?PageTextExtractor $extractor = null;
+
+    /** @var array{detections: array<int, int>, findings: array<int, int>} ids removed by the last prune calls */
+    protected array $pruned = ['detections' => [], 'findings' => []];
 
     /**
      * Full-site scan: crawl every reachable page and flag new judol matches.
@@ -102,17 +101,29 @@ class JudolScanner
         // rows repeating each other. See RegionFindings.
         $regions = new RegionFindings;
 
+        // Rules may have changed since this site was last crawled (keyword weight,
+        // exclusion, threshold) - settle its stored results first.
+        $this->pruneStaleDetections($website);
+        $this->pruneStaleFindings($website);
+
         // The keywords already on record for this site, keyed by URL - one query
         // rather than one per crawled page. evaluateAndStore() deliberately skips a
         // page it flagged on an earlier crawl, so without this the text injection
         // that covers forty pages would report "1 halaman" from the second crawl on,
         // while the backlink beside it kept counting all forty.
-        $storedKeywords = $website->judolDetections()->pluck('matched_keywords', 'url');
+        $stored = $website->judolDetections()->get(['id', 'url', 'matched_keywords'])->keyBy('url');
+
+        // Content history and defacement ride on the same fetches; a site under
+        // maintenance is expected to change, so both sit that crawl out.
+        $content = $website->isUnderMaintenance() ? null : app(PageContentMonitor::class);
+        $content?->beginCrawl($website);
 
         foreach ($this->crawl($website) as $url => $page) {
+            $pageText = $this->extractor()->extract($page['html'], $url, ! $page['truncated']);
+
             $this->recordRegions($website, $regions, $url, $page['html']);
 
-            $detection = $this->evaluateAndStore($website, $url, $page['html'], lastModified: $page['last_modified']);
+            $detection = $this->evaluateAndStore($website, $url, $page['html'], lastModified: $page['last_modified'], pageText: $pageText);
 
             if ($detection) {
                 $found->push($detection);
@@ -122,7 +133,13 @@ class JudolScanner
             // injection is sitewide is the pages that were ALREADY flagged.
             $this->recordKeywordRegions($regions, $url, $page['html'], $detection
                 ? $detection->matched_keywords ?? []
-                : $storedKeywords->get($url) ?? []);
+                : $stored->get($url)?->matched_keywords ?? []);
+
+            $this->observeContent($content, $website, $url, $pageText, $page['last_modified'], $detection?->id ?? $stored->get($url)?->id);
+        }
+
+        if ($content) {
+            $this->settleContent($content, $website);
         }
 
         $newFindings = $regions->persist($website);
@@ -136,6 +153,52 @@ class JudolScanner
         $this->notifyFindings($website, $found, $newFindings);
 
         return $found->count();
+    }
+
+    /** Content history + defacement for one page; never allowed to break the judol crawl. */
+    protected function observeContent(?PageContentMonitor $content, Website $website, string $url, PageText $pageText, ?Carbon $lastModified, ?int $detectionId): void
+    {
+        if (! $content) {
+            return;
+        }
+
+        try {
+            $content->observe($website, $url, $pageText, $lastModified, $detectionId);
+        } catch (Throwable $e) {
+            Log::warning("JudolScanner: gagal mencatat perubahan konten {$url}: {$e->getMessage()}");
+        }
+    }
+
+    protected function settleContent(PageContentMonitor $content, Website $website): void
+    {
+        try {
+            $seen = $content->finishCrawl($website, $this->lastCrawlOutcome());
+            app(DefacementMonitor::class)->settle($website, $seen);
+        } catch (Throwable $e) {
+            Log::warning("JudolScanner: gagal menyelesaikan pemantauan konten {$website->url}: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * How the last crawl() ended: complete = the queue drained (not cut by the
+     * deadline or page budget), gone = URLs that answered 404/410, attempted =
+     * sha1 of every URL fetched (successfully or not).
+     *
+     * @return array{complete: bool, gone: array<string, int>, attempted: array<string, true>}
+     */
+    public function lastCrawlOutcome(): array
+    {
+        return $this->crawlOutcome;
+    }
+
+    protected function matcher(): JudolMatcher
+    {
+        return $this->matcher ??= app(JudolMatcher::class);
+    }
+
+    protected function extractor(): PageTextExtractor
+    {
+        return $this->extractor ??= app(PageTextExtractor::class);
     }
 
     /**
@@ -278,15 +341,15 @@ class JudolScanner
                 break;
             }
 
-            $haystack = Str::lower($candidate['text']);
-            // Same deobfuscation the page-level match uses, so "sl0t gac0r" is
+            // Same folding the page-level match uses, so obfuscated phrases are
             // located rather than falling through to the fallback region.
-            $normalized = strtr($haystack, self::LEETSPEAK_MAP);
             $hits = [];
 
-            foreach ($pending as $lower => $keyword) {
-                if (str_contains($haystack, $lower) || str_contains($normalized, $lower)) {
-                    $hits[] = $keyword;
+            foreach ($this->matcher()->matchText($candidate['text']) as $match) {
+                $lower = Str::lower($match);
+
+                if (isset($pending[$lower])) {
+                    $hits[] = $pending[$lower];
                     unset($pending[$lower]);
                 }
             }
@@ -323,6 +386,7 @@ class JudolScanner
                 $groups[$key]['evidence'][] = [
                     'path' => $pageRegion->path($candidate['node']),
                     'html' => $pageRegion->snippet($candidate['node']),
+                    'hidden' => $candidate['region'] === null && $this->extractor()->isHidden($candidate['node']),
                 ];
             }
         }
@@ -522,7 +586,7 @@ class JudolScanner
         // Tertentu" and is already looking at the verdict on screen. Only the
         // automatic crawl (scan()) mails/notifies, so re-checking the same page ten
         // times in a row can't turn into ten emails.
-        $detection = $this->evaluateAndStore($website, $url, $result['body'], force: true, lastModified: $result['last_modified']);
+        $detection = $this->evaluateAndStore($website, $url, $result['body'], force: true, lastModified: $result['last_modified'], pageText: $this->extractor()->extract($result['body'], $url, ! $result['truncated']));
 
         // The manual check has to leave the same trail the crawl does. Without this
         // it wrote a per-page detection and no finding at all - so the page showed
@@ -546,7 +610,7 @@ class JudolScanner
      * Breadth-first crawl starting from the homepage and sitemap(s), following
      * same-host links up to config('judol.max_depth') / config('judol.max_pages').
      *
-     * @return Generator<string, array{html: string, last_modified: ?Carbon}>
+     * @return Generator<string, array{html: string, last_modified: ?Carbon, truncated: bool}>
      */
     protected function crawl(Website $website): Generator
     {
@@ -564,6 +628,7 @@ class JudolScanner
         $deadline = microtime(true) + max(30, (int) config('judol.max_seconds', 240));
 
         $visited = [];
+        $this->crawlOutcome = ['complete' => false, 'gone' => [], 'attempted' => []];
 
         // Probe the homepage before anything else, including the sitemap fetch.
         // If the site does not answer here it will not answer for any of the
@@ -575,6 +640,7 @@ class JudolScanner
         // manual "Cek Judol" button, which scans on demand.
         $homepage = $this->normalizeUrl($website->url);
         $visited[$homepage] = true;
+        $this->crawlOutcome['attempted'][sha1($homepage)] = true;
         $root = $this->fetchWithError($homepage);
 
         // A homepage that fails does NOT always mean a dead site. A WAF answering
@@ -595,7 +661,7 @@ class JudolScanner
 
             Log::info("JudolScanner: halaman utama {$website->url} ditolak ({$root['error']}), melanjutkan lewat sitemap dan URL yang sudah terdeteksi.");
         } else {
-            yield $homepage => ['html' => $root['body'], 'last_modified' => $root['last_modified']];
+            yield $homepage => ['html' => $root['body'], 'last_modified' => $root['last_modified'], 'truncated' => $root['truncated']];
         }
 
         $queue = [];
@@ -639,14 +705,19 @@ class JudolScanner
             }
 
             $visited[$url] = true;
+            $this->crawlOutcome['attempted'][sha1($url)] = true;
             $result = $this->fetchWithError($url);
             $html = $result['body'];
 
             if ($html === null) {
+                if (in_array($result['error'], ['HTTP 404', 'HTTP 410'], true)) {
+                    $this->crawlOutcome['gone'][$url] = (int) substr($result['error'], 5);
+                }
+
                 continue;
             }
 
-            yield $url => ['html' => $html, 'last_modified' => $result['last_modified']];
+            yield $url => ['html' => $html, 'last_modified' => $result['last_modified'], 'truncated' => $result['truncated']];
 
             if ($depth < $maxDepth && count($visited) < $maxPages) {
                 foreach ($this->extractLinks($html, $url, $host) as $link) {
@@ -656,6 +727,9 @@ class JudolScanner
                 }
             }
         }
+
+        // Drained, not cut short - only then can an unvisited page count as missed.
+        $this->crawlOutcome['complete'] = $queue === [] && $root['body'] !== null;
     }
 
     /**
@@ -732,7 +806,9 @@ class JudolScanner
      * `last_modified` carries the page's own Last-Modified header when the server
      * sends one - see JudolDetection::page_last_modified_at for why that matters.
      *
-     * @return array{body: ?string, error: ?string, last_modified: ?Carbon}
+     * `truncated` is true when the body was cut at the response size limit.
+     *
+     * @return array{body: ?string, error: ?string, last_modified: ?Carbon, truncated: bool}
      */
     protected function fetchWithError(string $url): array
     {
@@ -741,7 +817,7 @@ class JudolScanner
         if ($reason = OutboundUrlGuard::reason($url)) {
             Log::warning("JudolScanner: {$url} ditolak: {$reason}");
 
-            return ['body' => null, 'error' => $reason, 'last_modified' => null];
+            return ['body' => null, 'error' => $reason, 'last_modified' => null, 'truncated' => false];
         }
 
         try {
@@ -754,12 +830,12 @@ class JudolScanner
                 } catch (Throwable $retryException) {
                     Log::warning("JudolScanner: gagal mengambil {$url}: {$retryException->getMessage()}");
 
-                    return ['body' => null, 'error' => $retryException->getMessage(), 'last_modified' => null];
+                    return ['body' => null, 'error' => $retryException->getMessage(), 'last_modified' => null, 'truncated' => false];
                 }
             } else {
                 Log::warning("JudolScanner: gagal mengambil {$url}: {$e->getMessage()}");
 
-                return ['body' => null, 'error' => $e->getMessage(), 'last_modified' => null];
+                return ['body' => null, 'error' => $e->getMessage(), 'last_modified' => null, 'truncated' => false];
             }
         }
 
@@ -767,10 +843,17 @@ class JudolScanner
             $reason = "HTTP {$response->status()}";
             Log::warning("JudolScanner: gagal mengambil {$url} ({$reason})");
 
-            return ['body' => null, 'error' => $reason, 'last_modified' => null];
+            return ['body' => null, 'error' => $reason, 'last_modified' => null, 'truncated' => false];
         }
 
-        return ['body' => $response->body(), 'error' => null, 'last_modified' => $this->parseLastModified($response->header('Last-Modified'))];
+        $body = $response->toPsrResponse()->getBody();
+
+        return [
+            'body' => $response->body(),
+            'error' => null,
+            'last_modified' => $this->parseLastModified($response->header('Last-Modified')),
+            'truncated' => $body instanceof ResponseSizeLimit && $body->truncated,
+        ];
     }
 
     /**
@@ -836,7 +919,7 @@ class JudolScanner
         ])
             ->withOptions(['verify' => $verifySsl] + OutboundUrlGuard::httpOptions())
             // Every hop and retry connects only to the guard-vetted IPs (no DNS rebinding).
-            ->setHandler(OutboundUrlGuard::pinnedHandler())
+            ->setHandler(ResponseSizeLimit::handler(OutboundUrlGuard::pinnedHandler()))
             ->timeout(15)
             // 10s, matching WebsiteChecker: the same shared-hosting sites are being
             // fetched, and at 5s their TLS handshake was being cut off. Here that
@@ -867,73 +950,6 @@ class JudolScanner
         libxml_use_internal_errors(false);
 
         return $dom;
-    }
-
-    /**
-     * The full searchable text of a page: visible text (title, body, ...) PLUS every
-     * <meta content="..."> value. Judol/SEO spam is very often stuffed into meta
-     * description, og:description, keywords, etc. - which live in an attribute, so a
-     * plain strip_tags() on the raw HTML silently misses all of it.
-     *
-     * @param  array<int, string>  $excludingLinksTo  registrable domains whose anchor
-     *                                                text is dropped before reading -
-     *                                                see evaluateAndStore()
-     * @param  string|null  $baseUrl  needed only to resolve relative hrefs while
-     *                                deciding which anchors those are
-     */
-    protected function extractText(string $html, array $excludingLinksTo = [], ?string $baseUrl = null): string
-    {
-        $dom = $this->parseHtml($html);
-
-        if (! $dom) {
-            return '';
-        }
-
-        if ($excludingLinksTo !== [] && $baseUrl !== null) {
-            $this->stripLinksTo($dom, $excludingLinksTo, $baseUrl);
-        }
-
-        $parts = [$dom->textContent ?? ''];
-
-        foreach ($dom->getElementsByTagName('meta') as $meta) {
-            if ($content = trim($meta->getAttribute('content'))) {
-                $parts[] = $content;
-            }
-        }
-
-        return implode(' ', $parts);
-    }
-
-    /**
-     * Deletes the <a> elements pointing at any of these domains, so their anchor
-     * text is not part of what extractText() returns.
-     *
-     * @param  array<int, string>  $domains  registrable domains
-     */
-    protected function stripLinksTo(DOMDocument $dom, array $domains, string $baseUrl): void
-    {
-        $doomed = [];
-
-        foreach ($dom->getElementsByTagName('a') as $anchor) {
-            $href = trim($anchor->getAttribute('href'));
-
-            if ($href === '') {
-                continue;
-            }
-
-            $absolute = $this->resolveUrl($href, $baseUrl);
-            $host = $absolute ? Str::lower((string) parse_url($absolute, PHP_URL_HOST)) : '';
-
-            if ($host !== '' && in_array($this->registrableDomain($host), $domains, true)) {
-                $doomed[] = $anchor;
-            }
-        }
-
-        // Collected first, removed after: getElementsByTagName() hands back a LIVE
-        // list, so deleting while iterating it skips every other match.
-        foreach ($doomed as $anchor) {
-            $anchor->parentNode?->removeChild($anchor);
-        }
     }
 
     /**
@@ -1269,7 +1285,7 @@ class JudolScanner
      *
      * @return JudolDetection|null the stored detection, or null when nothing (new) matched
      */
-    protected function evaluateAndStore(Website $website, string $url, string $html, bool $force = false, ?Carbon $lastModified = null): ?JudolDetection
+    protected function evaluateAndStore(Website $website, string $url, string $html, bool $force = false, ?Carbon $lastModified = null, ?PageText $pageText = null): ?JudolDetection
     {
         $existing = $website->judolDetections()->where('url', $url)->first();
 
@@ -1291,36 +1307,25 @@ class JudolScanner
         // sitting inside <a href="gacor88.com"> IS the backlink finding, already
         // reported with the region it lives in and where it points; reading it a
         // second time as page text files a separate "teks promosi disisipkan"
-        // finding for one single edit, and sends the operator to the page body when
-        // the thing to fix is the link. Only ever excludes what the link classifier
+        // finding for one single edit. Only ever excludes what the link classifier
         // actually flagged, so with the AI off nothing is dropped.
-        $rawText = $this->extractText($html, excludingLinksTo: $linkedDomains, baseUrl: $url);
-        $text = Str::lower($rawText);
-        // Also check the URL itself: some injected pages carry the keyword only in
-        // their slug (e.g. /slot-gacor-hari-ini/) with sparse or JS-rendered content.
-        // Hyphens/underscores are normalized to spaces so "slot-gacor" still matches
-        // the "slot gacor" keyword phrase.
-        $urlSlug = str_replace(['-', '_'], ' ', Str::lower(urldecode($url)));
-        $haystack = $text.' '.$urlSlug;
+        $pageText ??= $this->extractor()->extract($html, $url);
+        $text = $pageText->plainText($linkedDomains);
 
-        // Deobfuscated copy catches simple keyword-filter evasion (e.g. "s1ot gacor",
-        // "t0gel") without any extra cost - see LEETSPEAK_MAP.
-        $normalizedHaystack = strtr($haystack, self::LEETSPEAK_MAP);
-
-        // Dynamic keyword list (Deteksi Judol page) - falls back to config/judol.php
-        // only if the table is somehow empty, so a botched migration/seed never
-        // leaves the scanner silently matching nothing.
-        $keywords = JudolKeyword::activeList() ?: config('judol.keywords', []);
-        $threshold = app(AppSettings::class)->judolThreshold();
-
-        $matched = collect($keywords)
-            ->filter(fn (string $keyword) => Str::contains($haystack, Str::lower($keyword))
-                || Str::contains($normalizedHaystack, Str::lower($keyword)))
-            ->values();
-
-        $keywordsMatched = $matched->count() >= $threshold;
+        // Folded, whole-word, weighted match over every segment (title, meta, body,
+        // alt/title attributes, noscript, URL slug) - see JudolMatcher.
+        $match = $this->matcher()->match($pageText, $linkedDomains);
+        $matched = collect($match['keywords']);
+        $keywordsMatched = $match['keywords'] !== [] && $match['score'] >= app(AppSettings::class)->judolScoreThreshold();
 
         if (! $keywordsMatched && $linkedDomains === []) {
+            // A page that could not be fully read proves nothing - keep what is on record.
+            if (! $pageText->complete) {
+                Log::warning("JudolScanner: ekstraksi teks {$url} tidak lengkap, deteksi yang ada dipertahankan");
+
+                return null;
+            }
+
             $this->clearStaleDetection($existing, $url, 'kata kunci tidak lagi cocok dan tidak ada tautan ke situs judi');
 
             return null;
@@ -1356,7 +1361,7 @@ class JudolScanner
             // and the two checks read different evidence - so a confident "this is
             // just a news article" cannot clear a page that is also pointing at a
             // gambling domain.
-            if ($aiConfidentlyDenies && $linkedDomains === []) {
+            if ($aiConfidentlyDenies && $linkedDomains === [] && $pageText->complete) {
                 Log::info("JudolScanner: {$url} dibantah AI (confidence {$verdict['confidence']}): {$verdict['reasoning']}");
                 $this->clearStaleDetection($existing, $url, 'dibantah AI');
 
@@ -1380,11 +1385,9 @@ class JudolScanner
             $ai = $this->withLinkFinding($ai, $linkedDomains);
         }
 
-        // Anchored on the first matched keyword when there is one; a link-only
-        // finding has no keyword to anchor to, so the page simply opens from the top.
-        $snippetPosition = $keywordsMatched ? (Str::position($text, Str::lower($matched->first())) ?: 0) : 0;
-        $snippet = trim(substr($text, max(0, $snippetPosition - 60), 200));
+        $snippet = $this->snippet($pageText, $keywordsMatched ? $match : null, $text);
         $matchedKeywords = $keywordsMatched ? $matched->all() : [];
+        $scoring = ['score' => $match['score'], 'match_details' => $keywordsMatched ? $match['details'] : null];
         $description = $this->describeFinding($url, $matchedKeywords, $linkedDomains);
 
         if ($existing) {
@@ -1405,11 +1408,12 @@ class JudolScanner
                 'detected_at' => now(),
             ]);
 
-            $snapshot = $this->snapshotText($rawText);
+            $snapshot = $this->snapshotText($text);
 
             $existing->update([
                 'incident_id' => $incident->id,
                 'matched_keywords' => $matchedKeywords,
+                ...$scoring,
                 'linked_domains' => $linkedDomains,
                 'snippet' => $snippet,
                 'content_snapshot' => $snapshot,
@@ -1437,13 +1441,14 @@ class JudolScanner
             'detected_at' => now(),
         ]);
 
-        $snapshot = $this->snapshotText($rawText);
+        $snapshot = $this->snapshotText($text);
 
         return JudolDetection::create([
             'website_id' => $website->id,
             'incident_id' => $incident->id,
             'url' => $url,
             'matched_keywords' => $matchedKeywords,
+            ...$scoring,
             'linked_domains' => $linkedDomains,
             'snippet' => $snippet,
             'content_snapshot' => $snapshot,
@@ -1453,6 +1458,20 @@ class JudolScanner
             'status' => 'new',
             'detected_at' => now(),
         ]);
+    }
+
+    /**
+     * ~200 characters around the first keyword hit, taken from the segment it was
+     * found in; a link-only finding opens from the top of the page text.
+     *
+     * @param  array{keywords: array<int, string>, first_segment: ?int}|null  $match
+     */
+    protected function snippet(PageText $pageText, ?array $match, string $text): string
+    {
+        $segment = $match && $match['first_segment'] !== null ? $pageText->segments[$match['first_segment']]['text'] : $text;
+        $position = $match ? (mb_stripos($segment, $match['keywords'][0]) ?: 0) : 0;
+
+        return trim(mb_substr($segment, max(0, $position - 60), 200));
     }
 
     /**
@@ -1683,23 +1702,25 @@ class JudolScanner
     }
 
     /**
-     * Re-checks every stored detection's matched_keywords against the CURRENT active
-     * keyword list and threshold - no network fetch needed, since matched_keywords
-     * was already recorded at scan time. Call this right after a keyword is removed
-     * or deactivated so stale detections disappear immediately, instead of relying on
-     * someone noticing and manually "Cek Ulang"-ing each one (or waiting for the next
-     * scheduled scan, which never re-evaluates a URL it already flagged).
+     * Re-checks stored detections against the CURRENT keywords, weights and score
+     * threshold - no network fetch. A keyword survives while it is still active;
+     * with $recheckSnapshots (an exclusion was added) it must also still be found in
+     * the stored page text after exclusions. The detection goes when the surviving
+     * score drops below the threshold. Called at the start of each site's scan and
+     * after the rules are edited on Deteksi Judol.
      *
      * @return int number of stale detections cleared
      */
-    public function pruneStaleDetections(): int
+    public function pruneStaleDetections(?Website $website = null, bool $recheckSnapshots = false): int
     {
-        $activeKeywords = collect(JudolKeyword::activeList())->map(fn (string $k) => Str::lower($k))->all();
-        $threshold = app(AppSettings::class)->judolThreshold();
+        $matcher = $this->matcher();
+        $threshold = app(AppSettings::class)->judolScoreThreshold();
         $cleared = 0;
+        $this->pruned['detections'] = [];
 
         JudolDetection::whereNotNull('matched_keywords')
-            ->chunkById(50, function ($detections) use ($activeKeywords, $threshold, &$cleared) {
+            ->when($website, fn ($q) => $q->where('website_id', $website->id))
+            ->chunkById(50, function ($detections) use ($matcher, $threshold, $recheckSnapshots, &$cleared) {
                 foreach ($detections as $detection) {
                     // A finding that rests on outbound gambling links has no keywords
                     // to go stale - editing the keyword list must not silently delete it.
@@ -1707,13 +1728,37 @@ class JudolScanner
                         continue;
                     }
 
-                    $stillActive = collect($detection->matched_keywords)
-                        ->filter(fn (string $keyword) => in_array(Str::lower($keyword), $activeKeywords, true))
-                        ->count();
+                    $stored = $detection->matched_keywords ?? [];
+                    $surviving = array_values(array_filter($stored, fn (string $k) => $matcher->weightOf([$k]) > 0));
 
-                    if ($stillActive < $threshold) {
-                        $this->clearStaleDetection($detection, $detection->url, 'kata kunci yang cocok sudah dihapus/dinonaktifkan');
+                    // A snapshot cut at SNAPSHOT_LIMIT may have lost the very phrase
+                    // (footer spam) - absence there proves nothing.
+                    // Legacy (pre-score) detections are rechecked once too, so the
+                    // seeded exclusions reach them; the update below fills match_details.
+                    if (($recheckSnapshots || $detection->match_details === null) && $surviving !== [] && filled($detection->content_snapshot)
+                        && mb_strlen($detection->content_snapshot) < self::SNAPSHOT_LIMIT) {
+                        // The slug was matched too, but is not part of the snapshot.
+                        $slug = str_replace(['-', '_', '/'], ' ', urldecode((string) parse_url($detection->url, PHP_URL_PATH)));
+                        $present = array_map(Str::lower(...), $matcher->matchText($detection->content_snapshot."\n".$slug));
+                        $surviving = array_values(array_filter($surviving, fn (string $k) => in_array(Str::lower($k), $present, true)));
+                    }
+
+                    $score = $matcher->weightOf($surviving) + $this->storedBonus($detection->match_details ?? [], $surviving);
+
+                    if ($surviving === [] || $score < $threshold) {
+                        $this->clearStaleDetection($detection, $detection->url, 'kata kunci/bobot/pengecualian/ambang yang mendasarinya sudah berubah');
+                        $this->pruned['detections'][] = $detection->id;
                         $cleared++;
+
+                        continue;
+                    }
+
+                    if ($surviving !== $stored || $score !== $detection->score || $detection->match_details === null) {
+                        $detection->update([
+                            'matched_keywords' => $surviving,
+                            'score' => $score,
+                            'match_details' => $this->survivingDetails($detection->match_details, $surviving, $matcher),
+                        ]);
                     }
                 }
             });
@@ -1722,52 +1767,110 @@ class JudolScanner
     }
 
     /**
-     * The same cleanup for injection sites, which is where results are actually read
-     * now: a phrase struck off the keyword list has to stop being reported as
-     * evidence, or the page keeps pointing an operator at a footer over a word
-     * somebody already decided was a false positive.
-     *
-     * No threshold is applied here, unlike pruneStaleDetections(). The threshold
-     * asks "is this PAGE dirty enough to flag", and a finding aggregates a region
-     * across many pages - so the honest rule is narrower: drop the keywords that are
-     * gone, and drop the finding only when nothing at all is left to report.
+     * The same cleanup for injection sites: drop keywords that are inactive or are
+     * themselves an exclusion phrase, and drop the finding when what is left weighs
+     * less than the threshold and no backlink holds it up.
      *
      * @return int number of findings removed outright
      */
-    public function pruneStaleFindings(): int
+    public function pruneStaleFindings(?Website $website = null): int
     {
-        $activeKeywords = collect(JudolKeyword::activeList())->map(fn (string $k) => Str::lower($k))->all();
+        $matcher = $this->matcher();
+        $threshold = app(AppSettings::class)->judolScoreThreshold();
         $cleared = 0;
+        $this->pruned['findings'] = [];
 
         JudolFinding::whereNotNull('matched_keywords')
-            ->chunkById(50, function ($findings) use ($activeKeywords, &$cleared) {
+            ->when($website, fn ($q) => $q->where('website_id', $website->id))
+            ->chunkById(50, function ($findings) use ($matcher, $threshold, &$cleared) {
                 foreach ($findings as $finding) {
                     $current = $finding->matched_keywords ?? [];
 
                     $surviving = array_values(array_filter(
                         $current,
-                        fn (string $keyword) => in_array(Str::lower($keyword), $activeKeywords, true)
+                        fn (string $keyword) => $matcher->weightOf([$keyword]) > 0 && ! $matcher->isExcluded($keyword)
                     ));
-
-                    if ($surviving === $current) {
-                        continue;
-                    }
 
                     // A backlink finding stands on where the page points, not on any
                     // phrase, so editing the keyword list must never delete one.
-                    if ($surviving === [] && blank($finding->linked_domains)) {
-                        Log::info("JudolScanner: menghapus titik penyisipan {$finding->region_label} - semua kata kunci yang mendasarinya sudah dihapus/dinonaktifkan.");
+                    if (blank($finding->linked_domains) && ($surviving === [] || $matcher->weightOf($surviving) < $threshold)) {
+                        Log::info("JudolScanner: menghapus titik penyisipan {$finding->region_label} - kata kunci yang tersisa tidak lagi memenuhi ambang skor.");
                         $finding->delete();
+                        $this->pruned['findings'][] = $finding->id;
                         $cleared++;
 
                         continue;
                     }
 
-                    $finding->update(['matched_keywords' => $surviving]);
+                    if ($surviving !== $current) {
+                        $finding->update(['matched_keywords' => $surviving]);
+                    }
                 }
             });
 
         return $cleared;
+    }
+
+    /**
+     * One audit entry for what the last pruneStaleDetections()/pruneStaleFindings()
+     * removed after a rule edit; nothing when nothing was removed.
+     */
+    public function auditPrune(string $trigger): void
+    {
+        $count = count($this->pruned['detections']) + count($this->pruned['findings']);
+
+        if ($count === 0) {
+            return;
+        }
+
+        AuditLog::record('deteksi-judol.dibersihkan', "{$count} temuan", [
+            'pemicu' => $trigger,
+            'deteksi' => array_slice($this->pruned['detections'], 0, 500),
+            'titik_penyisipan' => array_slice($this->pruned['findings'], 0, 500),
+        ]);
+    }
+
+    /**
+     * Hidden/SEO bonus recorded at scan time, counted only for keywords still standing.
+     *
+     * @param  array<int, array{keyword?: string, sources?: array<int, string>, hidden?: bool, a11y?: bool}>  $details
+     * @param  array<int, string>  $surviving
+     */
+    protected function storedBonus(array $details, array $surviving): int
+    {
+        $surviving = array_map(Str::lower(...), $surviving);
+        $concealed = false;
+        $seo = false;
+
+        foreach ($details as $detail) {
+            if (! in_array(Str::lower($detail['keyword'] ?? ''), $surviving, true)) {
+                continue;
+            }
+
+            $concealed = $concealed || (($detail['hidden'] ?? false) && ! ($detail['a11y'] ?? false));
+            $seo = $seo || array_intersect($detail['sources'] ?? [], ['title', 'meta', 'url']) !== [];
+        }
+
+        return ($concealed ? (int) config('judol.hidden_bonus', 1) : 0) + ($seo ? (int) config('judol.seo_bonus', 1) : 0);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>|null  $details
+     * @param  array<int, string>  $surviving
+     * @return array<int, array<string, mixed>>
+     */
+    protected function survivingDetails(?array $details, array $surviving, JudolMatcher $matcher): ?array
+    {
+        // Legacy rows: rebuilt from the keywords alone (no source/hidden known).
+        $details ??= array_map(fn (string $k) => ['keyword' => $k, 'weight' => 0, 'sources' => [], 'hidden' => false, 'a11y' => false], $surviving);
+
+        $surviving = array_map(Str::lower(...), $surviving);
+
+        return collect($details)
+            ->filter(fn (array $d) => in_array(Str::lower($d['keyword'] ?? ''), $surviving, true))
+            ->map(fn (array $d) => ['weight' => $matcher->weightOf([$d['keyword']])] + $d)
+            ->values()
+            ->all();
     }
 
     /**

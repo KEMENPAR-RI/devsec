@@ -166,8 +166,13 @@ class Incident extends Model
                     'response_time_spike' => 'Lonjakan response time',
                     'content_changed' => 'Perubahan konten drastis',
                     'foreign_script' => 'Kode asing di halaman depan',
+                    'defacement' => 'Defacement konten',
                     default => null,
                 },
+                'URL Halaman' => isset($meta['urls']) ? implode(', ', (array) $meta['urls']) : null,
+                'Alasan' => isset($meta['reasons']) ? implode('; ', (array) $meta['reasons']) : null,
+                'Cuplikan Sebelum' => $meta['before'] ?? null,
+                'Cuplikan Sesudah' => $meta['after'] ?? null,
                 // One line per thing found, so an operator can tell a forgotten
                 // analytics tag from a loader nobody has ever seen before.
                 ...collect($meta['temuan'] ?? [])

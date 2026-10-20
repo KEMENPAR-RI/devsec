@@ -23,6 +23,8 @@ class JudolDetection extends Model
         'incident_id',
         'url',
         'matched_keywords',
+        'score',
+        'match_details',
         'linked_domains',
         'snippet',
         'content_snapshot',
@@ -41,6 +43,8 @@ class JudolDetection extends Model
     {
         return [
             'matched_keywords' => 'array',
+            'score' => 'integer',
+            'match_details' => 'array',
             'linked_domains' => 'array',
             'content_changes' => 'array',
             'ai_confidence' => 'float',

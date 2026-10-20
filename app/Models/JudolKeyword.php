@@ -18,7 +18,7 @@ class JudolKeyword extends Model
 {
     use Auditable, HasUuid;
 
-    protected $fillable = ['keyword', 'is_active'];
+    protected $fillable = ['keyword', 'weight', 'is_active'];
 
     public function auditEventPrefix(): string
     {
@@ -32,7 +32,7 @@ class JudolKeyword extends Model
 
     protected function casts(): array
     {
-        return ['is_active' => 'boolean'];
+        return ['is_active' => 'boolean', 'weight' => 'integer'];
     }
 
     public function scopeActive(Builder $query): Builder
@@ -42,8 +42,15 @@ class JudolKeyword extends Model
 
     protected static function booted(): void
     {
-        static::saved(fn () => Cache::forget('judol_keywords.active'));
-        static::deleted(fn () => Cache::forget('judol_keywords.active'));
+        // Two caches: the plain list (legacy callers) and the weighted rules the
+        // matcher builds its automaton from, which exclusions also invalidate.
+        $forget = function () {
+            Cache::forget('judol_keywords.active');
+            Cache::forget('judol_rules.active');
+        };
+
+        static::saved($forget);
+        static::deleted($forget);
     }
 
     /**
@@ -54,6 +61,21 @@ class JudolKeyword extends Model
         return Cache::rememberForever(
             'judol_keywords.active',
             fn () => static::active()->orderBy('keyword')->pluck('keyword')->all()
+        );
+    }
+
+    /**
+     * Active keywords mapped to their weight, for the v2 scorer.
+     *
+     * @return array<string, int>
+     */
+    public static function activeRules(): array
+    {
+        return Cache::rememberForever(
+            'judol_rules.active',
+            fn () => static::active()->orderBy('keyword')->pluck('weight', 'keyword')
+                ->map(fn ($weight) => (int) $weight)
+                ->all()
         );
     }
 }

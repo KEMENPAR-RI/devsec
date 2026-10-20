@@ -279,7 +279,7 @@ class SettingsTest extends TestCase
         $this->assertDatabaseMissing('judol_keywords', ['id' => $keyword->id]);
 
         $component->set('threshold', 2)->call('saveThreshold')->assertHasNoErrors();
-        $this->assertSame('2', Setting::get('judol_threshold'));
+        $this->assertSame('2', Setting::get('judol_score_threshold'));
     }
 
     public function test_judol_detections_page_rejects_a_duplicate_keyword(): void

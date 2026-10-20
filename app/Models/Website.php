@@ -135,6 +135,21 @@ class Website extends Model
         return $this->hasMany(JudolFinding::class);
     }
 
+    public function pageSnapshots(): HasMany
+    {
+        return $this->hasMany(PageSnapshot::class);
+    }
+
+    public function pageChanges(): HasMany
+    {
+        return $this->hasMany(PageChange::class);
+    }
+
+    public function defacementFindings(): HasMany
+    {
+        return $this->hasMany(DefacementFinding::class);
+    }
+
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);

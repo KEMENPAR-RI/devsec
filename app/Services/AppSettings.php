@@ -137,16 +137,21 @@ class AppSettings
     }
 
     /**
-     * How many distinct keywords must appear on a page before it counts as a judol
-     * finding.
-     *
-     * Read by the scanner on every page, by the stale-detection prune, and by the
-     * Deteksi Judol screen - the same expression lived in all three, each carrying
-     * its own copy of the fallback.
+     * Legacy name for the judol threshold; now the weighted score threshold, so
+     * older callers keep working.
      */
     public function judolThreshold(): int
     {
-        return (int) (Setting::get('judol_threshold') ?? config('judol.threshold', 1));
+        return $this->judolScoreThreshold();
+    }
+
+    /**
+     * Minimum weighted score (sum of keyword weights + hidden/SEO bonus) before a
+     * page counts as a judol finding - see JudolMatcher.
+     */
+    public function judolScoreThreshold(): int
+    {
+        return max(1, (int) (Setting::get('judol_score_threshold') ?? config('judol.score_threshold', 3)));
     }
 
     /**

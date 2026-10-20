@@ -7,7 +7,9 @@ use App\Livewire\Auth\ForgotPassword;
 use App\Livewire\Auth\Login;
 use App\Livewire\Auth\ResetPassword;
 use App\Livewire\Auth\TwoFactorChallenge;
+use App\Livewire\ContentChanges\Index as ContentChangesIndex;
 use App\Livewire\Dashboard;
+use App\Livewire\Defacement\Index as DefacementIndex;
 use App\Livewire\Incidents\Index as IncidentsIndex;
 use App\Livewire\JudolDetections\Index as JudolDetectionsIndex;
 use App\Livewire\Notifications\Index as NotificationsIndex;
@@ -89,6 +91,8 @@ Route::middleware('auth')->group(function () {
             ->whereNumber('index')
             ->name('deteksi-judol.gambar');
     });
+    Route::get('/defacement', DefacementIndex::class)->middleware('can:defacement.view')->name('defacement');
+    Route::get('/perubahan-konten', ContentChangesIndex::class)->middleware('can:perubahan-konten.view')->name('perubahan-konten');
     Route::get('/notifikasi', NotificationsIndex::class)->middleware('can:notifikasi.view')->name('notifikasi');
 
     Route::middleware('can:laporan.view')->group(function () {

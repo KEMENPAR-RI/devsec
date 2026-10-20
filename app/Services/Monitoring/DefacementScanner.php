@@ -4,8 +4,10 @@ namespace App\Services\Monitoring;
 
 use App\Models\Website;
 use App\Services\Security\OutboundUrlGuard;
+use App\Support\ResponseSizeLimit;
 use DOMDocument;
 use DOMElement;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Throwable;
@@ -52,6 +54,12 @@ class DefacementScanner
         'fromcharcode(' => 'Perakitan string lewat String.fromCharCode - penyamaran kode',
     ];
 
+    /** @var array{body: string, status: int, last_modified: ?Carbon, complete: bool}|null the homepage fetched by the last scan() */
+    protected ?array $lastHomepage = null;
+
+    /** Whether the last parse() gave up part way (e.g. nesting past libxml's depth limit). */
+    protected bool $parseStopped = false;
+
     /**
      * Everything unexpected on a site's homepage.
      *
@@ -59,7 +67,9 @@ class DefacementScanner
      */
     public function scan(Website $website): array
     {
-        $html = $this->fetch($website->url);
+        $page = $this->fetchPage($website->url);
+        $this->lastHomepage = $page['body'] !== null ? $page : null;
+        $html = $page['body'];
 
         if ($html === null) {
             return [];
@@ -67,6 +77,8 @@ class DefacementScanner
 
         $host = parse_url($website->url, PHP_URL_HOST);
         $dom = $this->parse($html);
+        // Cut at the size limit or parsed only part way: absence of a finding proves nothing.
+        $this->lastHomepage['complete'] = $page['complete'] && $dom !== null && ! $this->parseStopped;
 
         if (! $dom) {
             return [];
@@ -214,10 +226,31 @@ class DefacementScanner
             : "{$scheme}://{$host}/".ltrim($src, './');
     }
 
+    /**
+     * The homepage the last scan() fetched successfully, or null when it failed -
+     * reused by the content/defacement check so no second request is made.
+     *
+     * @return array{body: string, status: int, last_modified: ?Carbon, complete: bool}|null
+     */
+    public function lastHomepage(): ?array
+    {
+        return $this->lastHomepage;
+    }
+
     protected function fetch(string $url): ?string
     {
+        return $this->fetchPage($url)['body'];
+    }
+
+    /**
+     * @return array{body: ?string, status: ?int, last_modified: ?Carbon, complete: bool}
+     */
+    protected function fetchPage(string $url): array
+    {
+        $failed = ['body' => null, 'status' => null, 'last_modified' => null, 'complete' => false];
+
         if (OutboundUrlGuard::reason($url)) {
-            return null;
+            return $failed;
         }
 
         try {
@@ -225,13 +258,32 @@ class DefacementScanner
                 ->timeout(15)
                 ->connectTimeout(10)
                 ->withOptions(OutboundUrlGuard::httpOptions())
-                ->setHandler(OutboundUrlGuard::pinnedHandler())
+                ->setHandler(ResponseSizeLimit::handler(OutboundUrlGuard::pinnedHandler()))
                 ->get($url);
         } catch (Throwable) {
-            return null;
+            return $failed;
         }
 
-        return $response->successful() ? $response->body() : null;
+        if (! $response->successful()) {
+            return ['status' => $response->status()] + $failed;
+        }
+
+        try {
+            $lastModified = filled($header = $response->header('Last-Modified'))
+                ? Carbon::parse($header)->setTimezone(config('app.timezone'))
+                : null;
+        } catch (Throwable) {
+            $lastModified = null;
+        }
+
+        $body = $response->toPsrResponse()->getBody();
+
+        return [
+            'body' => $response->body(),
+            'status' => $response->status(),
+            'last_modified' => $lastModified,
+            'complete' => ! ($body instanceof ResponseSizeLimit && $body->truncated),
+        ];
     }
 
     protected function parse(string $html): ?DOMDocument
@@ -245,7 +297,9 @@ class DefacementScanner
 
         // Real-world markup is malformed constantly; a parse error must not be
         // the reason a compromise goes unseen.
+        libxml_clear_errors();
         $ok = $dom->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NOWARNING | LIBXML_NOERROR);
+        $this->parseStopped = PageTextExtractor::parseStopped();
 
         libxml_clear_errors();
         libxml_use_internal_errors($previous);

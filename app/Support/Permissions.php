@@ -61,6 +61,19 @@ class Permissions
                 'abilities' => ['view', 'update', 'delete'],
                 'description' => 'Temuan konten judi online dan kata kuncinya.',
             ],
+            'defacement' => [
+                'label' => 'Defacement',
+                'icon' => 'warning-octagon',
+                // Findings come from the scanner; "update" = tandai sah / selesai / ambang.
+                'abilities' => ['view', 'update', 'delete'],
+                'description' => 'Temuan defacement konten dan kode asing di halaman situs.',
+            ],
+            'perubahan-konten' => [
+                'label' => 'Perubahan Konten',
+                'icon' => 'clock-clockwise',
+                'abilities' => ['view', 'delete'],
+                'description' => 'Riwayat perubahan konten halaman hasil crawling.',
+            ],
             'notifikasi' => [
                 'label' => 'Notifikasi',
                 'icon' => 'bell',

@@ -343,7 +343,7 @@ class RegionFindings
                 continue;
             }
 
-            $bucket['nodes'][$key] = ['path' => $path, 'html' => $html];
+            $bucket['nodes'][$key] = ['path' => $path, 'html' => $html] + (empty($node['hidden']) ? [] : ['hidden' => true]);
         }
     }
 

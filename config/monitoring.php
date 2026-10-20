@@ -81,4 +81,34 @@ return [
         'scans' => env('MONITORING_QUEUE_SCANS', 'scans'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Riwayat Perubahan Konten & Snapshot Halaman
+    |--------------------------------------------------------------------------
+    |
+    | Masa simpan riwayat perubahan konten (page_changes), snapshot halaman
+    | (page_snapshots), dan temuan defacement tertutup, dipangkas harian oleh
+    | `websites:prune-content`. Batas ukuran snapshot dan jumlah halaman per
+    | situs menjaga storage/RAM aman di VPS kecil.
+    |
+    */
+    'content_retention_days' => (int) env('MONITORING_CONTENT_RETENTION_DAYS', 90),
+    'content_snapshot_chars' => 40000,
+    'content_max_pages_per_site' => 150,
+    'content_missing_after_crawls' => 3,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batas Ukuran Respons & Pemeriksaan Ulang Judol
+    |--------------------------------------------------------------------------
+    |
+    | max_response_bytes: halaman yang lebih besar ditolak/dipotong sebelum
+    | di-parse (juga berlaku untuk hasil dekompresi gzip).
+    | judol_recheck_sync_limit: jumlah deteksi yang diperiksa ulang langsung di
+    | request; di atas itu pemeriksaan ulang dikirim ke antrean.
+    |
+    */
+    'max_response_bytes' => (int) env('MONITORING_MAX_RESPONSE_BYTES', 5 * 1024 * 1024),
+    'judol_recheck_sync_limit' => 300,
+
 ];

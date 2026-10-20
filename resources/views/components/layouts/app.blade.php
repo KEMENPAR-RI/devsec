@@ -81,11 +81,6 @@
                             Insiden
                         </x-nav-link>
                     @endcan
-                    @can('deteksi-judol.view')
-                        <x-nav-link :href="route('deteksi-judol')" :active="request()->routeIs('deteksi-judol')" icon="shield-warning">
-                            Deteksi Judol
-                        </x-nav-link>
-                    @endcan
                     @can('notifikasi.view')
                         <x-nav-link :href="route('notifikasi')" :active="request()->routeIs('notifikasi')" icon="bell">
                             Notifikasi
@@ -96,6 +91,26 @@
                             Laporan
                         </x-nav-link>
                     @endcan
+
+                    @canany(['deteksi-judol.view', 'defacement.view', 'perubahan-konten.view'])
+                        <div class="my-3 border-t border-zinc-200 dark:border-zinc-800"></div>
+                        <p class="px-3 pb-1 text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Offensive Module</p>
+                        @can('deteksi-judol.view')
+                            <x-nav-link :href="route('deteksi-judol')" :active="request()->routeIs('deteksi-judol')" icon="shield-warning">
+                                Deteksi Judol
+                            </x-nav-link>
+                        @endcan
+                        @can('defacement.view')
+                            <x-nav-link :href="route('defacement')" :active="request()->routeIs('defacement')" icon="warning-octagon">
+                                Defacement
+                            </x-nav-link>
+                        @endcan
+                        @can('perubahan-konten.view')
+                            <x-nav-link :href="route('perubahan-konten')" :active="request()->routeIs('perubahan-konten')" icon="clock-clockwise">
+                                Perubahan Konten
+                            </x-nav-link>
+                        @endcan
+                    @endcanany
 
                     @canany(['roles.view', 'users.view', 'audit.view'])
                         <div class="my-3 border-t border-zinc-200 dark:border-zinc-800"></div>

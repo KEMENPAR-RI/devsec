@@ -53,6 +53,7 @@ return [
         'rtp live',
         'rtp slot',
         'toto slot',
+        'gacor', // Lemah (1): satu kata, hanya menambah skor
 
         // Nama game slot populer yang sering dipakai judul halaman spam
         'mahjong ways',
@@ -265,6 +266,109 @@ return [
         'wordpress.org', 'wordpress.com', 'wp.com', 'w3.org', 'schema.org',
         'mozilla.org', 'github.com', 'adobe.com', 'apple.com', 'microsoft.com',
         'whatsapp.net', 'openstreetmap.org', 'maps.app.goo.gl',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ambang Skor (v2)
+    |--------------------------------------------------------------------------
+    |
+    | Pencocokan v2 memberi bobot per kata kunci (Kuat/Sedang/Lemah) dan
+    | menjumlahkannya jadi skor. Halaman ditandai bila skor >= score_threshold.
+    | Menggantikan ambang hitungan-kata 'threshold' di atas (dibiarkan tak
+    | terpakai agar pemanggil lama tidak pecah). Nilai di sini hanya default
+    | bila setting 'judol_score_threshold' belum pernah disimpan.
+    |
+    */
+    'score_threshold' => 3,
+
+    'weights' => [
+        'strong' => 3,
+        'medium' => 2,
+        'weak' => 1,
+    ],
+
+    // Bonus skor (hanya bila >=1 kata kunci tersisa), maksimum +2 total.
+    'hidden_bonus' => 1,
+    'seo_bonus' => 1,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Bobot Kata Kunci (backfill)
+    |--------------------------------------------------------------------------
+    |
+    | Dipakai migrasi add_weight_to_judol_keywords_table untuk mengisi kolom
+    | weight: kata kunci yang terdaftar di sini memakai bobot ini, sisanya 3
+    | (Kuat). Hanya kecualian yang perlu didaftarkan.
+    |
+    */
+    'keyword_weights' => [
+        // Lemah (1)
+        'jackpot' => 1,
+        'gacor' => 1,
+        'server thailand' => 1,
+
+        // Sedang (2) - nama game & istilah yang bisa muncul wajar
+        'mahjong ways' => 2,
+        'starlight princess' => 2,
+        'gates of olympus' => 2,
+        'sweet bonanza' => 2,
+        'wild bandito' => 2,
+        'zeus vs hades' => 2,
+        'aztec gems' => 2,
+        'hongkong pools' => 2,
+        'singapore pools' => 2,
+        'live casino' => 2,
+        'rtp live' => 2,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pengecualian Frasa Bawaan
+    |--------------------------------------------------------------------------
+    |
+    | Di-seed ke tabel judol_exclusions. Frasa wajar yang memuat kata ambigu
+    | (bandar/slot/gacor) dan tidak boleh dihitung sebagai temuan.
+    |
+    */
+    'default_exclusions' => [
+        'bandar lampung',
+        'bandar udara',
+        'bandara',
+        'bandar seri begawan',
+        'slot waktu',
+        'slot pendaftaran',
+        'slot kuota',
+        'slot jadwal',
+        'slot parkir',
+        'slot iklan',
+        'time slot',
+        'burung gacor',
+        'kicau gacor',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Homoglyph -> Latin
+    |--------------------------------------------------------------------------
+    |
+    | Peta karakter Unicode mirip-Latin (Cyrillic/Greek/IPA) ke huruf Latin,
+    | dipakai TextNormalizer::fold() agar homoglyph tetap cocok.
+    |
+    */
+    'homoglyphs' => [
+        // Cyrillic
+        'а' => 'a', 'е' => 'e', 'о' => 'o', 'р' => 'p', 'с' => 'c', 'у' => 'y',
+        'х' => 'x', 'і' => 'i', 'ј' => 'j', 'ѕ' => 's', 'ԁ' => 'd', 'ɡ' => 'g',
+        'в' => 'b', 'к' => 'k', 'м' => 'm', 'н' => 'h', 'т' => 't', 'ь' => 'b',
+        'г' => 'r', 'п' => 'n', 'ц' => 'u',
+        // Greek
+        'α' => 'a', 'ο' => 'o', 'ρ' => 'p', 'τ' => 't', 'ι' => 'i', 'κ' => 'k',
+        'ν' => 'v', 'υ' => 'u', 'ε' => 'e', 'β' => 'b', 'η' => 'n', 'μ' => 'u',
+        'χ' => 'x', 'σ' => 'o', 'ω' => 'w', 'γ' => 'y', 'ζ' => 'z',
+        // Fullwidth-adjacent / IPA / misc
+        'ɑ' => 'a', 'ɪ' => 'i', 'ⅰ' => 'i', 'ⅼ' => 'l', 'ꞁ' => 'l',
+        'ѐ' => 'e', 'ё' => 'e', 'ӏ' => 'l', 'ѵ' => 'v',
     ],
 
 ];
