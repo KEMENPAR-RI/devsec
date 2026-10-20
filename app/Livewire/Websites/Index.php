@@ -589,8 +589,10 @@ class Index extends Component
         // Same filter "select all" uses, so the box can never tick a different set
         // of sites than the one on screen.
         $websites = $this->filteredQuery()
-            // Newest first: a freshly added site is the one being checked on.
+            // Priority sites on top, then newest first: a freshly added site is the one being checked on.
+            ->orderByDesc('is_priority')
             ->latest()
+            ->orderByDesc('id')
             // Counted in the page query itself, so the row badges add no per-row queries.
             ->withCount([
                 'incidents as open_incidents_count' => fn ($q) => $q->open(),

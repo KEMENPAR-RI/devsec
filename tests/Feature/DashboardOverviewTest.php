@@ -206,6 +206,37 @@ class DashboardOverviewTest extends TestCase
         $this->assertSame(['attack', 'down', 'unknown', 'up', 'up'], array_column($rows, 'status_key'));
     }
 
+    public function test_live_sites_put_priority_sites_first(): void
+    {
+        $this->downWith('Bravo');
+        Website::factory()->create(['name' => 'Zulu', 'last_status' => 'up', 'is_priority' => true]);
+
+        $sites = $this->overview()->sites();
+        $rows = $this->overview()->liveSites(
+            $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
+        );
+
+        $this->assertSame(['Zulu', 'Bravo'], array_column($rows, 'name'));
+    }
+
+    public function test_live_sites_keep_status_order_within_priority_and_secondary_groups(): void
+    {
+        Website::factory()->create(['name' => 'Alpha', 'last_status' => 'up', 'is_priority' => true]);
+        $this->downWith('Yankee', [], ['is_priority' => true]);
+        $this->downWith('Bravo');
+        Website::factory()->create(['name' => 'Charlie', 'last_status' => 'up']);
+
+        $sites = $this->overview()->sites();
+        $rows = $this->overview()->liveSites(
+            $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
+        );
+
+        $this->assertSame(['Yankee', 'Alpha', 'Bravo', 'Charlie'], array_column($rows, 'name'));
+        foreach ($rows as $row) {
+            $this->assertArrayNotHasKey('is_priority', $row);
+        }
+    }
+
     public function test_live_sites_break_ties_within_a_status_by_load_level_before_name(): void
     {
         $light = Website::factory()->create(['name' => 'Aaa light', 'last_status' => 'up']);

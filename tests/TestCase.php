@@ -13,6 +13,21 @@ require_once __DIR__.'/Support/FakeDnsRecords.php';
 
 abstract class TestCase extends BaseTestCase
 {
+    // Runs inside refreshApplication(), i.e. before setUpTraits() can trigger RefreshDatabase's migrate:fresh.
+    public function createApplication()
+    {
+        $app = parent::createApplication();
+
+        $default = $app['config']->get('database.default');
+        $database = $app['config']->get("database.connections.{$default}.database");
+
+        if ($default !== 'sqlite' || $database !== ':memory:') {
+            $this->fail("Tests must run on sqlite :memory: (got {$default} / {$database}) — run php artisan config:clear");
+        }
+
+        return $app;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

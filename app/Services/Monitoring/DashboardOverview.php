@@ -142,7 +142,10 @@ class DashboardOverview
             ];
         })->all();
 
+        // Looked up by uuid so the cached row shape stays unchanged.
+        $priority = $websites->where('is_priority', true)->pluck('uuid')->flip()->all();
         $sortKey = fn (array $row) => [
+            ! isset($priority[$row['uuid']]),
             self::SORT_GROUP[$row['status_key']] ?? self::SORT_GROUP['unknown'],
             self::LOAD_SORT[$row['load_level']] ?? self::LOAD_SORT['unknown'],
             mb_strtolower($row['name']),

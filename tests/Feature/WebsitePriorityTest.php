@@ -228,6 +228,70 @@ class WebsitePriorityTest extends TestCase
             ->assertDontSee('Situs Penting');
     }
 
+    public function test_admin_list_shows_priority_sites_before_newer_secondary_ones(): void
+    {
+        Website::factory()->create(['name' => 'Situs Penting Lama', 'is_priority' => true, 'created_at' => now()->subDay()]);
+        Website::factory()->create(['name' => 'Situs Biasa Baru', 'is_priority' => false, 'created_at' => now()]);
+        Website::factory()->create(['name' => 'Situs Biasa Lama', 'is_priority' => false, 'created_at' => now()->subDays(2)]);
+
+        Livewire::actingAs($this->superadmin())
+            ->test(Index::class)
+            ->assertSeeInOrder(['Situs Penting Lama', 'Situs Biasa Baru', 'Situs Biasa Lama']);
+    }
+
+    public function test_priority_sites_keep_newest_first_among_themselves(): void
+    {
+        Website::factory()->create(['name' => 'Penting Lama', 'is_priority' => true, 'created_at' => now()->subDays(3)]);
+        Website::factory()->create(['name' => 'Penting Baru', 'is_priority' => true, 'created_at' => now()->subDay()]);
+        Website::factory()->create(['name' => 'Biasa Terbaru', 'is_priority' => false, 'created_at' => now()]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Penting Baru', 'Penting Lama', 'Biasa Terbaru'], $names);
+    }
+
+    public function test_priority_order_is_consistent_across_admin_pages(): void
+    {
+        foreach (range(1, 12) as $i) {
+            Website::factory()->create(['name' => "Biasa {$i}", 'created_at' => now()->subMinutes($i)]);
+        }
+        Website::factory()->create(['name' => 'Penting A', 'is_priority' => true, 'created_at' => now()->subDays(5)]);
+        Website::factory()->create(['name' => 'Penting B', 'is_priority' => true, 'created_at' => now()->subDays(6)]);
+
+        $component = Livewire::actingAs($this->superadmin())->test(Index::class);
+        $page1 = $component->viewData('websites')->pluck('name')->all();
+        $page2 = $component->call('gotoPage', 2)->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Penting A', 'Penting B'], array_slice($page1, 0, 2));
+        $this->assertCount(10, $page1);
+        $this->assertSame(['Biasa 9', 'Biasa 10', 'Biasa 11', 'Biasa 12'], $page2);
+        $this->assertSame([], array_intersect($page1, $page2));
+    }
+
+    public function test_pages_do_not_repeat_or_drop_sites_when_created_at_ties(): void
+    {
+        $this->freezeSecond();
+        Website::factory()->count(23)->create();
+        Website::factory()->count(2)->create(['is_priority' => true]);
+
+        $component = Livewire::actingAs($this->superadmin())->test(Index::class);
+        $seen = [];
+        foreach ([1, 2, 3] as $page) {
+            $seen = [...$seen, ...$component->call('gotoPage', $page)->viewData('websites')->pluck('id')->all()];
+        }
+
+        $this->assertCount(25, $seen);
+        $this->assertCount(25, array_unique($seen));
+    }
+
+    public function test_guest_cannot_open_the_admin_site_list(): void
+    {
+        Website::factory()->create(['name' => 'Situs Penting', 'is_priority' => true]);
+
+        $this->get(route('situs'))->assertRedirect(route('login'));
+    }
+
     public function test_an_unknown_category_value_is_ignored(): void
     {
         Website::factory()->create(['name' => 'Situs Penting', 'is_priority' => true]);

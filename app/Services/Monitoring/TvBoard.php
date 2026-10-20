@@ -111,9 +111,9 @@ class TvBoard
         usort($internal, fn ($a, $b) => strcmp($a['name'], $b['name']));
         usort($mati, fn ($a, $b) => $b['occurred_at_ts'] <=> $a['occurred_at_ts']);
 
-        // Problems stay on top; within each status group priority sites come first.
-        $kartu = collect([$masalah, $online, $internal, $mati])
-            ->flatMap(fn ($group) => collect($group)->partition('priority')->flatten(1))
+        // Priority sites first; status-group order (problems on top) is kept within each half.
+        $kartu = collect([$masalah, $online, $internal, $mati])->flatten(1)
+            ->partition('priority')->flatten(1)
             // The flag only drives ordering and is not exposed on the public board.
             ->map(fn ($row) => Arr::except($row, 'priority'))->values()->all();
 
