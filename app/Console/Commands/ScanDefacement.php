@@ -55,7 +55,12 @@ class ScanDefacement extends Command
                 }
 
                 $url = Str::before($website->url, '#');
-                $content->observe($website, $url, $extractor->extract($homepage['body'], $url, $homepage['complete']), $homepage['last_modified']);
+                $content->observe($website, $url, $extractor->extractAt($homepage['body'], $url, $homepage['complete'], $homepage['final_url'] ?? $url), $homepage['last_modified'], response: [
+                    'body' => $homepage['body'],
+                    'status' => $homepage['status'] ?? null,
+                    'final_url' => $homepage['final_url'] ?? $url,
+                    'redirects' => $homepage['redirects'] ?? 0,
+                ]);
                 $monitor->settle($website, [sha1($url)]);
             } catch (Throwable $e) {
                 $this->warn("{$website->name}: {$e->getMessage()}");

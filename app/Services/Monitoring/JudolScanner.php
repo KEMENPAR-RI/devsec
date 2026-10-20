@@ -119,7 +119,7 @@ class JudolScanner
         $content?->beginCrawl($website);
 
         foreach ($this->crawl($website) as $url => $page) {
-            $pageText = $this->extractor()->extract($page['html'], $url, ! $page['truncated']);
+            $pageText = $this->extractor()->extractAt($page['html'], $url, ! $page['truncated'], $page['final_url'] ?? $url);
 
             $this->recordRegions($website, $regions, $url, $page['html']);
 
@@ -135,7 +135,12 @@ class JudolScanner
                 ? $detection->matched_keywords ?? []
                 : $stored->get($url)?->matched_keywords ?? []);
 
-            $this->observeContent($content, $website, $url, $pageText, $page['last_modified'], $detection?->id ?? $stored->get($url)?->id);
+            $this->observeContent($content, $website, $url, $pageText, $page['last_modified'], $detection?->id ?? $stored->get($url)?->id, [
+                'body' => $page['html'],
+                'status' => $page['status'] ?? null,
+                'final_url' => $page['final_url'] ?? $url,
+                'redirects' => $page['redirects'] ?? 0,
+            ]);
         }
 
         if ($content) {
@@ -156,14 +161,14 @@ class JudolScanner
     }
 
     /** Content history + defacement for one page; never allowed to break the judol crawl. */
-    protected function observeContent(?PageContentMonitor $content, Website $website, string $url, PageText $pageText, ?Carbon $lastModified, ?int $detectionId): void
+    protected function observeContent(?PageContentMonitor $content, Website $website, string $url, PageText $pageText, ?Carbon $lastModified, ?int $detectionId, ?array $response = null): void
     {
         if (! $content) {
             return;
         }
 
         try {
-            $content->observe($website, $url, $pageText, $lastModified, $detectionId);
+            $content->observe($website, $url, $pageText, $lastModified, $detectionId, $response);
         } catch (Throwable $e) {
             Log::warning("JudolScanner: gagal mencatat perubahan konten {$url}: {$e->getMessage()}");
         }
@@ -610,7 +615,7 @@ class JudolScanner
      * Breadth-first crawl starting from the homepage and sitemap(s), following
      * same-host links up to config('judol.max_depth') / config('judol.max_pages').
      *
-     * @return Generator<string, array{html: string, last_modified: ?Carbon, truncated: bool}>
+     * @return Generator<string, array{html: string, last_modified: ?Carbon, truncated: bool, status: ?int, final_url: ?string, redirects: int}>
      */
     protected function crawl(Website $website): Generator
     {
@@ -661,7 +666,7 @@ class JudolScanner
 
             Log::info("JudolScanner: halaman utama {$website->url} ditolak ({$root['error']}), melanjutkan lewat sitemap dan URL yang sudah terdeteksi.");
         } else {
-            yield $homepage => ['html' => $root['body'], 'last_modified' => $root['last_modified'], 'truncated' => $root['truncated']];
+            yield $homepage => ['html' => $root['body']] + $this->pageFacts($root);
         }
 
         $queue = [];
@@ -717,7 +722,7 @@ class JudolScanner
                 continue;
             }
 
-            yield $url => ['html' => $html, 'last_modified' => $result['last_modified'], 'truncated' => $result['truncated']];
+            yield $url => ['html' => $html] + $this->pageFacts($result);
 
             if ($depth < $maxDepth && count($visited) < $maxPages) {
                 foreach ($this->extractLinks($html, $url, $host) as $link) {
@@ -807,8 +812,10 @@ class JudolScanner
      * sends one - see JudolDetection::page_last_modified_at for why that matters.
      *
      * `truncated` is true when the body was cut at the response size limit.
+     * `status`/`final_url`/`redirects` describe the final response; the redirect
+     * history comes from a response header, never from an extra request.
      *
-     * @return array{body: ?string, error: ?string, last_modified: ?Carbon, truncated: bool}
+     * @return array{body: ?string, error: ?string, last_modified: ?Carbon, truncated: bool, status?: int, final_url?: string, redirects?: int}
      */
     protected function fetchWithError(string $url): array
     {
@@ -853,6 +860,22 @@ class JudolScanner
             'error' => null,
             'last_modified' => $this->parseLastModified($response->header('Last-Modified')),
             'truncated' => $body instanceof ResponseSizeLimit && $body->truncated,
+            'status' => $response->status(),
+        ] + OutboundUrlGuard::redirectFacts($response, $url);
+    }
+
+    /**
+     * @param  array{last_modified: ?Carbon, truncated: bool, status?: int, final_url?: string, redirects?: int}  $result
+     * @return array{last_modified: ?Carbon, truncated: bool, status: ?int, final_url: ?string, redirects: int}
+     */
+    protected function pageFacts(array $result): array
+    {
+        return [
+            'last_modified' => $result['last_modified'],
+            'truncated' => $result['truncated'],
+            'status' => $result['status'] ?? null,
+            'final_url' => $result['final_url'] ?? null,
+            'redirects' => $result['redirects'] ?? 0,
         ];
     }
 

@@ -9,7 +9,8 @@
         'http_410' => 'Halaman merespons HTTP 410 (sudah dihapus).',
         'not_reached' => 'Tidak terjangkau crawl lengkap beberapa kali berturut-turut.',
     ];
-    $hasFilter = $site !== '' || $type !== '' || $search !== '' || $to !== '';
+    $kindLabels = ['text' => 'Teks', 'element' => 'Non-teks', 'mixed' => 'Teks + non-teks'];
+    $hasFilter = $site !== '' || $type !== '' || $kind !== '' || $search !== '' || $to !== '';
 @endphp
 
 <div class="mx-auto flex max-w-7xl flex-col gap-6">
@@ -63,6 +64,12 @@
                     <option value="changed">Berubah</option>
                     <option value="removed">Hilang</option>
                 </select>
+                <label class="sr-only" for="filter-kind">Jenis perubahan</label>
+                <select id="filter-kind" wire:model.live="kind" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                    <option value="">Semua Jenis</option>
+                    <option value="text">Teks</option>
+                    <option value="element">Non-teks</option>
+                </select>
                 <div class="flex items-center gap-1.5">
                     <label class="sr-only" for="filter-from">Dari tanggal</label>
                     <input id="filter-from" type="date" wire:model.live="from" class="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 @error('from') border-red-400 @enderror">
@@ -71,14 +78,14 @@
                     <input id="filter-to" type="date" wire:model.live="to" class="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 @error('to') border-red-400 @enderror">
                 </div>
             </div>
-            @if ($errors->hasAny(['site', 'type', 'from', 'to', 'search']))
+            @if ($errors->hasAny(['site', 'type', 'kind', 'from', 'to', 'search']))
                 <p class="w-full text-xs text-red-600 dark:text-red-400">
-                    {{ $errors->first('from') ?: ($errors->first('to') ?: ($errors->first('site') ?: ($errors->first('type') ?: $errors->first('search')))) }}
+                    {{ $errors->first('from') ?: ($errors->first('to') ?: ($errors->first('site') ?: ($errors->first('type') ?: ($errors->first('kind') ?: $errors->first('search'))))) }}
                 </p>
             @endif
         </x-slot:toolbar>
 
-        <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="search, site, type, from, to, gotoPage, nextPage, previousPage">
+        <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="search, site, type, kind, from, to, gotoPage, nextPage, previousPage">
             @foreach ($changes as $change)
                 @php
                     $meta = $typeLabels[$change->type] ?? $typeLabels['changed'];
@@ -97,6 +104,9 @@
                                     <x-dynamic-component :component="$meta['icon']" class="h-3.5 w-3.5" />
                                     {{ $meta['label'] }}
                                 </span>
+                                @if ($change->content_kind)
+                                    <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ $kindLabels[$change->content_kind] ?? $change->content_kind }}</span>
+                                @endif
                                 @if ($change->website)
                                     <span class="text-sm font-semibold text-zinc-900 dark:text-white">{{ $change->website->name }}</span>
                                 @endif
@@ -140,6 +150,20 @@
                                         <dd>Terdeteksi <span class="font-medium text-zinc-700 dark:text-zinc-300">{{ app_datetime($change->detected_at) }}</span></dd>
                                     @endif
                                 </div>
+                                @if ($change->http_status)
+                                    <div class="flex items-center gap-1.5">
+                                        <dt>HTTP</dt>
+                                        <dd @class([
+                                            'font-mono font-medium',
+                                            'text-emerald-700 dark:text-emerald-400' => $change->http_status < 300,
+                                            'text-sky-700 dark:text-sky-400' => $change->http_status >= 300 && $change->http_status < 400,
+                                            'text-red-700 dark:text-red-400' => $change->http_status >= 400,
+                                        ])>{{ $change->http_status }}</dd>
+                                        @if ($change->redirect_count > 0)
+                                            <dd class="text-zinc-500 dark:text-zinc-400">&middot; dialihkan {{ $change->redirect_count }}&times;</dd>
+                                        @endif
+                                    </div>
+                                @endif
                                 @if ($change->page_last_modified_at)
                                     <div class="flex items-center gap-1.5" title="Header Last-Modified dari server situs - tidak selalu akurat">
                                         <x-phosphor-calendar-blank class="h-3.5 w-3.5 shrink-0 text-zinc-400" />
@@ -150,7 +174,19 @@
                             </dl>
                         </div>
 
-                        <div class="flex shrink-0 items-center gap-1.5">
+                        <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+                            <a
+                                href="{{ route('perubahan-konten.detail', $change) }}"
+                                wire:navigate
+                                @class([
+                                    'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
+                                    'border-accent-200 text-accent-700 hover:bg-accent-50 dark:border-accent-500/30 dark:text-accent-400 dark:hover:bg-accent-500/10' => $change->forensic_exists,
+                                    'border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800' => ! $change->forensic_exists,
+                                ])
+                            >
+                                <x-phosphor-fingerprint class="h-3.5 w-3.5" />
+                                Detail forensik
+                            </a>
                             @if ($change->type !== 'removed' || $metaChanges)
                                 <button
                                     type="button"

@@ -2,6 +2,7 @@
 
 namespace App\Services\Monitoring;
 
+use App\Support\ElementIdentity;
 use DOMDocument;
 use DOMElement;
 use DOMNode;
@@ -56,6 +57,19 @@ class PageTextExtractor
     /** False once part of the page could not be read (e.g. a PCRE failure). */
     protected bool $complete = true;
 
+    /** @var list<array{text: string, node: DOMElement}>|null runs collected by trace(); null when not tracing */
+    protected ?array $trace = null;
+
+    /** @var array<int, DOMNode> elements holding the current buffer's text nodes (tracing only) */
+    protected array $bufferNodes = [];
+
+    protected ?DOMNode $traceParent = null;
+
+    protected ?DomainExpiry $domains = null;
+
+    /** Set only for the duration of extractAt(). */
+    protected ?string $baseUrl = null;
+
     /** Inline JS that writes markup - judol injected this way never reaches the DOM text. */
     protected const SCRIPT_WRITERS = '/document\.write|innerHTML|outerHTML|insertAdjacentHTML/i';
 
@@ -70,6 +84,7 @@ class PageTextExtractor
         $this->resetBlock();
         $title = '';
         $description = '';
+        $elements = [];
 
         if ($dom) {
             $this->loadHiddenClasses($dom);
@@ -106,6 +121,8 @@ class PageTextExtractor
             foreach ($dom->getElementsByTagName('script') as $script) {
                 $this->scriptSegment($script);
             }
+
+            $elements = $this->elements($dom, $this->baseUrl ?? $url);
         }
 
         if ($url !== null) {
@@ -127,7 +144,159 @@ class PageTextExtractor
             $length,
             count($visible),
             $this->complete,
+            $elements,
         );
+    }
+
+    /** extract(), with relative element URLs resolved against $baseUrl (the final URL after redirects). */
+    public function extractAt(string $html, ?string $url, bool $complete, ?string $baseUrl): PageText
+    {
+        $this->baseUrl = $baseUrl;
+
+        try {
+            return $this->extract($html, $url, $complete);
+        } finally {
+            $this->baseUrl = null;
+        }
+    }
+
+    /** Parses a page for the forensic locator - same parser, same (line-neutral) prefix. */
+    public function document(string $html): ?DOMDocument
+    {
+        return $this->parse($html);
+    }
+
+    /**
+     * Visible body runs exactly as extract() reads them, each with the closest
+     * element holding all of its text nodes. Used by the forensic locator only.
+     *
+     * @return list<array{text: string, node: DOMElement}>
+     */
+    public function trace(DOMDocument $dom): array
+    {
+        $this->segments = [];
+        $this->buffer = '';
+        $this->bufferState = null;
+        $this->bufferNodes = [];
+        $this->resetBlock();
+        $this->trace = [];
+
+        try {
+            $this->loadHiddenClasses($dom);
+            $body = $dom->getElementsByTagName('body')->item(0) ?? $dom->documentElement;
+
+            if ($body) {
+                $this->walk($body, 'body', $body instanceof DOMElement ? $this->selfHidden($body) : null, null);
+                $this->endBlock();
+            }
+
+            return $this->trace;
+        } finally {
+            $this->trace = null;
+            $this->segments = [];
+            $this->bufferNodes = [];
+            $this->traceParent = null;
+        }
+    }
+
+    /**
+     * Inventory of non-text elements (see ElementIdentity), capped and ordered.
+     *
+     * @return array<int, array{kind: string, key: string, value: string, hidden: bool}>
+     */
+    protected function elements(DOMDocument $dom, ?string $base): array
+    {
+        $domain = $this->pageDomain($base);
+        $entries = [];
+
+        foreach (['meta', 'script', 'iframe', 'link', 'a'] as $tag) {
+            foreach ($dom->getElementsByTagName($tag) as $element) {
+                if ($entry = $this->elementEntry($element, $base, $domain)) {
+                    $entries[] = $entry + ['hidden' => $this->isHidden($element)];
+                }
+            }
+        }
+
+        return ElementIdentity::inventory($entries, (int) config('monitoring.forensics_max_elements', 500));
+    }
+
+    /**
+     * Identity of one watched element, or null when it is not watched (inline
+     * script, same-site link, unwatched meta...).
+     *
+     * @return array{kind: string, key: string, value: string}|null
+     */
+    public function elementEntry(DOMElement $element, ?string $base, ?string $pageDomain): ?array
+    {
+        $tag = Str::lower($element->nodeName);
+
+        if ($tag === 'script' || $tag === 'iframe') {
+            if ($tag === 'iframe' && $element->hasAttribute('srcdoc')) {
+                return ['kind' => 'iframe', 'key' => 'iframe|srcdoc:'.ElementIdentity::shortHash($element->getAttribute('srcdoc')), 'value' => ''];
+            }
+
+            $src = trim($element->getAttribute('src'));
+
+            if ($src === '' || Str::lower($src) === 'about:blank') {
+                return $tag === 'iframe' ? ['kind' => 'iframe', 'key' => 'iframe|about:blank', 'value' => ''] : null;
+            }
+
+            $identity = Str::startsWith(Str::lower($src), 'data:')
+                ? 'data:'.ElementIdentity::shortHash($src)
+                : ElementIdentity::normalizeUrl($src, $base);
+
+            return $identity === null ? null : ['kind' => $tag, 'key' => $tag.'|'.$identity, 'value' => ''];
+        }
+
+        if ($tag === 'a' || $tag === 'link') {
+            $href = trim($element->getAttribute('href'));
+
+            if ($href === '' || $href[0] === '#' || Str::startsWith(Str::lower($href), ['javascript:', 'mailto:', 'tel:'])) {
+                return null;
+            }
+
+            $url = ElementIdentity::normalizeUrl($href, $base);
+
+            if ($url === null || $this->domainOf(Str::before($url, '/')) === $pageDomain) {
+                return null;
+            }
+
+            if ($tag === 'a') {
+                return ['kind' => 'link', 'key' => 'a|'.$url, 'value' => ''];
+            }
+
+            $rel = preg_split('/\s+/', Str::lower(trim($element->getAttribute('rel'))), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            sort($rel);
+
+            return ['kind' => 'link', 'key' => 'link|'.implode(' ', array_unique($rel)).'|'.$url, 'value' => ''];
+        }
+
+        if ($tag === 'meta') {
+            $name = Str::lower(trim($element->getAttribute('http-equiv'))) === 'refresh'
+                ? 'refresh'
+                : (Str::lower(trim($element->getAttribute('name'))) ?: Str::lower(trim($element->getAttribute('property'))));
+
+            if ($name === 'refresh' || in_array($name, ElementIdentity::WATCHED_META, true)) {
+                return ['kind' => 'meta', 'key' => 'meta|'.$name, 'value' => ElementIdentity::metaValue($name, $element->getAttribute('content'), $base)];
+            }
+        }
+
+        return null;
+    }
+
+    /** Registrable domain of a page URL (host when it has none, e.g. an IP). */
+    public function pageDomain(?string $url): ?string
+    {
+        $host = $url !== null ? parse_url($url, PHP_URL_HOST) : null;
+
+        return is_string($host) && $host !== '' ? $this->domainOf($host) : null;
+    }
+
+    protected function domainOf(string $host): string
+    {
+        $host = Str::lower(Str::before($host, ':'));
+
+        return ($this->domains ??= app(DomainExpiry::class))->registrableDomain('https://'.$host) ?? $host;
     }
 
     /** Whether an element (or any ancestor up to <body>) is hidden by CSS/attribute. */
@@ -154,6 +323,7 @@ class PageTextExtractor
     {
         foreach ($node->childNodes as $child) {
             if ($child instanceof DOMText) {
+                $this->traceParent = $node;
                 $this->append($child->data, $source, $hidden, $linkHost);
 
                 continue;
@@ -326,6 +496,10 @@ class PageTextExtractor
         }
 
         $this->buffer .= $text;
+
+        if ($this->trace !== null && $this->traceParent !== null) {
+            $this->bufferNodes[] = $this->traceParent;
+        }
     }
 
     protected function flush(): void
@@ -335,11 +509,45 @@ class PageTextExtractor
 
             if ($this->segment($this->buffer, $source, $hidden, $linkHost) && $source === 'body' && $hidden === null) {
                 $this->blockRuns++;
+
+                if ($this->trace !== null && ($node = $this->commonAncestor($this->bufferNodes))) {
+                    $this->trace[] = ['text' => TextNormalizer::clean($this->buffer), 'node' => $node];
+                }
             }
         }
 
+        $this->bufferNodes = [];
         $this->buffer = '';
         $this->bufferState = null;
+    }
+
+    /** @param  array<int, DOMNode>  $nodes */
+    protected function commonAncestor(array $nodes): ?DOMElement
+    {
+        $first = array_shift($nodes);
+        $chain = [];
+
+        for ($n = $first; $n instanceof DOMElement; $n = $n->parentNode) {
+            $chain[] = $n;
+        }
+
+        foreach ($nodes as $node) {
+            if ($node === $first) {
+                continue;
+            }
+
+            for ($n = $node; $n instanceof DOMElement; $n = $n->parentNode) {
+                foreach ($chain as $i => $candidate) {
+                    if ($candidate->isSameNode($n)) {
+                        $chain = array_slice($chain, $i);
+
+                        continue 3;
+                    }
+                }
+            }
+        }
+
+        return $chain[0] ?? null;
     }
 
     /** @param  array<int, string>  $linkHosts  joined segments: every link host inside */

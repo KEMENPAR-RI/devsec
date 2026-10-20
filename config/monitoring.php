@@ -99,6 +99,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Detail Forensik Perubahan Konten
+    |--------------------------------------------------------------------------
+    |
+    | Batas memori/storage forensik: halaman di atas forensics_max_html_bytes
+    | tetap di-hash tetapi tidak disimpan mentah dan tanpa lokasi/cuplikan.
+    | Salinan HTML mentah (gzip) disimpan di disk `local` di bawah
+    | forensics_raw_path (ADR 0001). Payload per event dipangkas ke
+    | forensics_max_items item dan forensics_max_payload_bytes byte JSON.
+    |
+    */
+    'forensics_max_html_bytes' => 2 * 1024 * 1024,
+    'forensics_max_raw_gz_bytes' => 1024 * 1024,
+    'forensics_max_items' => 50,
+    'forensics_snippet_chars' => 1000,
+    'forensics_max_payload_bytes' => 65536,
+    'forensics_max_elements' => 500,
+    'forensics_raw_path' => 'page-bodies',
+
+    /*
+    |--------------------------------------------------------------------------
     | Batas Ukuran Respons & Pemeriksaan Ulang Judol
     |--------------------------------------------------------------------------
     |

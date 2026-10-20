@@ -18,6 +18,7 @@ class PageChangeFactory extends Factory
             'website_id' => Website::factory(),
             'url' => $url,
             'type' => 'changed',
+            'content_kind' => 'text',
             'previous_crawled_at' => now()->subDay(),
             'detected_at' => now(),
             'page_last_modified_at' => null,
@@ -32,6 +33,7 @@ class PageChangeFactory extends Factory
     {
         return $this->state(fn () => [
             'type' => 'added',
+            'content_kind' => null,
             'previous_crawled_at' => null,
             'removed' => null,
             'change_ratio' => null,
@@ -42,6 +44,7 @@ class PageChangeFactory extends Factory
     {
         return $this->state(fn () => [
             'type' => 'removed',
+            'content_kind' => null,
             'added' => null,
             'removed' => null,
             'meta_changes' => ['reason' => 'http_404'],

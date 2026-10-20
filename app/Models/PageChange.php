@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 
 /**
@@ -23,9 +24,16 @@ class PageChange extends Model
         'page_snapshot_id',
         'url',
         'type',
+        'content_kind',
         'previous_crawled_at',
         'detected_at',
         'page_last_modified_at',
+        'http_status',
+        'final_url',
+        'redirect_count',
+        'hash_algorithm',
+        'body_hash_before',
+        'body_hash_after',
         'added',
         'removed',
         'meta_changes',
@@ -41,6 +49,8 @@ class PageChange extends Model
             'removed' => 'array',
             'meta_changes' => 'array',
             'change_ratio' => 'decimal:4',
+            'http_status' => 'integer',
+            'redirect_count' => 'integer',
             'previous_crawled_at' => 'datetime',
             'detected_at' => 'datetime',
             'page_last_modified_at' => 'datetime',
@@ -57,6 +67,11 @@ class PageChange extends Model
         return $this->belongsTo(PageSnapshot::class, 'page_snapshot_id');
     }
 
+    public function forensic(): HasOne
+    {
+        return $this->hasOne(PageChangeForensic::class);
+    }
+
     public function judolDetection(): BelongsTo
     {
         return $this->belongsTo(JudolDetection::class);
@@ -69,9 +84,10 @@ class PageChange extends Model
 
     /**
      * Applies the Perubahan Konten list filters: site (website uuid), date range
-     * on detected_at (from/to, Y-m-d), event type, and a URL substring search.
+     * on detected_at (from/to, Y-m-d), event type, content kind (text | element;
+     * mixed matches both), and a URL substring search.
      *
-     * @param  array{site?: ?string, from?: ?string, to?: ?string, type?: ?string, search?: ?string}  $filters
+     * @param  array{site?: ?string, from?: ?string, to?: ?string, type?: ?string, kind?: ?string, search?: ?string}  $filters
      */
     public function scopeForFilters(Builder $query, array $filters): Builder
     {
@@ -83,6 +99,10 @@ class PageChange extends Model
             ->when(filled($filters['from'] ?? null), fn (Builder $q) => $q->where('detected_at', '>=', Carbon::parse($filters['from'])->startOfDay()))
             ->when(filled($filters['to'] ?? null), fn (Builder $q) => $q->where('detected_at', '<=', Carbon::parse($filters['to'])->endOfDay()))
             ->when(filled($filters['type'] ?? null), fn (Builder $q) => $q->where('type', $filters['type']))
+            ->when(in_array($filters['kind'] ?? null, ['text', 'element'], true), fn (Builder $q) => $q->whereIn(
+                'content_kind',
+                [$filters['kind'], 'mixed']
+            ))
             // Wildcards are escaped: "%" must not turn into "match everything" (e.g. for deleteFiltered).
             ->when(filled($filters['search'] ?? null), fn (Builder $q) => $q->whereRaw(
                 "url like ? escape '!'",

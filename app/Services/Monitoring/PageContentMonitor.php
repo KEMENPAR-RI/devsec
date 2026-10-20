@@ -7,10 +7,14 @@ use App\Models\PageChange;
 use App\Models\PageSnapshot;
 use App\Models\Website;
 use App\Support\ContentFingerprint;
+use App\Support\ElementIdentity;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Content-change history for every crawled page: keeps one compressed snapshot
@@ -22,11 +26,12 @@ use Illuminate\Support\Str;
  */
 class PageContentMonitor
 {
-    /** Every snapshot column except the two blobs. */
+    /** Every snapshot column except the blobs and the element inventory. */
     protected const COLUMNS = [
         'id', 'website_id', 'url', 'url_hash', 'title', 'description', 'content_hash', 'text_length', 'block_count',
         'last_modified_at', 'status', 'missed_crawls', 'baseline_hash', 'baseline_title', 'baseline_excerpt',
         'baseline_text_length', 'baseline_signatures', 'baseline_at', 'first_seen_at', 'last_crawled_at',
+        'raw_sha256', 'raw_bytes', 'raw_stored', 'final_url', 'http_status', 'redirect_count', 'elements_hash',
     ];
 
     /** Compressed blob ceiling; the text is cut further until it fits. */
@@ -49,6 +54,8 @@ class PageContentMonitor
     protected bool $hadSnapshots = false;
 
     protected ?DefacementMonitor $defacement = null;
+
+    protected ?PageTextExtractor $extractor = null;
 
     public function __construct()
     {
@@ -73,8 +80,13 @@ class PageContentMonitor
      * Compares one successfully fetched page with its snapshot. Callers skip
      * failed fetches and sites under maintenance; WAF challenge pages are
      * skipped here. Returns the recorded event, if any.
+     *
+     * $response carries the raw fetch: body (as received, decoded), status,
+     * final_url, redirects - the source of hashes, raw copy and forensics.
+     *
+     * @param  array{body: string, status?: ?int, final_url?: ?string, redirects?: ?int}|null  $response
      */
-    public function observe(Website $website, string $url, PageText $text, ?Carbon $lastModified = null, ?int $judolDetectionId = null): ?PageChange
+    public function observe(Website $website, string $url, PageText $text, ?Carbon $lastModified = null, ?int $judolDetectionId = null, ?array $response = null): ?PageChange
     {
         $urlHash = sha1($url);
 
@@ -96,61 +108,126 @@ class PageContentMonitor
         $hash = sha1(TextNormalizer::maskDynamic($text->title."\n".$text->description."\n".$body));
         $snapshot = $this->snapshots->get($urlHash);
 
+        // A page not fully read moves no content (text, raw copy, inventory, hashes):
+        // only defacement is judged, against the snapshot on record. It was still
+        // reached, so it is neither "missing" nor pruned as stale.
+        if (! $text->complete) {
+            if ($snapshot) {
+                if ($snapshot->content_hash !== $hash) {
+                    $this->evaluateIncomplete($website, $snapshot, $text, $body);
+                }
+
+                $snapshot->update(['last_crawled_at' => now(), 'missed_crawls' => 0, 'status' => 'active']);
+            }
+
+            return null;
+        }
+
+        $finalUrl = $response !== null ? (string) ($response['final_url'] ?? $url) : null;
+        $rawHash = $response !== null ? hash('sha256', (string) $response['body']) : null;
+        $elements = $this->elementMap($text);
+        $elementsHash = ElementIdentity::hash($elements);
+
         if (! $snapshot) {
-            return $this->firstSight($website, $url, $urlHash, $text, $body, $hash, $lastModified, $judolDetectionId);
+            return $this->firstSight($website, $url, $urlHash, $text, $body, $hash, $lastModified, $judolDetectionId, $response, $rawHash, $finalUrl, $elements, $elementsHash);
         }
 
         $previousCrawledAt = $snapshot->last_crawled_at;
-        $touch = [
+        $previousHash = $snapshot->raw_sha256;
+        $beforeBase = $snapshot->final_url ?? $snapshot->url;
+        $attributes = [
             'last_crawled_at' => now(),
             'last_modified_at' => $lastModified ?? $snapshot->last_modified_at,
             'missed_crawls' => 0,
             'status' => 'active',
         ];
 
-        if ($snapshot->content_hash === $hash) {
-            $snapshot->update($touch);
+        $elementDiff = $this->elementDiff($snapshot, $elements, $elementsHash);
+        $redirect = $this->redirectChange($snapshot->final_url, $finalUrl);
+        $elementEvent = $redirect !== null || array_filter($elementDiff) !== [];
+        $textChanged = $snapshot->content_hash !== $hash;
+        $textEvent = false;
+        $diff = ['added' => [], 'removed' => [], 'added_total' => 0, 'removed_total' => 0];
+        $metaChanges = [];
+        $ratio = null;
+        $fingerprint = '';
 
-            return null;
+        if ($textChanged) {
+            $blobs = PageSnapshot::query()->whereKey($snapshot->id)->first(['id', 'content_gz', 'baseline_fingerprint']);
+            $before = (string) $blobs?->text();
+            $snapshot->setAttribute('baseline_fingerprint', $blobs?->baseline_fingerprint)->syncOriginalAttribute('baseline_fingerprint');
+            unset($blobs);
+
+            // One diff for both uses: the old columns keep the first MAX_DIFF_CHUNKS.
+            $diff = ContentFingerprint::diff($before, $body, max(self::MAX_DIFF_CHUNKS, (int) config('monitoring.forensics_max_items', 50)));
+            $fingerprint = ContentFingerprint::fingerprint($body);
+            $ratio = ContentFingerprint::replacedRatio(ContentFingerprint::fingerprint($before), $fingerprint);
+            $metaChanges = array_filter([
+                'title' => $this->metaChange($snapshot->title, $text->title),
+                'description' => $this->metaChange($snapshot->description, $text->description),
+            ]);
+            unset($before);
+
+            $attributes += $this->contentAttributes($text, $body, $hash);
+            $textEvent = $diff['added'] !== [] || $diff['removed'] !== [] || $metaChanges !== [];
         }
 
-        $blobs = PageSnapshot::query()->whereKey($snapshot->id)->first(['id', 'content_gz', 'baseline_fingerprint']);
-        $before = (string) $blobs?->text();
-        $snapshot->setAttribute('baseline_fingerprint', $blobs?->baseline_fingerprint)->syncOriginalAttribute('baseline_fingerprint');
-        unset($blobs);
+        $event = $textEvent || $elementEvent;
 
-        $diff = ContentFingerprint::diff($before, $body, self::MAX_DIFF_CHUNKS);
-        $fingerprint = ContentFingerprint::fingerprint($body);
-        $ratio = ContentFingerprint::replacedRatio(ContentFingerprint::fingerprint($before), $fingerprint);
-        $metaChanges = array_filter([
-            'title' => $this->metaChange($snapshot->title, $text->title),
-            'description' => $this->metaChange($snapshot->description, $text->description),
-        ]);
-        unset($before);
+        // The previous raw copy is read into memory before it is overwritten below.
+        $beforeHtml = null;
+        $beforeReason = null;
 
-        $snapshot->update($touch + $this->contentAttributes($text, $body, $hash));
-        $finding = $this->defacement()->evaluate($website, $snapshot, $text, $body, $fingerprint);
-        $this->dropBlobs($snapshot);
-
-        if ($diff['added'] === [] && $diff['removed'] === [] && $metaChanges === []) {
-            return null;
+        if ($event && $response !== null) {
+            $beforeHtml = $this->rawStore()->get($snapshot, $beforeReason);
         }
 
-        return PageChange::create([
-            'website_id' => $website->id,
-            'page_snapshot_id' => $snapshot->id,
-            'url' => $url,
-            'type' => 'changed',
-            'previous_crawled_at' => $previousCrawledAt,
-            'detected_at' => now(),
-            'page_last_modified_at' => $lastModified,
-            'added' => $diff['added'] ?: null,
-            'removed' => $diff['removed'] ?: null,
-            'meta_changes' => $metaChanges ?: null,
-            'change_ratio' => $ratio,
-            'judol_detection_id' => $judolDetectionId,
-            'defacement_finding_id' => $finding?->id,
-        ]);
+        // File first: a crash before the DB write leaves a hash mismatch ("before"
+        // unavailable), never an old copy passing as the previous crawl.
+        $attributes += $this->rawAttributes($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash);
+        $original = $snapshot->getRawOriginal();
+
+        try {
+            // Text, raw facts, inventory, final URL and the event move together.
+            $change = DB::transaction(function () use ($website, $snapshot, $attributes, $textChanged, $text, $body, $fingerprint, $event, $url, $textEvent, $elementEvent, $previousCrawledAt, $lastModified, $diff, $metaChanges, $ratio, $judolDetectionId, $response, $rawHash, $finalUrl, $previousHash) {
+                $snapshot->update($attributes);
+                $finding = $textChanged ? $this->defacement()->evaluate($website, $snapshot, $text, $body, $fingerprint) : null;
+
+                if (! $event) {
+                    return null;
+                }
+
+                return PageChange::create([
+                    'website_id' => $website->id,
+                    'page_snapshot_id' => $snapshot->id,
+                    'url' => $url,
+                    'type' => 'changed',
+                    'content_kind' => $textEvent && $elementEvent ? 'mixed' : ($textEvent ? 'text' : 'element'),
+                    'previous_crawled_at' => $previousCrawledAt,
+                    'detected_at' => now(),
+                    'page_last_modified_at' => $lastModified,
+                    'added' => array_slice($diff['added'], 0, self::MAX_DIFF_CHUNKS) ?: null,
+                    'removed' => array_slice($diff['removed'], 0, self::MAX_DIFF_CHUNKS) ?: null,
+                    'meta_changes' => $metaChanges ?: null,
+                    'change_ratio' => $ratio,
+                    'judol_detection_id' => $judolDetectionId,
+                    'defacement_finding_id' => $finding?->id,
+                ] + $this->responseColumns($url, $response, $rawHash, $finalUrl, $previousHash));
+            });
+        } catch (Throwable $e) {
+            // Rolled back: the in-memory snapshot must not claim what the DB does not hold.
+            $snapshot->setRawAttributes($original, true);
+
+            throw $e;
+        } finally {
+            $this->dropBlobs($snapshot);
+        }
+
+        if ($change && $response !== null) {
+            $this->recordForensics($change, $text, (string) $response['body'], $beforeHtml, $beforeReason, $beforeBase, $finalUrl ?? $url, $diff, $metaChanges['title'] ?? null, $elementDiff, $redirect);
+        }
+
+        return $change;
     }
 
     /**
@@ -221,7 +298,10 @@ class PageContentMonitor
         ];
     }
 
-    protected function firstSight(Website $website, string $url, string $urlHash, PageText $text, string $body, string $hash, ?Carbon $lastModified, ?int $judolDetectionId): ?PageChange
+    /**
+     * @param  array<string, string>  $elements
+     */
+    protected function firstSight(Website $website, string $url, string $urlHash, PageText $text, string $body, string $hash, ?Carbon $lastModified, ?int $judolDetectionId, ?array $response, ?string $rawHash, ?string $finalUrl, array $elements, string $elementsHash): ?PageChange
     {
         $count = $this->websiteId === $website->id ? $this->snapshots->count() : $website->pageSnapshots()->count();
 
@@ -247,6 +327,7 @@ class PageContentMonitor
 
         $snapshot->offsetUnset('content_gz');
         $this->snapshots->put($urlHash, $snapshot);
+        $this->storeRaw($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash);
 
         $finding = $this->defacement()->evaluate($website, $snapshot, $text, $body, ContentFingerprint::fingerprint($body));
         $this->dropBlobs($snapshot);
@@ -269,12 +350,174 @@ class PageContentMonitor
             ) ?: null,
             'judol_detection_id' => $judolDetectionId,
             'defacement_finding_id' => $finding?->id,
-        ]);
+        ] + $this->responseColumns($url, $response, $rawHash, $finalUrl, null));
+    }
+
+    /** Defacement only, against the old snapshot; the incomplete text is never stored. */
+    protected function evaluateIncomplete(Website $website, PageSnapshot $snapshot, PageText $text, string $body): void
+    {
+        $snapshot->setAttribute('baseline_fingerprint', PageSnapshot::query()->whereKey($snapshot->id)->value('baseline_fingerprint'))
+            ->syncOriginalAttribute('baseline_fingerprint');
+        $this->defacement()->evaluate($website, $snapshot, $text, $body, ContentFingerprint::fingerprint($body));
+        $this->dropBlobs($snapshot);
+    }
+
+    /** @return array<string, string> inventory key => value */
+    protected function elementMap(PageText $text): array
+    {
+        $map = [];
+
+        foreach ($text->elements as $element) {
+            $map[$element['key']] = $element['value'];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Element changes against the stored inventory; none while there is no
+     * inventory yet (the first crawl with this feature only seeds it).
+     *
+     * @param  array<string, string>  $elements
+     * @return array{added: array<string, string>, removed: array<string, string>, modified: array<string, array{before: string, after: string}>}
+     */
+    protected function elementDiff(PageSnapshot $snapshot, array $elements, string $elementsHash): array
+    {
+        if ($snapshot->elements_hash === null || $snapshot->elements_hash === $elementsHash) {
+            return ['added' => [], 'removed' => [], 'modified' => []];
+        }
+
+        $before = (array) PageSnapshot::query()->whereKey($snapshot->id)->first(['id', 'elements'])?->elements;
+
+        return ElementIdentity::diff($before, $elements);
+    }
+
+    /** The final URL moved to another registrable domain since the last complete crawl. */
+    protected function redirectChange(?string $before, ?string $after): ?array
+    {
+        if ($before === null || $after === null) {
+            return null;
+        }
+
+        $from = $this->extractor()->pageDomain($before);
+        $to = $this->extractor()->pageDomain($after);
+
+        return $from !== null && $to !== null && $from !== $to ? ['before' => $before, 'after' => $after] : null;
+    }
+
+    /** @return array<string, mixed> summary columns of page_changes */
+    protected function responseColumns(string $url, ?array $response, ?string $rawHash, ?string $finalUrl, ?string $previousHash): array
+    {
+        if ($response === null) {
+            return [];
+        }
+
+        return [
+            'http_status' => isset($response['status']) ? (int) $response['status'] : null,
+            'final_url' => $finalUrl !== null && $finalUrl !== $url ? Str::limit($finalUrl, 2048, '') : null,
+            'redirect_count' => isset($response['redirects']) ? min(255, (int) $response['redirects']) : null,
+            'hash_algorithm' => ContentForensics::HASH_ALGORITHM,
+            'body_hash_before' => $previousHash,
+            'body_hash_after' => $rawHash,
+        ];
+    }
+
+    /**
+     * Built after the event is committed, from the previous raw copy already in
+     * memory. A failure leaves an "error" payload; the event itself stays.
+     *
+     * @param  array{added: array<int, string>, removed: array<int, string>, added_total: int, removed_total: int}  $diff
+     */
+    protected function recordForensics(PageChange $change, PageText $text, string $body, ?string $beforeHtml, ?string $beforeReason, string $beforeBase, string $finalUrl, array $diff, ?array $title, array $elementDiff, ?array $redirect): void
+    {
+        $forensics = app(ContentForensics::class);
+
+        try {
+            $hidden = [];
+
+            foreach ($text->elements as $element) {
+                $hidden[$element['key']] = $element['hidden'];
+            }
+
+            [$payload, $json, $gz] = $forensics->build([
+                'before_unavailable' => $beforeReason,
+                'before_base' => $beforeBase,
+                'after_base' => $finalUrl,
+                'title' => $title,
+                'redirect' => $redirect,
+                'hidden' => $hidden,
+            ], $diff, $elementDiff, $beforeHtml, $body);
+            unset($beforeHtml);
+
+            $forensics->store($change, $payload, $json, $gz);
+        } catch (Throwable $e) {
+            Log::warning("PageContentMonitor: detail forensik {$change->url} gagal dibuat: {$e->getMessage()}");
+
+            try {
+                $forensics->store($change, ['v' => 1, 'unavailable' => 'error', 'before_unavailable' => null, 'counts' => [], 'undetailed' => 0, 'items' => []]);
+            } catch (Throwable) {
+                // The event itself stays; the detail reads "tidak tersedia".
+            }
+        }
+    }
+
+    /**
+     * Snapshot columns for the raw copy, response facts and inventory - written
+     * in the same update as the text so "before" always matches the last crawl.
+     * The gzip file is (re)written here when the body changed or the file is gone.
+     *
+     * @param  array<string, string>  $elements
+     * @return array<string, mixed>
+     */
+    protected function rawAttributes(PageSnapshot $snapshot, ?array $response, ?string $rawHash, ?string $finalUrl, array $elements, string $elementsHash): array
+    {
+        $attributes = [];
+
+        if ($snapshot->elements_hash !== $elementsHash) {
+            $attributes['elements_hash'] = $elementsHash;
+            $attributes['elements'] = $elements;
+        }
+
+        if ($response === null) {
+            return $attributes;
+        }
+
+        $attributes += [
+            'http_status' => isset($response['status']) ? (int) $response['status'] : null,
+            'final_url' => $finalUrl !== null ? Str::limit($finalUrl, 2048, '') : null,
+            'redirect_count' => isset($response['redirects']) ? min(255, (int) $response['redirects']) : null,
+        ];
+
+        if ($snapshot->raw_sha256 !== $rawHash || ! $snapshot->raw_stored || ! $this->rawStore()->exists($snapshot)) {
+            try {
+                $stored = $this->rawStore()->put($snapshot, (string) $response['body']);
+            } catch (Throwable $e) {
+                Log::warning("PageContentMonitor: salinan HTML {$snapshot->url} gagal disimpan: {$e->getMessage()}");
+                $stored = false;
+            }
+
+            $attributes += [
+                'raw_sha256' => $rawHash,
+                'raw_bytes' => min(strlen((string) $response['body']), 4294967295),
+                'raw_stored' => $stored,
+            ];
+        }
+
+        return $attributes;
+    }
+
+    /** @param  array<string, string>  $elements */
+    protected function storeRaw(PageSnapshot $snapshot, ?array $response, ?string $rawHash, ?string $finalUrl, array $elements, string $elementsHash): void
+    {
+        $snapshot->update($this->rawAttributes($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash));
+        $snapshot->offsetUnset('elements');
+        $snapshot->syncOriginal();
     }
 
     /** Blobs are only needed while one page is compared - never kept across the crawl. */
     protected function dropBlobs(PageSnapshot $snapshot): void
     {
+        $snapshot->offsetUnset('elements');
         $snapshot->offsetUnset('content_gz');
         $snapshot->offsetUnset('baseline_fingerprint');
         $snapshot->syncOriginal();
@@ -347,6 +590,16 @@ class PageContentMonitor
         } while ($batch > 0);
 
         return $deleted;
+    }
+
+    protected function rawStore(): PageRawStore
+    {
+        return app(PageRawStore::class);
+    }
+
+    protected function extractor(): PageTextExtractor
+    {
+        return $this->extractor ??= app(PageTextExtractor::class);
     }
 
     protected function defacement(): DefacementMonitor

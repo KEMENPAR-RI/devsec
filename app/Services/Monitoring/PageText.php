@@ -27,6 +27,8 @@ class PageText
         public readonly int $blockCount = 0,
         // False when part of the page could not be read - never clear a finding on it.
         public readonly bool $complete = true,
+        // Non-text inventory: list of {kind, key, value, hidden} - see ElementIdentity.
+        public readonly array $elements = [],
     ) {}
 
     /** Wraps already-extracted plain text, e.g. a stored snapshot during prune. */

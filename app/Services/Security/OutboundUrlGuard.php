@@ -4,7 +4,9 @@ namespace App\Services\Security;
 
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Psr7\Utils as Psr7Utils;
 use GuzzleHttp\Utils as GuzzleUtils;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -103,6 +105,34 @@ class OutboundUrlGuard
     }
 
     /**
+     * Final URL and redirect count of a response fetched with httpOptions(), from
+     * the X-Guzzle-Redirect-History header (track_redirects) - no extra request.
+     *
+     * Guzzle puts the real hops FIRST and keeps any value the target sent itself
+     * after them, so the count is the position of the first entry equal to the
+     * transfer's effective URI. No history means no redirect, whatever the URL
+     * looks like (no false hop from percent-encoding/IDN differences). Ending at
+     * the requested address counts as no redirect (a hop back to it is rare and
+     * changes nothing the forensics compare).
+     *
+     * @return array{final_url: string, redirects: int}
+     */
+    public static function redirectFacts(Response $response, string $url): array
+    {
+        $history = array_values(array_map('trim', $response->toPsrResponse()->getHeader('X-Guzzle-Redirect-History')));
+        $effective = $response->effectiveUri() !== null ? (string) $response->effectiveUri() : null;
+
+        // Still at the requested address: no hop happened, so any history is the target's own header.
+        $position = $effective !== null && $effective !== (string) Psr7Utils::uriFor($url)
+            ? array_search($effective, $history, true)
+            : false;
+
+        return $position === false
+            ? ['final_url' => $url, 'redirects' => 0]
+            : ['final_url' => $effective, 'redirects' => $position + 1];
+    }
+
+    /**
      * Guzzle options that keep a redirect from walking past the check above.
      *
      * The first address is vetted before the request; a 302 is a second address
@@ -116,6 +146,8 @@ class OutboundUrlGuard
                 'protocols' => ['http', 'https'],
                 'strict' => false,
                 'referer' => false,
+                // Adds X-Guzzle-Redirect-History to the response; no extra request.
+                'track_redirects' => true,
                 'on_redirect' => function (RequestInterface $request, ResponseInterface $response, UriInterface $uri): void {
                     if ($reason = static::reason((string) $uri)) {
                         Log::warning('OutboundUrlGuard: redirect refused', ['to' => (string) $uri, 'reason' => $reason]);

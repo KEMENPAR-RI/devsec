@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ContentChangeEvidenceController;
 use App\Http\Controllers\JudolEvidenceController;
 use App\Http\Controllers\PwaController;
 use App\Livewire\Audit\Index as AuditIndex;
@@ -8,6 +9,7 @@ use App\Livewire\Auth\Login;
 use App\Livewire\Auth\ResetPassword;
 use App\Livewire\Auth\TwoFactorChallenge;
 use App\Livewire\ContentChanges\Index as ContentChangesIndex;
+use App\Livewire\ContentChanges\Show as ContentChangesShow;
 use App\Livewire\Dashboard;
 use App\Livewire\Defacement\Index as DefacementIndex;
 use App\Livewire\Incidents\Index as IncidentsIndex;
@@ -93,6 +95,10 @@ Route::middleware('auth')->group(function () {
     });
     Route::get('/defacement', DefacementIndex::class)->middleware('can:defacement.view')->name('defacement');
     Route::get('/perubahan-konten', ContentChangesIndex::class)->middleware('can:perubahan-konten.view')->name('perubahan-konten');
+    Route::get('/perubahan-konten/{change}', ContentChangesShow::class)->middleware('can:perubahan-konten.view')->name('perubahan-konten.detail');
+    Route::get('/perubahan-konten/{change}/bukti', [ContentChangeEvidenceController::class, 'download'])
+        ->middleware(['can:perubahan-konten.view', 'throttle:30,1'])
+        ->name('perubahan-konten.bukti');
     Route::get('/notifikasi', NotificationsIndex::class)->middleware('can:notifikasi.view')->name('notifikasi');
 
     Route::middleware('can:laporan.view')->group(function () {

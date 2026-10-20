@@ -21,7 +21,7 @@ class Index extends Component
 {
     use InteractsWithToasts, WithPagination;
 
-    protected const FILTERS = ['site', 'from', 'to', 'type', 'search'];
+    protected const FILTERS = ['site', 'from', 'to', 'type', 'kind', 'search'];
 
     /** Website uuid. */
     #[Url]
@@ -37,6 +37,10 @@ class Index extends Component
 
     #[Url]
     public string $type = '';
+
+    /** '' | text | element (mixed matches both). */
+    #[Url]
+    public string $kind = '';
 
     #[Url]
     public string $search = '';
@@ -107,6 +111,7 @@ class Index extends Component
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'type' => ['nullable', 'in:added,changed,removed'],
+            'kind' => ['nullable', 'in:text,element'],
             'search' => ['nullable', 'string', 'max:200'],
         ];
     }
@@ -115,7 +120,7 @@ class Index extends Component
      * The filters that pass validation - an invalid value (e.g. hand-edited URL)
      * is simply ignored instead of reaching the query.
      *
-     * @return array{site: string, from: string, to: string, type: string, search: string}
+     * @return array{site: string, from: string, to: string, type: string, kind: string, search: string}
      */
     protected function filters(): array
     {
@@ -141,6 +146,7 @@ class Index extends Component
         return view('livewire.content-changes.index', [
             'changes' => PageChange::query()
                 ->with(['website:id,uuid,name', 'judolDetection:id,url', 'defacementFinding:id,uuid,status'])
+                ->withExists('forensic')
                 ->forFilters($this->filters())
                 ->latest('detected_at')
                 ->latest('id')

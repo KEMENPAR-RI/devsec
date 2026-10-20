@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Monitoring\PageContentMonitor;
+use App\Services\Monitoring\PageRawStore;
 use Illuminate\Console\Command;
 
 /**
@@ -16,7 +17,7 @@ class PruneContentHistory extends Command
 
     protected $description = 'Delete content-change history, stale page snapshots, and closed defacement findings older than the retention window';
 
-    public function handle(PageContentMonitor $monitor): int
+    public function handle(PageContentMonitor $monitor, PageRawStore $rawStore): int
     {
         // Only an absent option falls back to config; "0" or garbage must be refused, not replaced.
         $option = $this->option('days');
@@ -39,6 +40,10 @@ class PruneContentHistory extends Command
         $deleted = $monitor->pruneExpired($days);
 
         $this->info("{$deleted['changes']} riwayat perubahan, {$deleted['snapshots']} snapshot halaman, dan {$deleted['findings']} temuan defacement tertutup lebih tua dari {$days} hari dihapus.");
+
+        // Forensic payloads went with their events (FK cascade); raw copies live on disk.
+        $swept = $rawStore->sweepOrphans();
+        $this->info("{$swept} salinan HTML mentah yatim dihapus.");
 
         return self::SUCCESS;
     }

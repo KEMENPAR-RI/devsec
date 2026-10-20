@@ -90,9 +90,9 @@ class ContentFingerprint
 
     /**
      * Chunks added/removed between two texts, compared in masked form but shown as
-     * written.
+     * written. The *_total counts are before the $max cut.
      *
-     * @return array{added: array<int, string>, removed: array<int, string>}
+     * @return array{added: array<int, string>, removed: array<int, string>, added_total: int, removed_total: int}
      */
     public static function diff(string $beforeClean, string $afterClean, int $max = 8): array
     {
@@ -104,9 +104,14 @@ class ContentFingerprint
             array_slice($chunks, 0, $max)
         ));
 
+        $added = array_diff_key($after, $before);
+        $removed = array_diff_key($before, $after);
+
         return [
-            'added' => $limit(array_diff_key($after, $before)),
-            'removed' => $limit(array_diff_key($before, $after)),
+            'added' => $limit($added),
+            'removed' => $limit($removed),
+            'added_total' => count($added),
+            'removed_total' => count($removed),
         ];
     }
 

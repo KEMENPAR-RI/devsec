@@ -54,7 +54,7 @@ class DefacementScanner
         'fromcharcode(' => 'Perakitan string lewat String.fromCharCode - penyamaran kode',
     ];
 
-    /** @var array{body: string, status: int, last_modified: ?Carbon, complete: bool}|null the homepage fetched by the last scan() */
+    /** @var array{body: string, status: int, last_modified: ?Carbon, complete: bool, final_url: ?string, redirects: int}|null the homepage fetched by the last scan() */
     protected ?array $lastHomepage = null;
 
     /** Whether the last parse() gave up part way (e.g. nesting past libxml's depth limit). */
@@ -243,11 +243,11 @@ class DefacementScanner
     }
 
     /**
-     * @return array{body: ?string, status: ?int, last_modified: ?Carbon, complete: bool}
+     * @return array{body: ?string, status: ?int, last_modified: ?Carbon, complete: bool, final_url: ?string, redirects: int}
      */
     protected function fetchPage(string $url): array
     {
-        $failed = ['body' => null, 'status' => null, 'last_modified' => null, 'complete' => false];
+        $failed = ['body' => null, 'status' => null, 'last_modified' => null, 'complete' => false, 'final_url' => null, 'redirects' => 0];
 
         if (OutboundUrlGuard::reason($url)) {
             return $failed;
@@ -283,7 +283,7 @@ class DefacementScanner
             'status' => $response->status(),
             'last_modified' => $lastModified,
             'complete' => ! ($body instanceof ResponseSizeLimit && $body->truncated),
-        ];
+        ] + OutboundUrlGuard::redirectFacts($response, $url);
     }
 
     protected function parse(string $html): ?DOMDocument
