@@ -58,6 +58,8 @@ class ContentChangeForensicsTest extends TestCase
 
         Notification::fake();
         Storage::fake('local');
+        // These tests cover the plain text/element diff events, off by default (ADR 0002).
+        config(['monitoring.record_text_only_changes' => true]);
 
         Http::fake(function (Request $request) {
             $path = parse_url($request->url(), PHP_URL_PATH) ?: '/';
@@ -224,7 +226,8 @@ class ContentChangeForensicsTest extends TestCase
         $change = PageChange::sole();
         $payload = $change->forensic->payload();
 
-        $this->assertSame('element', $change->content_kind);
+        // A foreign script was added: the event is classified as injection (ADR 0002).
+        $this->assertSame('injection', $change->content_kind);
         $this->assertNull($change->added);
         $this->assertSame(
             ['meta/added', 'iframe/added', 'script/added', 'link/added', 'link/removed', 'meta/modified'],
@@ -452,7 +455,8 @@ class ContentChangeForensicsTest extends TestCase
 
         $change = PageChange::sole();
         $payload = $change->forensic->payload();
-        $this->assertSame('text', $change->content_kind);
+        // A foreign script was added: the event is classified as injection (ADR 0002).
+        $this->assertSame('injection', $change->content_kind);
         $this->assertNull($change->body_hash_before);
         $this->assertSame('no_baseline', $payload['before_unavailable']);
         $this->assertNull($this->item($payload, 'text', 'removed')['before']);
@@ -527,7 +531,8 @@ class ContentChangeForensicsTest extends TestCase
         $this->crawl();
 
         $change = PageChange::sole();
-        $this->assertSame('mixed', $change->content_kind);
+        // A foreign script was added: the event is classified as injection (ADR 0002).
+        $this->assertSame('injection', $change->content_kind);
         $this->assertSame(hash('sha256', $before), $change->body_hash_before);
         $this->assertSame('mismatch', $change->forensic->payload()['before_unavailable']);
     }
@@ -804,6 +809,7 @@ class ContentChangeForensicsTest extends TestCase
 
         $urls = fn (string $kind) => Livewire::actingAs($this->userWith(['perubahan-konten.view']))
             ->test(ContentChangesIndex::class)
+            ->set('severity', 'all')
             ->set('kind', $kind)
             ->viewData('changes')
             ->pluck('url')

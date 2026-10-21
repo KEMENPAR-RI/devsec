@@ -29,6 +29,8 @@ class PageText
         public readonly bool $complete = true,
         // Non-text inventory: list of {kind, key, value, hidden} - see ElementIdentity.
         public readonly array $elements = [],
+        // Structural risk fingerprint (ADR 0002); null when not profiled.
+        public readonly ?InjectionProfile $risk = null,
     ) {}
 
     /** Wraps already-extracted plain text, e.g. a stored snapshot during prune. */

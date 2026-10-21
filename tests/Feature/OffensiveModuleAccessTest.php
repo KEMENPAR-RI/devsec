@@ -170,6 +170,7 @@ class OffensiveModuleAccessTest extends TestCase
 
         Livewire::actingAs($this->userWith(['perubahan-konten.view', 'perubahan-konten.delete']))
             ->test(ContentChangesIndex::class)
+            ->set('severity', 'all')
             ->set('site', $a->uuid)
             ->call('deleteFiltered');
 
@@ -188,6 +189,7 @@ class OffensiveModuleAccessTest extends TestCase
 
         Livewire::actingAs(User::factory()->create())
             ->test(ContentChangesIndex::class)
+            ->set('severity', 'all')
             ->set('site', $a->uuid)
             ->assertSee('https://alfa.example/baru')
             ->assertDontSee('https://alfa.example/lama')

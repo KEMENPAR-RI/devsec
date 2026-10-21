@@ -61,7 +61,7 @@ class Index extends Component
         }
     }
 
-    /** $contentHash: the snapshot hash the operator was looking at when clicking. */
+    /** $contentHash: the snapshot hash the operator was looking at (risk_hash for injection). */
     public function markLegitimate(DefacementFinding $finding, string $contentHash = ''): void
     {
         $this->authorize('defacement.update');
@@ -158,7 +158,7 @@ class Index extends Component
 
         return view('livewire.defacement.index', [
             'findings' => DefacementFinding::query()
-                ->with(['website:id,uuid,name', 'incident:id,uuid,status', 'snapshot:id,content_hash'])
+                ->with(['website:id,uuid,name', 'incident:id,uuid,status', 'snapshot:id,content_hash,risk_hash'])
                 ->when($filters['site'] !== '', fn ($q) => $q->whereHas('website', fn ($w) => $w->where('uuid', $filters['site'])))
                 ->when($filters['status'] !== '', fn ($q) => $q->where('status', $filters['status']))
                 ->when($filters['kind'] !== '', fn ($q) => $q->where('kind', $filters['kind']))

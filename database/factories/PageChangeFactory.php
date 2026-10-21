@@ -26,7 +26,21 @@ class PageChangeFactory extends Factory
             'removed' => [fake()->sentence()],
             'meta_changes' => null,
             'change_ratio' => fake()->randomFloat(4, 0, 1),
+            'severity' => 'info',
+            'risk_score' => 0,
+            'risk_signals' => null,
         ];
+    }
+
+    public function critical(): static
+    {
+        return $this->state(fn () => [
+            'severity' => 'critical',
+            'risk_score' => 120,
+            'risk_signals' => [
+                ['code' => 'hidden_links', 'detail' => 'slot-gacor.example', 'weight' => 120],
+            ],
+        ]);
     }
 
     public function added(): static

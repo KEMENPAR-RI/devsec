@@ -33,6 +33,9 @@ class DefacementDetectionTest extends TestCase
 {
     use RefreshDatabase;
 
+    /** A visible frame from a foreign domain: a structural (info) risk signal. */
+    protected const FRAME = '<iframe src="https://video.example/embed/1"></iframe>';
+
     protected const NEWS = [
         'Bupati meresmikan jembatan penghubung dua kecamatan di wilayah utara.',
         'Dinas Kesehatan menggelar vaksinasi gratis di seluruh puskesmas kabupaten.',
@@ -251,7 +254,7 @@ class DefacementDetectionTest extends TestCase
             'Semua akun pegawai sudah kami salin, silakan ganti kata sandi sebelum terlambat.',
             'Pesan untuk pengelola: perbarui perangkat lunak dan tutup panel admin dari publik.',
             'Sampai jumpa di target berikutnya, salam dari kelompok penjelajah dunia maya.',
-        ]));
+        ], extra: self::FRAME));
         $this->scan();
 
         $finding = DefacementFinding::sole();
@@ -270,7 +273,7 @@ class DefacementDetectionTest extends TestCase
             .'Semua akun pegawai sudah kami salin, silakan ganti kata sandi sebelum terlambat. ';
         $this->serve('<html><head><title>Portal Resmi Pemerintah Kabupaten</title></head><body><div>'.$long.'</div><div>'
             .'Pesan untuk pengelola: perbarui perangkat lunak dan tutup panel admin dari publik. '
-            .'Sampai jumpa di target berikutnya, salam dari kelompok penjelajah dunia maya yang tidak pernah tidur.</div></body></html>');
+            .'Sampai jumpa di target berikutnya, salam dari kelompok penjelajah dunia maya yang tidak pernah tidur.</div>'.self::FRAME.'</body></html>');
         $this->scan();
 
         $this->assertContains('replaced', array_column(DefacementFinding::sole()->reasons, 'code'));
@@ -447,6 +450,8 @@ class DefacementDetectionTest extends TestCase
 
     public function test_injected_code_is_listed_and_auto_resolves_once_clean(): void
     {
+        $this->serve($this->normal());
+        $this->scan();
         $this->serve($this->normal(extra: '<script src="https://jahat.example/load.js"></script>'));
         $this->scan();
 
@@ -540,10 +545,27 @@ class DefacementDetectionTest extends TestCase
         $this->assertSame($baseline, PageSnapshot::sole()->baseline_hash);
 
         // The rest replaced: judged against the original baseline, not the half-way page.
-        $this->serve($this->normal(news: $this->sameTitleReplaced(10)));
+        $this->serve($this->normal(news: $this->sameTitleReplaced(10), extra: self::FRAME));
         $this->scan();
 
         $this->assertSame('open', DefacementFinding::sole()->status);
+    }
+
+    public function test_a_rotated_news_page_with_the_same_title_and_no_structural_signal_is_not_replaced(): void
+    {
+        // A portal whose every block rotated: 90%+ replaced, but nothing structural changed.
+        $this->serve($this->normal());
+        $this->scan();
+        $this->serve($this->normal(news: $this->sameTitleReplaced(10)));
+        $this->scan();
+
+        $this->assertSame(0, DefacementFinding::count());
+
+        // Rotated again, now with a structural change (new foreign frame): judged replaced.
+        $this->serve($this->normal(news: array_map(fn (string $n) => $n.' Diperbarui.', $this->sameTitleReplaced(10)), extra: self::FRAME));
+        $this->scan();
+
+        $this->assertContains('replaced', array_column(DefacementFinding::sole()->reasons, 'code'));
     }
 
     // --- Final re-test -------------------------------------------------------
@@ -611,6 +633,8 @@ class DefacementDetectionTest extends TestCase
     public function test_a_page_nested_past_the_depth_limit_neither_moves_the_baseline_nor_clears_an_injection(): void
     {
         $script = '<script src="https://jahat.example/load.js"></script>';
+        $this->serve($this->normal());
+        $this->scan();
         $this->serve($this->normal(extra: $script));
         $this->scan();
         $baseline = PageSnapshot::sole()->baseline_hash;
@@ -627,6 +651,8 @@ class DefacementDetectionTest extends TestCase
     public function test_a_body_cut_at_the_size_limit_neither_moves_the_baseline_nor_clears_an_injection(): void
     {
         $script = '<script src="https://jahat.example/load.js"></script>';
+        $this->serve($this->normal());
+        $this->scan();
         $this->serve($this->normal(extra: $script));
         $this->scan();
         $baseline = PageSnapshot::sole()->baseline_hash;

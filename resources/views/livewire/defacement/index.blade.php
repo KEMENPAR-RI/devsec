@@ -5,14 +5,6 @@
         'legitimate' => ['label' => 'Ditandai sah', 'class' => 'bg-sky-50 text-sky-700 ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-500/30'],
         'resolved' => ['label' => 'Selesai', 'class' => 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-600/40'],
     ];
-    $reasonLabels = [
-        'signature' => 'Jejak peretas',
-        'replaced' => 'Konten terganti',
-        'shrink' => 'Konten menyusut drastis',
-        'foreign_script' => 'Skrip asing',
-        'hidden_frame' => 'Frame tersembunyi',
-        'obfuscated' => 'Kode tersamar',
-    ];
     $kindLabels = ['content' => 'Konten', 'injection' => 'Injeksi kode'];
     $inputClass = 'w-28 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white';
     $selectClass = 'rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200';
@@ -116,6 +108,9 @@
                     $isOpen = $finding->status === 'open';
                     $pageUrl = safe_image_urls($finding->url);
                     $hasCompare = filled($finding->before_title) || filled($finding->before_excerpt) || filled($finding->after_title) || filled($finding->after_excerpt);
+                    $reasons = collect(is_array($finding->reasons) ? $finding->reasons : [])->filter(fn ($r) => is_array($r));
+                    // Older reasons carry no weight: the score only shows when at least one does.
+                    $score = $reasons->contains(fn ($r) => isset($r['weight'])) ? $reasons->sum(fn ($r) => (int) ($r['weight'] ?? 0)) : null;
                 @endphp
 
                 <section @class(['px-5 py-4', 'border-l-2 border-red-500' => $isOpen, 'border-l-2 border-transparent' => ! $isOpen]) wire:key="defacement-{{ $finding->uuid }}">
@@ -133,6 +128,15 @@
                                 <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                                     {{ $kindLabels[$finding->kind] ?? $finding->kind }}
                                 </span>
+                                @if ($score !== null)
+                                    <span @class([
+                                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs font-semibold tabular-nums',
+                                        'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $isOpen,
+                                        'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' => ! $isOpen,
+                                    ]) title="Skor risiko: jumlah bobot sinyal">
+                                        <span class="font-sans font-medium">Skor</span> {{ $score }}
+                                    </span>
+                                @endif
                                 @if ($finding->change_ratio !== null)
                                     <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="Porsi teks baseline yang tidak lagi ada di halaman">
                                         {{ round((float) $finding->change_ratio * 100) }}% terganti
@@ -155,14 +159,21 @@
                                 <p class="mt-1.5 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{{ $finding->url }}</p>
                             @endif
 
-                            @if ($finding->reasons)
+                            @if ($reasons->isNotEmpty())
                                 <ul class="mt-2.5 flex flex-wrap gap-1.5">
-                                    @foreach ($finding->reasons as $reason)
+                                    @foreach ($reasons as $reason)
                                         <li class="inline-flex max-w-full items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-                                            <x-phosphor-warning class="h-3.5 w-3.5 shrink-0" />
-                                            <span class="font-medium">{{ $reasonLabels[$reason['code'] ?? ''] ?? ($reason['code'] ?? 'Lainnya') }}</span>
+                                            @if (! empty($reason['hidden']))
+                                                <x-phosphor-eye-slash class="h-3.5 w-3.5 shrink-0" aria-label="tersembunyi" />
+                                            @else
+                                                <x-phosphor-warning class="h-3.5 w-3.5 shrink-0" />
+                                            @endif
+                                            <x-risk-signal-label :code="$reason['code'] ?? null" class="font-medium" />
                                             @if (filled($reason['detail'] ?? null))
                                                 <span class="truncate text-amber-700/80 dark:text-amber-300/80">- {{ $reason['detail'] }}</span>
+                                            @endif
+                                            @if (isset($reason['weight']))
+                                                <span class="shrink-0 font-mono tabular-nums text-amber-700/70 dark:text-amber-300/70">+{{ (int) $reason['weight'] }}</span>
                                             @endif
                                         </li>
                                     @endforeach
@@ -185,7 +196,7 @@
                                         message="Kondisi halaman saat ini dijadikan baseline baru, jadi crawl berikutnya membandingkan dengan isi ini. Gunakan hanya bila perubahan memang dilakukan pengelola situs."
                                         confirm-text="Ya, Tandai Sah"
                                         variant="success"
-                                        target="markLegitimate('{{ $finding->uuid }}', '{{ $finding->snapshot?->content_hash }}')"
+                                        target="markLegitimate('{{ $finding->uuid }}', '{{ $finding->kind === 'injection' ? $finding->snapshot?->risk_hash : $finding->snapshot?->content_hash }}')"
                                     >
                                         <x-slot:trigger>
                                             <button type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-accent-700">
@@ -193,7 +204,7 @@
                                                 Tandai Sah
                                             </button>
                                         </x-slot:trigger>
-                                        <form wire:submit="markLegitimate('{{ $finding->uuid }}', '{{ $finding->snapshot?->content_hash }}')" x-ref="form"></form>
+                                        <form wire:submit="markLegitimate('{{ $finding->uuid }}', '{{ $finding->kind === 'injection' ? $finding->snapshot?->risk_hash : $finding->snapshot?->content_hash }}')" x-ref="form"></form>
                                     </x-confirm-dialog>
                                     <x-confirm-dialog
                                         title="Tandai sudah ditangani?"

@@ -156,23 +156,25 @@ class DefacementScanTest extends TestCase
     public function test_the_command_raises_one_incident_and_alerts(): void
     {
         Notification::fake();
-        $this->fakePage('<script src="https://jahat.example/load.js"></script>');
         $this->website();
+        $this->baseline();
+        $this->fakePage('<script src="https://jahat.example/load.js"></script>');
 
         $this->artisan('websites:scan-defacement')->assertSuccessful();
 
         $incident = Incident::where('type', 'attack')->firstOrFail();
 
         $this->assertSame('foreign_script', $incident->meta['reason']);
-        $this->assertSame('jahat.example', $incident->meta['temuan'][0]['detail']);
+        $this->assertStringContainsString('jahat.example', $incident->meta['temuan'][0]['detail']);
         Notification::assertSentTo($this->admin, AttackAnomalyDetected::class);
     }
 
     public function test_the_same_injection_does_not_reopen_every_night(): void
     {
         Notification::fake();
-        $this->fakePage('<script src="https://jahat.example/load.js"></script>');
         $this->website();
+        $this->baseline();
+        $this->fakePage('<script src="https://jahat.example/load.js"></script>');
 
         $this->artisan('websites:scan-defacement');
         $this->artisan('websites:scan-defacement');
@@ -203,15 +205,30 @@ class DefacementScanTest extends TestCase
     public function test_the_incident_detail_names_each_finding(): void
     {
         Notification::fake();
-        $this->fakePage('<script src="https://jahat.example/load.js"></script><iframe width="0" height="0"></iframe>');
         $this->website();
+        $this->baseline();
+        $this->fakePage('<script src="https://jahat.example/load.js"></script><iframe width="0" height="0"></iframe>');
 
         $this->artisan('websites:scan-defacement');
 
         $lines = Incident::where('type', 'attack')->firstOrFail()->detailLines();
 
-        $this->assertSame('Kode asing di halaman depan', $lines['Indikasi']);
-        $this->assertArrayHasKey('Skrip dari domain asing #1', $lines);
+        $this->assertSame('Kode asing di halaman situs', $lines['Indikasi']);
+        $this->assertArrayHasKey('Iframe tersembunyi #1', $lines);
+        $this->assertArrayHasKey('Skrip dari domain asing #2', $lines);
+    }
+
+    public function test_a_script_already_in_the_baseline_raises_nothing(): void
+    {
+        // Differential (ADR 0002): code present since the first scan is the site's own.
+        Notification::fake();
+        $this->fakePage('<script src="https://widget.example/load.js"></script>');
+        $this->website();
+
+        $this->artisan('websites:scan-defacement');
+        $this->artisan('websites:scan-defacement');
+
+        $this->assertSame(0, Incident::where('type', 'attack')->count());
     }
 
     // --- Helpers ------------------------------------------------------------
@@ -221,8 +238,23 @@ class DefacementScanTest extends TestCase
         return Website::factory()->create(['url' => 'https://situs-1.example']);
     }
 
+    protected ?string $body = null;
+
     protected function fakePage(string $body): void
     {
-        Http::fake(['*' => Http::response("<html><body>{$body}</body></html>", 200)]);
+        $first = $this->body === null;
+        $this->body = $body;
+
+        if ($first) {
+            Http::fake(fn () => Http::response("<html><body>{$this->body}</body></html>", 200));
+        }
+    }
+
+    /** First scan of a clean homepage: seeds the risk baseline. */
+    protected function baseline(): void
+    {
+        $this->fakePage('<h1>Selamat datang</h1>');
+        $this->artisan('websites:scan-defacement')->assertSuccessful();
+        $this->travel(1)->days();
     }
 }

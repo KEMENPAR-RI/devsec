@@ -5,7 +5,9 @@ namespace App\Providers;
 use App\Models\User;
 use App\Services\AppSettings;
 use App\Services\Backup\DatabaseBackup;
+use App\Services\Monitoring\InjectionProfiler;
 use App\Services\Monitoring\JudolAiSettings;
+use App\Services\Monitoring\UrlKeywordMatcher;
 use App\Services\Notifications\MailSettings;
 use App\Services\Security\Recaptcha;
 use App\Support\Permissions;
@@ -46,6 +48,10 @@ class AppServiceProvider extends ServiceProvider
         foreach (self::SETTINGS_SERVICES as $service) {
             $this->app->singleton($service);
         }
+
+        // One keyword automaton / profiler per job or request (ADR 0002).
+        $this->app->scoped(UrlKeywordMatcher::class);
+        $this->app->scoped(InjectionProfiler::class);
     }
 
     /**

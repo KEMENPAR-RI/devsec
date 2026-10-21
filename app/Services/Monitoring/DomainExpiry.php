@@ -168,8 +168,9 @@ class DomainExpiry
 
         $lastTwo = implode('.', array_slice($labels, -2));
 
-        // go.id, co.id, ac.id, my.id, ... - the registrable name is three labels.
-        if (preg_match('/^(go|co|ac|or|net|web|sch|mil|desa|ponpes|biz|my)\.id$/', $lastTwo) && count($labels) >= 3) {
+        // go.id, co.id, ac.id, my.id, co.uk, com.au, ... - the registrable name is three labels.
+        if ((preg_match('/^(go|co|ac|or|net|web|sch|mil|desa|ponpes|biz|my)\.id$/', $lastTwo)
+            || in_array($lastTwo, ['co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'com.sg', 'com.my', 'co.jp', 'com.br'], true)) && count($labels) >= 3) {
             return implode('.', array_slice($labels, -3));
         }
 

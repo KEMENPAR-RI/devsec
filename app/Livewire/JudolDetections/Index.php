@@ -481,6 +481,11 @@ class Index extends Component
                     'website' => $first->website,
                     'attack_label' => $first->attackLabel(),
                     'domains' => $group->flatMap(fn (JudolFinding $f) => $f->linked_domains ?? [])->unique()->values()->all(),
+                    // domain => keyword|ai, from evidence_nodes[].domain + link_source; absent on older findings.
+                    'domain_sources' => $group->flatMap(fn (JudolFinding $f) => collect($f->evidence_nodes ?? [])
+                        ->filter(fn ($node) => is_array($node) && is_string($node['domain'] ?? null) && in_array($node['link_source'] ?? null, ['keyword', 'ai'], true))
+                        ->mapWithKeys(fn (array $node) => [$node['domain'] => $node['link_source']]))
+                        ->all(),
                     'keywords' => $keywords,
                     'score' => array_sum(array_column($matchDetails, 'weight')),
                     'match_details' => $matchDetails,

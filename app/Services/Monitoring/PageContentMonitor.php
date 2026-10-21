@@ -31,7 +31,7 @@ class PageContentMonitor
         'id', 'website_id', 'url', 'url_hash', 'title', 'description', 'content_hash', 'text_length', 'block_count',
         'last_modified_at', 'status', 'missed_crawls', 'baseline_hash', 'baseline_title', 'baseline_excerpt',
         'baseline_text_length', 'baseline_signatures', 'baseline_at', 'first_seen_at', 'last_crawled_at',
-        'raw_sha256', 'raw_bytes', 'raw_stored', 'final_url', 'http_status', 'redirect_count', 'elements_hash',
+        'raw_sha256', 'raw_bytes', 'raw_stored', 'final_url', 'http_status', 'redirect_count', 'elements_hash', 'risk_hash',
     ];
 
     /** Compressed blob ceiling; the text is cut further until it fits. */
@@ -56,6 +56,8 @@ class PageContentMonitor
     protected ?DefacementMonitor $defacement = null;
 
     protected ?PageTextExtractor $extractor = null;
+
+    protected ?InjectionRiskEvaluator $riskEvaluator = null;
 
     public function __construct()
     {
@@ -117,6 +119,8 @@ class PageContentMonitor
                     $this->evaluateIncomplete($website, $snapshot, $text, $body);
                 }
 
+                $this->judgeIncompleteRisk($website, $snapshot, $text->risk);
+
                 $snapshot->update(['last_crawled_at' => now(), 'missed_crawls' => 0, 'status' => 'active']);
             }
 
@@ -146,6 +150,12 @@ class PageContentMonitor
         $redirect = $this->redirectChange($snapshot->final_url, $finalUrl);
         $elementEvent = $redirect !== null || array_filter($elementDiff) !== [];
         $textChanged = $snapshot->content_hash !== $hash;
+        $risk = $this->riskState($snapshot, $text->risk);
+        $riskEvent = ($risk['verdict']['severity'] ?? 'none') !== 'none';
+        $injection = $this->injectionSignals($risk['verdict']);
+        // For the "replaced without a title change" rule; null = page not profiled.
+        $riskSeverity = $text->risk === null ? null : ($risk['verdict']['severity'] ?? 'none');
+        $deface = null;
         $textEvent = false;
         $diff = ['added' => [], 'removed' => [], 'added_total' => 0, 'removed_total' => 0];
         $metaChanges = [];
@@ -162,6 +172,9 @@ class PageContentMonitor
             $diff = ContentFingerprint::diff($before, $body, max(self::MAX_DIFF_CHUNKS, (int) config('monitoring.forensics_max_items', 50)));
             $fingerprint = ContentFingerprint::fingerprint($body);
             $ratio = ContentFingerprint::replacedRatio(ContentFingerprint::fingerprint($before), $fingerprint);
+            // Pure pre-check, so the previous raw copy is read only when an event may follow.
+            // Baseline columns are not touched by the update below, so the verdict is reused.
+            $deface = $this->defacement()->detector()->evaluate($snapshot, $text, $fingerprint, app(DefacementSettings::class), $riskSeverity);
             $metaChanges = array_filter([
                 'title' => $this->metaChange($snapshot->title, $text->title),
                 'description' => $this->metaChange($snapshot->description, $text->description),
@@ -172,28 +185,30 @@ class PageContentMonitor
             $textEvent = $diff['added'] !== [] || $diff['removed'] !== [] || $metaChanges !== [];
         }
 
-        $event = $textEvent || $elementEvent;
+        // Text/element diffs alone are noise on dynamic pages (ADR 0002); a defacement
+        // verdict still makes an event inside the transaction below.
+        $event = $riskEvent || $redirect !== null || ($this->recordsPlainChanges() && ($textEvent || $elementEvent));
 
         // The previous raw copy is read into memory before it is overwritten below.
         $beforeHtml = null;
         $beforeReason = null;
 
-        if ($event && $response !== null) {
+        if (($event || ($deface['defaced'] ?? false)) && $response !== null) {
             $beforeHtml = $this->rawStore()->get($snapshot, $beforeReason);
         }
 
         // File first: a crash before the DB write leaves a hash mismatch ("before"
         // unavailable), never an old copy passing as the previous crawl.
-        $attributes += $this->rawAttributes($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash);
+        $attributes += $this->rawAttributes($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash) + $risk['attributes'];
         $original = $snapshot->getRawOriginal();
 
         try {
             // Text, raw facts, inventory, final URL and the event move together.
-            $change = DB::transaction(function () use ($website, $snapshot, $attributes, $textChanged, $text, $body, $fingerprint, $event, $url, $textEvent, $elementEvent, $previousCrawledAt, $lastModified, $diff, $metaChanges, $ratio, $judolDetectionId, $response, $rawHash, $finalUrl, $previousHash) {
+            $change = DB::transaction(function () use ($website, $snapshot, $attributes, $textChanged, $text, $body, $fingerprint, $event, $url, $textEvent, $elementEvent, $risk, $previousCrawledAt, $lastModified, $diff, $metaChanges, $ratio, $judolDetectionId, $response, $rawHash, $finalUrl, $previousHash, $injection, $riskSeverity, $deface) {
                 $snapshot->update($attributes);
-                $finding = $textChanged ? $this->defacement()->evaluate($website, $snapshot, $text, $body, $fingerprint) : null;
+                $finding = $textChanged ? $this->defacement()->evaluate($website, $snapshot, $text, $body, $fingerprint, $riskSeverity, $deface) : null;
 
-                if (! $event) {
+                if (! $event && ! $finding) {
                     return null;
                 }
 
@@ -202,7 +217,7 @@ class PageContentMonitor
                     'page_snapshot_id' => $snapshot->id,
                     'url' => $url,
                     'type' => 'changed',
-                    'content_kind' => $textEvent && $elementEvent ? 'mixed' : ($textEvent ? 'text' : 'element'),
+                    'content_kind' => $injection ? 'injection' : ($textEvent && $elementEvent ? 'mixed' : ($textEvent || ! $elementEvent ? 'text' : 'element')),
                     'previous_crawled_at' => $previousCrawledAt,
                     'detected_at' => now(),
                     'page_last_modified_at' => $lastModified,
@@ -212,7 +227,7 @@ class PageContentMonitor
                     'change_ratio' => $ratio,
                     'judol_detection_id' => $judolDetectionId,
                     'defacement_finding_id' => $finding?->id,
-                ] + $this->responseColumns($url, $response, $rawHash, $finalUrl, $previousHash));
+                ] + $this->riskColumns($text->risk, $risk['verdict']) + $this->responseColumns($url, $response, $rawHash, $finalUrl, $previousHash));
             });
         } catch (Throwable $e) {
             // Rolled back: the in-memory snapshot must not claim what the DB does not hold.
@@ -221,6 +236,10 @@ class PageContentMonitor
             throw $e;
         } finally {
             $this->dropBlobs($snapshot);
+        }
+
+        if ($risk['verdict'] !== null) {
+            $this->defacement()->recordPageInjection($website, $snapshot, $risk['verdict'] + ['complete' => $text->risk->complete]);
         }
 
         if ($change && $response !== null) {
@@ -327,13 +346,20 @@ class PageContentMonitor
 
         $snapshot->offsetUnset('content_gz');
         $this->snapshots->put($urlHash, $snapshot);
-        $this->storeRaw($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash);
+        $risk = $this->riskState(null, $text->risk);
+        $this->storeRaw($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash, $risk['attributes']);
 
-        $finding = $this->defacement()->evaluate($website, $snapshot, $text, $body, ContentFingerprint::fingerprint($body));
+        $finding = $this->defacement()->evaluate($website, $snapshot, $text, $body, ContentFingerprint::fingerprint($body), $risk['verdict']['severity'] ?? null);
         $this->dropBlobs($snapshot);
 
-        // The site's first crawl is the baseline - no events for it.
-        if (! $this->hadSnapshots) {
+        if ($risk['verdict'] !== null) {
+            $this->defacement()->recordPageInjection($website, $snapshot, $risk['verdict'] + ['complete' => $text->risk->complete]);
+        }
+
+        $riskEvent = ($risk['verdict']['severity'] ?? 'none') !== 'none';
+
+        // The site's first crawl is the baseline - no events for it; a plain new page is noise (ADR 0002).
+        if (! $this->hadSnapshots || (! $riskEvent && ! $finding && ! $this->recordsPlainChanges())) {
             return null;
         }
 
@@ -342,6 +368,7 @@ class PageContentMonitor
             'page_snapshot_id' => $snapshot->id,
             'url' => $url,
             'type' => 'added',
+            'content_kind' => $this->injectionSignals($risk['verdict']) ? 'injection' : null,
             'detected_at' => now(),
             'page_last_modified_at' => $lastModified,
             'added' => array_map(
@@ -350,7 +377,120 @@ class PageContentMonitor
             ) ?: null,
             'judol_detection_id' => $judolDetectionId,
             'defacement_finding_id' => $finding?->id,
-        ] + $this->responseColumns($url, $response, $rawHash, $finalUrl, null));
+        ] + $this->riskColumns($text->risk, $risk['verdict']) + $this->responseColumns($url, $response, $rawHash, $finalUrl, null));
+    }
+
+    /**
+     * Risk verdict against the page's risk baseline (ADR 0002) and the snapshot
+     * columns to write. verdict is null when the profile is unchanged since the
+     * last judgement. A warning/critical verdict freezes the baseline items and
+     * keeps the current profile as "pending" for markLegitimate; risk_hash always
+     * follows the last judged profile, so an unchanged page is judged only once.
+     *
+     * @return array{verdict: ?array<string, mixed>, attributes: array<string, mixed>}
+     */
+    protected function riskState(?PageSnapshot $snapshot, ?InjectionProfile $profile): array
+    {
+        $none = ['verdict' => null, 'attributes' => []];
+
+        if ($profile === null) {
+            return $none;
+        }
+
+        $hash = $profile->hash();
+
+        if ($snapshot && $snapshot->risk_hash === $hash) {
+            return $none;
+        }
+
+        $stored = $snapshot && $snapshot->risk_hash !== null
+            ? (array) PageSnapshot::query()->whereKey($snapshot->id)->first(['id', 'risk_profile'])?->risk_profile
+            : [];
+        $baseline = is_array($stored['items'] ?? null) ? ['items' => $stored['items'], 'stats' => (array) ($stored['stats'] ?? [])] : null;
+
+        // Seeding a page whose injection finding is still open (e.g. from the old
+        // homepage scanner): its code keys are judged as new, never absorbed.
+        if ($baseline === null && $snapshot && $this->hasOpenInjection($snapshot)) {
+            $baseline = [
+                'items' => array_filter($profile->items, fn ($item, $key) => ! preg_match('/^(?:xs|ijs|ifr|mr|mnr|hblk|hlnk|jl)\|/', (string) $key), ARRAY_FILTER_USE_BOTH),
+                'stats' => $profile->stats,
+            ];
+        }
+
+        $verdict = $this->riskEvaluator()->evaluate($baseline, $profile);
+
+        // Incomplete (caps hit): judged once per distinct profile, baseline left as is.
+        if (! $profile->complete) {
+            return ['verdict' => $verdict, 'attributes' => ['risk_hash' => $hash]];
+        }
+
+        $current = $profile->toBaseline();
+        $stored = $verdict['absorb']
+            ? $current
+            : ($baseline ?? ['items' => array_diff_key($current['items'], $verdict['added']), 'stats' => $current['stats']]) + ['pending' => $current];
+
+        return ['verdict' => $verdict, 'attributes' => ['risk_hash' => $hash, 'risk_profile' => $stored]];
+    }
+
+    protected function hasOpenInjection(PageSnapshot $snapshot): bool
+    {
+        return DefacementFinding::query()
+            ->where('website_id', $snapshot->website_id)
+            ->where('url_hash', $snapshot->url_hash)
+            ->where('kind', 'injection')
+            ->open()
+            ->exists();
+    }
+
+    /** A page not fully read can still keep an injection open, never clear it or move the baseline. */
+    protected function judgeIncompleteRisk(Website $website, PageSnapshot $snapshot, ?InjectionProfile $profile): void
+    {
+        $verdict = $this->riskState($snapshot, $profile)['verdict'];
+
+        if ($verdict !== null && in_array($verdict['incident_severity'], ['warning', 'critical'], true)) {
+            $this->defacement()->recordPageInjection($website, $snapshot, $verdict + ['complete' => false]);
+        }
+    }
+
+    /** @return array<string, mixed> severity columns of page_changes; null severity = not profiled */
+    protected function riskColumns(?InjectionProfile $profile, ?array $verdict): array
+    {
+        if ($profile === null) {
+            return [];
+        }
+
+        $signals = array_map(
+            fn (array $signal) => array_intersect_key($signal, array_flip(['code', 'detail', 'weight', 'hidden', 'keywords'])),
+            $verdict['signals'] ?? [],
+        );
+
+        return [
+            'severity' => $verdict['severity'] ?? 'none',
+            'risk_score' => min((int) ($verdict['score'] ?? 0), 65535),
+            'risk_signals' => $signals ?: null,
+        ];
+    }
+
+    /** Whether the verdict carries a structural signal beyond a title/description change. */
+    protected function injectionSignals(?array $verdict): bool
+    {
+        foreach ($verdict['signals'] ?? [] as $signal) {
+            if (! in_array($signal['code'], ['title_changed', 'description_changed'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function recordsPlainChanges(): bool
+    {
+        return (bool) config('monitoring.record_text_only_changes', false);
+    }
+
+    protected function riskEvaluator(): InjectionRiskEvaluator
+    {
+        return $this->riskEvaluator ??= app(InjectionRiskEvaluator::class);
     }
 
     /** Defacement only, against the old snapshot; the incomplete text is never stored. */
@@ -507,9 +647,10 @@ class PageContentMonitor
     }
 
     /** @param  array<string, string>  $elements */
-    protected function storeRaw(PageSnapshot $snapshot, ?array $response, ?string $rawHash, ?string $finalUrl, array $elements, string $elementsHash): void
+    protected function storeRaw(PageSnapshot $snapshot, ?array $response, ?string $rawHash, ?string $finalUrl, array $elements, string $elementsHash, array $riskAttributes = []): void
     {
-        $snapshot->update($this->rawAttributes($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash));
+        $snapshot->update($this->rawAttributes($snapshot, $response, $rawHash, $finalUrl, $elements, $elementsHash) + $riskAttributes);
+        $snapshot->offsetUnset('risk_profile');
         $snapshot->offsetUnset('elements');
         $snapshot->syncOriginal();
     }
@@ -518,6 +659,7 @@ class PageContentMonitor
     protected function dropBlobs(PageSnapshot $snapshot): void
     {
         $snapshot->offsetUnset('elements');
+        $snapshot->offsetUnset('risk_profile');
         $snapshot->offsetUnset('content_gz');
         $snapshot->offsetUnset('baseline_fingerprint');
         $snapshot->syncOriginal();

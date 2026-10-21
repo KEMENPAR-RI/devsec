@@ -69,7 +69,7 @@ class ElementIdentity
     }
 
     /** @return string|null absolute http(s) URL, null for any other scheme */
-    protected static function resolve(string $raw, ?string $base): ?string
+    public static function resolve(string $raw, ?string $base): ?string
     {
         $baseParts = $base !== null ? parse_url($base) : false;
         $baseScheme = is_array($baseParts) ? strtolower((string) ($baseParts['scheme'] ?? 'https')) : 'https';

@@ -37,6 +37,8 @@ class PageSnapshot extends Model
         'redirect_count',
         'elements_hash',
         'elements',
+        'risk_hash',
+        'risk_profile',
         'status',
         'missed_crawls',
         'baseline_hash',
@@ -51,13 +53,14 @@ class PageSnapshot extends Model
     ];
 
     // Blobs never belong in JSON responses or Livewire payloads.
-    protected $hidden = ['content_gz', 'baseline_fingerprint', 'elements'];
+    protected $hidden = ['content_gz', 'baseline_fingerprint', 'elements', 'risk_profile'];
 
     protected function casts(): array
     {
         return [
             'baseline_signatures' => 'array',
             'elements' => 'array',
+            'risk_profile' => 'array',
             'raw_bytes' => 'integer',
             'raw_stored' => 'boolean',
             'http_status' => 'integer',

@@ -165,7 +165,7 @@ class Incident extends Model
                 'Indikasi' => match ($meta['reason'] ?? null) {
                     'response_time_spike' => 'Lonjakan response time',
                     'content_changed' => 'Perubahan konten drastis',
-                    'foreign_script' => 'Kode asing di halaman depan',
+                    'foreign_script' => 'Kode asing di halaman situs',
                     'defacement' => 'Defacement konten',
                     default => null,
                 },

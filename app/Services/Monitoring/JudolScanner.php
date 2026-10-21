@@ -57,11 +57,8 @@ class JudolScanner
     /** Image formats the Messages API can read - see looksLikeSupportedImage(). */
     protected const SUPPORTED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 
-    /** Suffixes where the registered name is the THIRD label - see registrableDomain(). */
-    protected const TWO_LABEL_SUFFIXES = [
-        'co.id', 'go.id', 'ac.id', 'or.id', 'net.id', 'web.id', 'sch.id', 'my.id', 'biz.id', 'desa.id', 'mil.id',
-        'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'com.au', 'com.sg', 'com.my', 'co.jp', 'com.br',
-    ];
+    /** @var array<string, string> domain => keyword|ai, from the last gamblingLinkedDomains() */
+    protected array $linkSources = [];
 
     /** Characters of page text kept per detection - enough to quote, not a mirror. */
     protected const SNAPSHOT_LIMIT = 40000;
@@ -121,7 +118,7 @@ class JudolScanner
         foreach ($this->crawl($website) as $url => $page) {
             $pageText = $this->extractor()->extractAt($page['html'], $url, ! $page['truncated'], $page['final_url'] ?? $url);
 
-            $this->recordRegions($website, $regions, $url, $page['html']);
+            $this->recordRegions($website, $regions, $url, $page['html'], $pageText);
 
             $detection = $this->evaluateAndStore($website, $url, $page['html'], lastModified: $page['last_modified'], pageText: $pageText);
 
@@ -214,7 +211,7 @@ class JudolScanner
      * to see - the fortieth page carrying the same footer is what proves the
      * injection is sitewide.
      */
-    protected function recordRegions(Website $website, RegionFindings $regions, string $url, string $html): void
+    protected function recordRegions(Website $website, RegionFindings $regions, string $url, string $html, ?PageText $pageText = null): void
     {
         $host = parse_url($website->url, PHP_URL_HOST);
         $located = $this->extractLocatedOutboundLinks($html, $url, $host);
@@ -223,11 +220,13 @@ class JudolScanner
             return;
         }
 
-        // Ask the classifier once for every domain on the page, then attribute the
-        // answers back to the regions they came from - one call per page rather
-        // than one per region.
+        // Keyword-in-URL matches first (deterministic); the classifier is asked once,
+        // only for the domains left, and the answers are attributed back to regions.
         $domains = array_values(array_unique(array_column($located, 'domain')));
-        $flagged = $this->flagGamblingDomains($domains, array_column($located, 'text', 'domain'));
+        $keyword = array_intersect($domains, array_keys($this->keywordLinkedDomains($pageText)));
+        $sources = array_fill_keys($keyword, 'keyword')
+            + array_fill_keys($this->flagGamblingDomains(array_values(array_diff($domains, $keyword)), array_column($located, 'text', 'domain')), 'ai');
+        $flagged = array_keys($sources);
 
         if ($flagged === []) {
             return;
@@ -261,6 +260,8 @@ class JudolScanner
                 $byRegion[$key]['evidence'][] = [
                     'path' => $pageRegion->path($link['node']),
                     'html' => $pageRegion->snippet($link['node']),
+                    'domain' => $link['domain'],
+                    'link_source' => $sources[$link['domain']],
                 ];
             }
         }
@@ -1184,16 +1185,8 @@ class JudolScanner
      */
     protected function registrableDomain(string $host): string
     {
-        $labels = explode('.', trim($host, '.'));
-
-        if (count($labels) <= 2) {
-            return $host;
-        }
-
-        $suffix = $labels[count($labels) - 2].'.'.$labels[count($labels) - 1];
-        $take = in_array($suffix, self::TWO_LABEL_SUFFIXES, true) ? 3 : 2;
-
-        return implode('.', array_slice($labels, -min($take, count($labels))));
+        // Same normalization as the risk profile (judol_link detail = linked_domains).
+        return app(DomainExpiry::class)->registrableDomain('https://'.trim($host, '.')) ?? $host;
     }
 
     /**
@@ -1324,7 +1317,8 @@ class JudolScanner
         // adds hidden <a href> tags to a gambling site, so on this page the keyword
         // filter has nothing to find and the destination host is the only evidence
         // there is.
-        $linkedDomains = $this->gamblingLinkedDomains($html, $url, parse_url($website->url, PHP_URL_HOST));
+        $pageText ??= $this->extractor()->extract($html, $url);
+        $linkedDomains = $this->gamblingLinkedDomains($html, $url, parse_url($website->url, PHP_URL_HOST), $pageText);
 
         // The anchor text of a link that was just flagged is left out. "Slot Gacor"
         // sitting inside <a href="gacor88.com"> IS the backlink finding, already
@@ -1332,7 +1326,6 @@ class JudolScanner
         // second time as page text files a separate "teks promosi disisipkan"
         // finding for one single edit. Only ever excludes what the link classifier
         // actually flagged, so with the AI off nothing is dropped.
-        $pageText ??= $this->extractor()->extract($html, $url);
         $text = $pageText->plainText($linkedDomains);
 
         // Folded, whole-word, weighted match over every segment (title, meta, body,
@@ -1404,8 +1397,11 @@ class JudolScanner
             ];
         }
 
-        if ($linkedDomains !== []) {
-            $ai = $this->withLinkFinding($ai, $linkedDomains);
+        // Keyword-in-URL links are not an AI verdict; only AI-flagged ones fill the AI columns.
+        $aiLinked = array_keys(array_filter($this->linkSources, fn (string $source) => $source === 'ai'));
+
+        if ($aiLinked !== []) {
+            $ai = $this->withLinkFinding($ai, $aiLinked);
         }
 
         $snippet = $this->snippet($pageText, $keywordsMatched ? $match : null, $text);
@@ -1425,7 +1421,7 @@ class JudolScanner
 
             $incident->update([
                 'description' => $description,
-                'meta' => ['url' => $url, 'matched_keywords' => $matchedKeywords, 'linked_domains' => $linkedDomains],
+                'meta' => ['url' => $url, 'matched_keywords' => $matchedKeywords, 'linked_domains' => $linkedDomains, 'link_sources' => $this->linkSources],
                 'status' => 'open',
                 'resolved_at' => null,
                 'detected_at' => now(),
@@ -1459,7 +1455,7 @@ class JudolScanner
             'severity' => 'critical',
             'title' => "Konten judi online terdeteksi di {$website->name}",
             'description' => $description,
-            'meta' => ['url' => $url, 'matched_keywords' => $matchedKeywords, 'linked_domains' => $linkedDomains],
+            'meta' => ['url' => $url, 'matched_keywords' => $matchedKeywords, 'linked_domains' => $linkedDomains, 'link_sources' => $this->linkSources],
             'status' => 'open',
             'detected_at' => now(),
         ]);
@@ -1498,35 +1494,52 @@ class JudolScanner
     }
 
     /**
-     * The gambling sites this page links out to, as judged by the AI.
-     *
-     * Empty whenever the check is switched off, no key is configured, or the AI
-     * could not be reached - this check only ever ADDS a finding, so an outage
-     * costs a detection rather than inventing one.
+     * The gambling sites this page links out to: judol keywords in the link URL
+     * (deterministic, see LinkFarmDetector) plus the AI's verdict on the domains
+     * left. The AI part is empty whenever it is off, unconfigured or unreachable -
+     * the keyword part still runs. Sources land in $linkSources.
      *
      * @return array<int, string>
      */
-    protected function gamblingLinkedDomains(string $html, string $url, ?string $host): array
+    protected function gamblingLinkedDomains(string $html, string $url, ?string $host, ?PageText $pageText = null): array
     {
+        $keyword = array_keys($this->keywordLinkedDomains($pageText));
+        $this->linkSources = array_fill_keys($keyword, 'keyword');
         $settings = app(JudolAiSettings::class);
 
-        if (! $settings->usable() || ! config('judol.ai.links.enabled', true) || ! $this->aiWithinBudget()) {
-            return [];
+        if ($settings->usable() && config('judol.ai.links.enabled', true) && $this->aiWithinBudget()) {
+            $links = array_diff_key($this->extractOutboundLinks($html, $url, $host), $this->linkSources);
+            $ai = $links === [] ? [] : $this->timedAi(fn () => app(JudolLinkClassifier::class)->gamblingDomains($links));
+            $this->linkSources += array_fill_keys($ai, 'ai');
         }
 
-        $links = $this->extractOutboundLinks($html, $url, $host);
-
-        if ($links === []) {
-            return [];
-        }
-
-        $flagged = $this->timedAi(fn () => app(JudolLinkClassifier::class)->gamblingDomains($links));
+        $flagged = array_keys($this->linkSources);
 
         if ($flagged !== []) {
             Log::info("JudolScanner: {$url} menaut ke situs judi: ".implode(', ', $flagged));
         }
 
         return $flagged;
+    }
+
+    /**
+     * Domains whose link URLs carry judol keywords, read from the page's risk
+     * profile - no second parse, no second keyword pass.
+     *
+     * @return array<string, array<int, string>> domain => keywords
+     */
+    protected function keywordLinkedDomains(?PageText $pageText): array
+    {
+        $domains = [];
+
+        // The profiler's jl| items already hold the LinkFarmDetector result for this page.
+        foreach ($pageText?->risk?->items ?? [] as $key => $item) {
+            if (str_starts_with((string) $key, 'jl|')) {
+                $domains[substr((string) $key, 3)] = (array) ($item['keywords'] ?? []);
+            }
+        }
+
+        return $domains;
     }
 
     /**

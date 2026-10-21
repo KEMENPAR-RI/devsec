@@ -343,7 +343,8 @@ class RegionFindings
                 continue;
             }
 
-            $bucket['nodes'][$key] = ['path' => $path, 'html' => $html] + (empty($node['hidden']) ? [] : ['hidden' => true]);
+            $bucket['nodes'][$key] = ['path' => $path, 'html' => $html] + (empty($node['hidden']) ? [] : ['hidden' => true])
+                + array_intersect_key($node, array_flip(['domain', 'link_source']));
         }
     }
 

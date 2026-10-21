@@ -6,6 +6,7 @@ use App\Livewire\Concerns\InteractsWithToasts;
 use App\Models\AuditLog;
 use App\Models\PageChange;
 use App\Models\Website;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Validator;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -21,7 +22,10 @@ class Index extends Component
 {
     use InteractsWithToasts, WithPagination;
 
-    protected const FILTERS = ['site', 'from', 'to', 'type', 'kind', 'search'];
+    protected const FILTERS = ['site', 'from', 'to', 'type', 'kind', 'severity', 'search'];
+
+    /** Severity filter values; important = warning + critical, legacy = not scored (null). */
+    public const SEVERITIES = ['important', 'all', 'critical', 'warning', 'info', 'none', 'legacy'];
 
     /** Website uuid. */
     #[Url]
@@ -38,9 +42,13 @@ class Index extends Component
     #[Url]
     public string $type = '';
 
-    /** '' | text | element (mixed matches both). */
+    /** '' | text | element (mixed matches both) | injection. */
     #[Url]
     public string $kind = '';
+
+    /** One of SEVERITIES; defaults to warning + critical only. */
+    #[Url]
+    public string $severity = 'important';
 
     #[Url]
     public string $search = '';
@@ -90,8 +98,7 @@ class Index extends Component
         $count = 0;
         $filters = $this->filters();
 
-        PageChange::query()
-            ->forFilters($filters)
+        $this->applyRiskFilters(PageChange::query()->forFilters($filters), $filters)
             ->select('id')
             ->chunkById(500, function ($rows) use (&$count) {
                 $count += PageChange::query()->whereIn('id', $rows->pluck('id'))->delete();
@@ -111,7 +118,8 @@ class Index extends Component
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:from'],
             'type' => ['nullable', 'in:added,changed,removed'],
-            'kind' => ['nullable', 'in:text,element'],
+            'kind' => ['nullable', 'in:text,element,injection'],
+            'severity' => ['nullable', 'in:'.implode(',', self::SEVERITIES)],
             'search' => ['nullable', 'string', 'max:200'],
         ];
     }
@@ -120,7 +128,7 @@ class Index extends Component
      * The filters that pass validation - an invalid value (e.g. hand-edited URL)
      * is simply ignored instead of reaching the query.
      *
-     * @return array{site: string, from: string, to: string, type: string, kind: string, search: string}
+     * @return array{site: string, from: string, to: string, type: string, kind: string, severity: string, search: string}
      */
     protected function filters(): array
     {
@@ -141,13 +149,29 @@ class Index extends Component
         return $values;
     }
 
+    /**
+     * Severity + injection-kind filters on top of PageChange::forFilters; an empty
+     * (invalid) severity falls back to the default "important".
+     */
+    protected function applyRiskFilters(Builder $query, array $filters): Builder
+    {
+        $severity = $filters['severity'] !== '' ? $filters['severity'] : 'important';
+
+        return $query
+            ->when($filters['kind'] === 'injection', fn (Builder $q) => $q->where('content_kind', 'injection'))
+            ->when($severity === 'important', fn (Builder $q) => $q->whereIn('severity', ['warning', 'critical']))
+            ->when($severity === 'legacy', fn (Builder $q) => $q->whereNull('severity'))
+            ->when(! in_array($severity, ['important', 'legacy', 'all'], true), fn (Builder $q) => $q->where('severity', $severity));
+    }
+
     public function render()
     {
+        $filters = $this->filters();
+
         return view('livewire.content-changes.index', [
-            'changes' => PageChange::query()
+            'changes' => $this->applyRiskFilters(PageChange::query()->forFilters($filters), $filters)
                 ->with(['website:id,uuid,name', 'judolDetection:id,url', 'defacementFinding:id,uuid,status'])
                 ->withExists('forensic')
-                ->forFilters($this->filters())
                 ->latest('detected_at')
                 ->latest('id')
                 ->paginate(20),

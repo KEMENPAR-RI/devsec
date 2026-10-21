@@ -5,8 +5,6 @@ namespace App\Services\Monitoring;
 use App\Models\Website;
 use App\Services\Security\OutboundUrlGuard;
 use App\Support\ResponseSizeLimit;
-use DOMDocument;
-use DOMElement;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -27,210 +25,63 @@ use Throwable;
  */
 class DefacementScanner
 {
-    /**
-     * Script hosts that are ordinary on an Indonesian institutional site.
-     *
-     * An allow-list rather than a block-list: the whole point is to surface the
-     * host nobody recognises, and a block-list can only ever list the payloads
-     * somebody already wrote about.
-     */
-    public const TRUSTED_HOSTS = [
-        'googletagmanager.com', 'google-analytics.com', 'googleapis.com', 'gstatic.com',
-        'google.com', 'youtube.com', 'ytimg.com', 'doubleclick.net', 'facebook.net',
-        'facebook.com', 'jquery.com', 'jsdelivr.net', 'cloudflare.com', 'cdnjs.com',
-        'bootstrapcdn.com', 'unpkg.com', 'fontawesome.com', 'addtoany.com',
-        'recaptcha.net', 'cloudflareinsights.com', 'tawk.to', 'whatsapp.com',
+    /** Reason codes reported by scan(); the rest are judged only against a baseline. */
+    protected const REPORTED_CODES = [
+        'foreign_script', 'obfuscated_js', 'js_redirect', 'cloaking', 'hidden_frame',
+        'meta_refresh', 'hidden_link_block', 'cryptominer',
     ];
 
-    /** Fragments that are all but diagnostic of injected code. */
-    public const SUSPICIOUS_PATTERNS = [
-        'coinhive' => 'Skrip penambang kripto (Coinhive)',
-        'cryptonight' => 'Skrip penambang kripto (CryptoNight)',
-        'coinimp' => 'Skrip penambang kripto (CoinIMP)',
-        'webminepool' => 'Skrip penambang kripto (WebMinePool)',
-        'eval(atob(' => 'eval() atas data base64 - penyamaran kode',
-        'eval(unescape(' => 'eval() atas string ter-escape - penyamaran kode',
-        'document.write(unescape(' => 'document.write() atas string ter-escape',
-        'fromcharcode(' => 'Perakitan string lewat String.fromCharCode - penyamaran kode',
-    ];
-
-    /** @var array{body: string, status: int, last_modified: ?Carbon, complete: bool, final_url: ?string, redirects: int}|null the homepage fetched by the last scan() */
+    /** @var array{body: string, status: int, last_modified: ?Carbon, complete: bool, final_url: ?string, redirects: int, text: PageText}|null the homepage fetched by the last scan() */
     protected ?array $lastHomepage = null;
 
-    /** Whether the last parse() gave up part way (e.g. nesting past libxml's depth limit). */
-    protected bool $parseStopped = false;
-
     /**
-     * Everything unexpected on a site's homepage.
+     * Everything risky on a site's homepage right now (no baseline): fetched,
+     * parsed once by PageTextExtractor, read from its InjectionProfile. Allow-lists
+     * live in config('defacement.injection'); hosts compare by registrable domain.
      *
      * @return array<int, array{jenis: string, detail: string}>
      */
     public function scan(Website $website): array
     {
+        $this->lastHomepage = null;
         $page = $this->fetchPage($website->url);
-        $this->lastHomepage = $page['body'] !== null ? $page : null;
-        $html = $page['body'];
 
-        if ($html === null) {
+        if ($page['body'] === null) {
             return [];
         }
 
-        $host = parse_url($website->url, PHP_URL_HOST);
-        $dom = $this->parse($html);
+        $url = Str::before($website->url, '#');
+        $text = app(PageTextExtractor::class)->extractAt($page['body'], $url, $page['complete'], $page['final_url'] ?? $url);
         // Cut at the size limit or parsed only part way: absence of a finding proves nothing.
-        $this->lastHomepage['complete'] = $page['complete'] && $dom !== null && ! $this->parseStopped;
+        $this->lastHomepage = ['complete' => $page['complete'] && $text->complete, 'text' => $text] + $page;
 
-        if (! $dom) {
-            return [];
-        }
-
-        return array_merge(
-            $this->foreignScripts($dom, $website->url, $host),
-            $this->hiddenFrames($dom),
-            $this->suspiciousCode($html),
-        );
-    }
-
-    /**
-     * Scripts loaded from a host that is neither the site's own nor recognisable.
-     *
-     * @return array<int, array{jenis: string, detail: string}>
-     */
-    protected function foreignScripts(DOMDocument $dom, string $baseUrl, ?string $host): array
-    {
         $findings = [];
         $seen = [];
 
-        foreach ($dom->getElementsByTagName('script') as $script) {
-            $src = trim((string) $script->getAttribute('src'));
-
-            if ($src === '' || str_starts_with($src, 'data:')) {
+        foreach ($text->risk?->items ?? [] as $key => $item) {
+            if (! in_array($item['code'], self::REPORTED_CODES, true)) {
                 continue;
             }
 
-            $scriptHost = parse_url($this->absolute($src, $baseUrl), PHP_URL_HOST);
+            // One line per foreign host, not per script path.
+            $detail = $item['code'] === 'foreign_script' ? Str::before(Str::after((string) $key, 'xs|'), '/') : $item['detail'];
 
-            if (! $scriptHost || $this->isOwnOrTrusted($scriptHost, $host)) {
+            if (isset($seen[$item['code'].'|'.$detail])) {
                 continue;
             }
 
-            // One line per host, not per tag: a loader usually appears several
-            // times, and ten identical rows hide the one other host.
-            if (isset($seen[$scriptHost])) {
-                continue;
-            }
-
-            $seen[$scriptHost] = true;
-            $findings[] = ['jenis' => 'Skrip dari domain asing', 'detail' => $scriptHost];
+            $seen[$item['code'].'|'.$detail] = true;
+            $findings[] = ['jenis' => DefacementMonitor::INJECTION_LABELS[$item['code']] ?? $item['code'], 'detail' => $detail];
         }
 
         return $findings;
-    }
-
-    /**
-     * Frames deliberately made invisible.
-     *
-     * A legitimate hidden iframe does exist - some payment and analytics widgets
-     * use one - but on a government site it is far more often the delivery
-     * mechanism for something else, and it is worth a human glance either way.
-     *
-     * @return array<int, array{jenis: string, detail: string}>
-     */
-    protected function hiddenFrames(DOMDocument $dom): array
-    {
-        $findings = [];
-
-        foreach ($dom->getElementsByTagName('iframe') as $frame) {
-            if (! $this->looksHidden($frame)) {
-                continue;
-            }
-
-            $src = trim((string) $frame->getAttribute('src'));
-
-            $findings[] = [
-                'jenis' => 'Iframe tersembunyi',
-                'detail' => $src !== '' ? Str::limit($src, 120) : 'tanpa src',
-            ];
-        }
-
-        return $findings;
-    }
-
-    protected function looksHidden(DOMElement $frame): bool
-    {
-        $style = Str::lower(str_replace(' ', '', (string) $frame->getAttribute('style')));
-
-        if (Str::contains($style, ['display:none', 'visibility:hidden', 'opacity:0'])) {
-            return true;
-        }
-
-        // Zero-sized rather than merely small: a 1x1 tracking pixel is normal, a
-        // 0x0 frame is only ever there to run something out of sight.
-        $width = (int) $frame->getAttribute('width');
-        $height = (int) $frame->getAttribute('height');
-
-        return $frame->hasAttribute('width') && $frame->hasAttribute('height') && $width <= 1 && $height <= 1;
-    }
-
-    /**
-     * @return array<int, array{jenis: string, detail: string}>
-     */
-    protected function suspiciousCode(string $html): array
-    {
-        $haystack = Str::lower($html);
-        $findings = [];
-
-        foreach (self::SUSPICIOUS_PATTERNS as $needle => $label) {
-            if (str_contains($haystack, $needle)) {
-                $findings[] = ['jenis' => 'Pola kode mencurigakan', 'detail' => $label];
-            }
-        }
-
-        return $findings;
-    }
-
-    /** The site's own host, a subdomain of it, or a name everyone loads anyway. */
-    protected function isOwnOrTrusted(string $scriptHost, ?string $host): bool
-    {
-        $scriptHost = Str::lower($scriptHost);
-
-        if ($host && ($scriptHost === Str::lower($host) || Str::endsWith($scriptHost, '.'.Str::lower($host)))) {
-            return true;
-        }
-
-        foreach (self::TRUSTED_HOSTS as $trusted) {
-            if ($scriptHost === $trusted || Str::endsWith($scriptHost, '.'.$trusted)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    protected function absolute(string $src, string $baseUrl): string
-    {
-        if (Str::startsWith($src, ['http://', 'https://'])) {
-            return $src;
-        }
-
-        if (Str::startsWith($src, '//')) {
-            return 'https:'.$src;
-        }
-
-        $base = parse_url($baseUrl);
-        $scheme = $base['scheme'] ?? 'https';
-        $host = $base['host'] ?? '';
-
-        return Str::startsWith($src, '/')
-            ? "{$scheme}://{$host}{$src}"
-            : "{$scheme}://{$host}/".ltrim($src, './');
     }
 
     /**
      * The homepage the last scan() fetched successfully, or null when it failed -
      * reused by the content/defacement check so no second request is made.
      *
-     * @return array{body: string, status: int, last_modified: ?Carbon, complete: bool}|null
+     * @return array{body: string, status: int, last_modified: ?Carbon, complete: bool, final_url: ?string, redirects: int, text: PageText}|null
      */
     public function lastHomepage(): ?array
     {
@@ -284,26 +135,5 @@ class DefacementScanner
             'last_modified' => $lastModified,
             'complete' => ! ($body instanceof ResponseSizeLimit && $body->truncated),
         ] + OutboundUrlGuard::redirectFacts($response, $url);
-    }
-
-    protected function parse(string $html): ?DOMDocument
-    {
-        if (trim($html) === '') {
-            return null;
-        }
-
-        $dom = new DOMDocument;
-        $previous = libxml_use_internal_errors(true);
-
-        // Real-world markup is malformed constantly; a parse error must not be
-        // the reason a compromise goes unseen.
-        libxml_clear_errors();
-        $ok = $dom->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_NOWARNING | LIBXML_NOERROR);
-        $this->parseStopped = PageTextExtractor::parseStopped();
-
-        libxml_clear_errors();
-        libxml_use_internal_errors($previous);
-
-        return $ok ? $dom : null;
     }
 }

@@ -412,7 +412,21 @@
                                 
                                 <div class="mt-1.5 flex flex-wrap gap-1.5">
                                     @foreach ($group['domains'] as $domain)
-                                        <span class="rounded-md bg-red-50 px-2 py-1 font-mono text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">{{ $domain }}</span>
+                                        @php $linkSource = $group['domain_sources'][$domain] ?? null; @endphp
+                                        <span class="inline-flex items-center gap-1.5 rounded-md bg-red-50 py-1 pl-2 font-mono text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400 {{ $linkSource ? 'pr-1' : 'pr-2' }}">
+                                            {{ $domain }}
+                                            @if ($linkSource === 'keyword')
+                                                <span class="inline-flex items-center gap-0.5 rounded bg-white px-1.5 py-0.5 font-sans text-[10px] font-semibold text-zinc-700 ring-1 ring-inset ring-zinc-300 dark:bg-zinc-900 dark:text-zinc-200 dark:ring-zinc-700" title="Terdeteksi dari kata kunci judi di URL tautan (deterministik)">
+                                                    <x-phosphor-magnifying-glass class="h-3 w-3" aria-hidden="true" />
+                                                    URL keyword
+                                                </span>
+                                            @elseif ($linkSource === 'ai')
+                                                <span class="inline-flex items-center gap-0.5 rounded bg-violet-50 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-violet-700 ring-1 ring-inset ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/30" title="Diklasifikasikan sebagai situs judi oleh AI">
+                                                    <x-phosphor-sparkle class="h-3 w-3" aria-hidden="true" />
+                                                    AI
+                                                </span>
+                                            @endif
+                                        </span>
                                     @endforeach
                                 </div>
 

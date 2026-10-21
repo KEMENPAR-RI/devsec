@@ -5,7 +5,11 @@
         'changed' => ['label' => 'Berubah', 'icon' => 'phosphor-git-diff', 'class' => 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/30'],
         'removed' => ['label' => 'Hilang', 'icon' => 'phosphor-file-x', 'class' => 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-600/40'],
     ];
-    $kindLabels = ['text' => 'Teks', 'element' => 'Non-teks', 'mixed' => 'Teks + non-teks'];
+    $kindLabels = ['text' => 'Teks', 'element' => 'Non-teks', 'mixed' => 'Teks + non-teks', 'injection' => 'Injeksi'];
+    $signals = collect(is_array($change->risk_signals) ? $change->risk_signals : [])->filter(fn ($s) => is_array($s))->sortByDesc(fn ($s) => (int) ($s['weight'] ?? 0));
+    // judol_link is informational (never triggers an incident), so it gets its own block.
+    $judolSignals = $signals->filter(fn ($s) => ($s['code'] ?? null) === 'judol_link');
+    $riskSignals = $signals->reject(fn ($s) => ($s['code'] ?? null) === 'judol_link');
     $itemKinds = [
         'text' => ['label' => 'Teks', 'icon' => 'phosphor-text-aa'],
         'script' => ['label' => 'Script eksternal', 'icon' => 'phosphor-file-code'],
@@ -72,6 +76,7 @@
             </a>
             <h1 class="mt-1 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Detail Forensik</h1>
             <div class="mt-2 flex flex-wrap items-center gap-2">
+                <x-severity-badge :severity="$change->severity" :score="$change->risk_score" />
                 <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $typeMeta['class'] }}">
                     <x-dynamic-component :component="$typeMeta['icon']" class="h-3.5 w-3.5" />
                     {{ $typeMeta['label'] }}
@@ -187,6 +192,100 @@
                 </div>
             @endforeach
         </dl>
+    </section>
+
+    {{-- Risk assessment: values in risk_signals come from the crawled page, echoed escaped only. --}}
+    <section @class([
+        'enter rounded-2xl border bg-white dark:bg-zinc-900',
+        'border-red-300 dark:border-red-500/40' => $change->severity === 'critical',
+        'border-amber-300 dark:border-amber-500/40' => $change->severity === 'warning',
+        'border-zinc-200 dark:border-zinc-800' => ! in_array($change->severity, ['critical', 'warning'], true),
+    ]) aria-labelledby="risiko-title">
+        <div class="flex flex-col gap-3 border-b border-zinc-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
+            <div>
+                <h2 id="risiko-title" class="text-sm font-semibold text-zinc-900 dark:text-white">Penilaian risiko</h2>
+                <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Sinyal penyusupan yang ditemukan pada halaman ini dibanding baseline sebelumnya.</p>
+            </div>
+            @if ($change->severity !== null)
+                <div class="flex items-center gap-3">
+                    <div class="text-right">
+                        <p class="{{ $label }}">Skor</p>
+                        <p @class([
+                            'font-mono text-3xl font-semibold leading-none tabular-nums',
+                            'text-red-600 dark:text-red-400' => $change->severity === 'critical',
+                            'text-amber-600 dark:text-amber-400' => $change->severity === 'warning',
+                            'text-zinc-700 dark:text-zinc-200' => ! in_array($change->severity, ['critical', 'warning'], true),
+                        ])>{{ (int) ($change->risk_score ?? 0) }}</p>
+                    </div>
+                    <x-severity-badge :severity="$change->severity" />
+                </div>
+            @endif
+        </div>
+
+        @if ($change->severity === null)
+            <div class="flex items-start gap-2 px-5 py-4 text-sm text-zinc-500 dark:text-zinc-400">
+                <x-phosphor-clock-counter-clockwise class="mt-0.5 h-4 w-4 shrink-0" />
+                <span>Event ini tercatat sebelum penilaian risiko aktif, jadi tingkat risiko dan sinyalnya tidak tersedia.</span>
+            </div>
+        @elseif ($signals->isEmpty())
+            <div class="flex items-start gap-2 px-5 py-4 text-sm text-zinc-500 dark:text-zinc-400">
+                <x-phosphor-check class="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>Tidak ada sinyal risiko pada perubahan ini.</span>
+            </div>
+        @else
+            @if ($riskSignals->isNotEmpty())
+                <ul class="divide-y divide-zinc-100 dark:divide-zinc-800">
+                    @foreach ($riskSignals as $signal)
+                        <li class="flex flex-col gap-1 px-5 py-3 sm:flex-row sm:items-start sm:gap-4">
+                            <div class="flex shrink-0 items-center gap-1.5 sm:w-56">
+                                <x-risk-signal-label :code="$signal['code'] ?? null" class="text-sm font-medium text-zinc-900 dark:text-white" />
+                                @if (! empty($signal['hidden']))
+                                    <span class="inline-flex items-center gap-0.5 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                                        <x-phosphor-eye-slash class="h-3 w-3" aria-hidden="true" />
+                                        tersembunyi
+                                    </span>
+                                @endif
+                            </div>
+                            <p class="min-w-0 flex-1 {{ $mono }}">
+                                @if (filled($signal['detail'] ?? null))
+                                    <x-visible-text :text="(string) $signal['detail']" />
+                                @else
+                                    <span class="font-sans text-zinc-400">-</span>
+                                @endif
+                            </p>
+                            <p class="shrink-0 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400" title="Bobot sinyal">+{{ (int) ($signal['weight'] ?? 0) }}</p>
+                        </li>
+                    @endforeach
+                </ul>
+            @endif
+
+            @if ($judolSignals->isNotEmpty())
+                <div class="border-t border-zinc-100 px-5 py-4 dark:border-zinc-800">
+                    <p class="{{ $label }}">Domain judi yang ditautkan</p>
+                    <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Informatif - ditangani lewat Deteksi Judol, tidak memicu insiden injeksi.</p>
+                    <ul class="mt-2 space-y-1.5">
+                        @foreach ($judolSignals as $signal)
+                            <li class="flex flex-col gap-1 rounded-lg bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:gap-3 dark:bg-red-500/10">
+                                <span class="min-w-0 break-all font-mono text-xs font-medium text-red-700 dark:text-red-300"><x-visible-text :text="(string) ($signal['detail'] ?? '')" /></span>
+                                @if (! empty($signal['hidden']))
+                                    <span class="inline-flex w-fit items-center gap-0.5 rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:bg-zinc-900 dark:text-amber-300">
+                                        <x-phosphor-eye-slash class="h-3 w-3" aria-hidden="true" />
+                                        tersembunyi
+                                    </span>
+                                @endif
+                                @if (is_array($signal['keywords'] ?? null) && $signal['keywords'])
+                                    <span class="flex flex-wrap gap-1">
+                                        @foreach ($signal['keywords'] as $keyword)
+                                            <span class="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">{{ is_scalar($keyword) ? $keyword : '' }}</span>
+                                        @endforeach
+                                    </span>
+                                @endif
+                            </li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endif
+        @endif
     </section>
 
     @if ($detail === null)

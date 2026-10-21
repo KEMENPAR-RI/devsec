@@ -270,6 +270,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Keyword Judol di URL Tautan (deterministik, tanpa AI)
+    |--------------------------------------------------------------------------
+    |
+    | URL tujuan tautan keluar dicocokkan dengan daftar kata kunci judol: per
+    | token ("slot-gacor") dan, untuk kata kunci >= min_compact_length huruf,
+    | tanpa pemisah ("situsslotgacor88"). AI hanya dipanggil untuk domain sisa.
+    |
+    */
+    'url_match' => [
+        'enabled' => true,
+        'min_compact_length' => 6,
+        'max_links' => 3000,
+        'ignored_hosts' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Ambang Skor (v2)
     |--------------------------------------------------------------------------
     |

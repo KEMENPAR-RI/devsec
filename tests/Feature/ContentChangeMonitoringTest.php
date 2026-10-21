@@ -32,6 +32,8 @@ class ContentChangeMonitoringTest extends TestCase
         parent::setUp();
 
         Notification::fake();
+        // These tests cover the plain text/element diff events, off by default (ADR 0002).
+        config(['monitoring.record_text_only_changes' => true]);
 
         Http::fake(function (Request $request) {
             $path = parse_url($request->url(), PHP_URL_PATH) ?: '/';

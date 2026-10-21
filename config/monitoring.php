@@ -97,6 +97,9 @@ return [
     'content_max_pages_per_site' => 150,
     'content_missing_after_crawls' => 3,
 
+    // false: perubahan teks/elemen tanpa sinyal risiko tidak dicatat sebagai event (ADR 0002).
+    'record_text_only_changes' => (bool) env('MONITORING_RECORD_TEXT_ONLY_CHANGES', false),
+
     /*
     |--------------------------------------------------------------------------
     | Detail Forensik Perubahan Konten

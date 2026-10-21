@@ -15,6 +15,7 @@
       x-slot:toolbar - the search input, plus any filter selects alongside it
       default slot - the list markup itself
       x-slot:footer - typically {{ $items->links() }}
+      x-slot:emptyAction - optional button under the empty message
     </x-list-card>
 --}}
 <div {{ $attributes->merge(['class' => 'enter rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900']) }}>
@@ -33,6 +34,9 @@
             @if ($emptyMessage)
                 <p class="max-w-xs text-sm text-zinc-500 dark:text-zinc-400">{{ $emptyMessage }}</p>
             @endif
+            @isset($emptyAction)
+                <div class="mt-2">{{ $emptyAction }}</div>
+            @endisset
         </div>
     @else
         {{ $slot }}

@@ -6,7 +6,6 @@ use App\Models\Website;
 use App\Services\Monitoring\DefacementMonitor;
 use App\Services\Monitoring\DefacementScanner;
 use App\Services\Monitoring\PageContentMonitor;
-use App\Services\Monitoring\PageTextExtractor;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Throwable;
@@ -26,7 +25,7 @@ class ScanDefacement extends Command
 
     protected $description = 'Scan homepages for foreign scripts, hidden frames, obfuscated code, and content defacement';
 
-    public function handle(DefacementScanner $scanner, DefacementMonitor $monitor, PageContentMonitor $content, PageTextExtractor $extractor): int
+    public function handle(DefacementScanner $scanner, DefacementMonitor $monitor, PageContentMonitor $content): int
     {
         $websites = Website::query()
             ->where('is_active', true)
@@ -41,7 +40,7 @@ class ScanDefacement extends Command
             }
 
             try {
-                $findings = $scanner->scan($website);
+                $scanner->scan($website);
                 $homepage = $scanner->lastHomepage();
 
                 // A failed fetch says nothing about injection or content - leave both as they were.
@@ -49,19 +48,19 @@ class ScanDefacement extends Command
                     continue;
                 }
 
-                // A page not fully read cannot clear an injection already on record.
-                if (($findings !== [] || $homepage['complete']) && $monitor->recordInjection($website, $findings)) {
-                    $flagged++;
-                }
-
+                // Injection is judged per page against its risk baseline inside observe() (ADR 0002).
                 $url = Str::before($website->url, '#');
-                $content->observe($website, $url, $extractor->extractAt($homepage['body'], $url, $homepage['complete'], $homepage['final_url'] ?? $url), $homepage['last_modified'], response: [
+                $content->observe($website, $url, $homepage['text'], $homepage['last_modified'], response: [
                     'body' => $homepage['body'],
                     'status' => $homepage['status'] ?? null,
                     'final_url' => $homepage['final_url'] ?? $url,
                     'redirects' => $homepage['redirects'] ?? 0,
                 ]);
                 $monitor->settle($website, [sha1($url)]);
+
+                if ($website->defacementFindings()->open()->where('kind', 'injection')->where('url_hash', sha1($url))->exists()) {
+                    $flagged++;
+                }
             } catch (Throwable $e) {
                 $this->warn("{$website->name}: {$e->getMessage()}");
             }

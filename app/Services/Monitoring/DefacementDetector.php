@@ -24,7 +24,7 @@ class DefacementDetector
     /**
      * @return array{defaced: bool, reasons: array<int, array{code: string, detail: string}>, ratio: ?float, signatures: array<int, string>, eligible: bool}
      */
-    public function evaluate(PageSnapshot $baseline, PageText $current, string $currentFp, DefacementSettings $settings): array
+    public function evaluate(PageSnapshot $baseline, PageText $current, string $currentFp, DefacementSettings $settings, ?string $riskSeverity = null): array
     {
         $found = $this->signatures($current->title."\n".$current->visibleText());
         $known = (array) ($baseline->baseline_signatures ?? []);
@@ -58,16 +58,21 @@ class DefacementDetector
             $placeholder = ($current->blockCount <= 3 && $current->textLength < 300)
                 && TextNormalizer::isBenignPlaceholder($current->title.' '.$current->visibleText());
 
+            $shrunk = $current->textLength <= (1 - $settings->shrinkPercent() / 100) * $baseline->baseline_text_length
+                && ($current->blockCount <= 3 || $current->textLength < 300)
+                && ! $placeholder;
+
+            // Without a title change, a rotating news portal reaches 90% on its own:
+            // it also needs a structural risk signal, a shrink or a weak signature.
+            // A page that was not profiled (null) keeps the old rule.
+            $corroborated = $riskSeverity === null || $riskSeverity !== 'none' || $shrunk || $newWeak !== [];
+
             $replaced = ! $placeholder && (($titleChanged && $ratio * 100 >= $settings->replacePercent())
-                || $ratio * 100 >= $settings->replaceWithoutTitlePercent());
+                || ($ratio * 100 >= $settings->replaceWithoutTitlePercent() && $corroborated));
 
             if ($replaced) {
                 $reasons[] = ['code' => 'replaced', 'detail' => sprintf('%d%% konten baseline terganti%s', round($ratio * 100), $titleChanged ? ' dan judul berubah' : '')];
             }
-
-            $shrunk = $current->textLength <= (1 - $settings->shrinkPercent() / 100) * $baseline->baseline_text_length
-                && ($current->blockCount <= 3 || $current->textLength < 300)
-                && ! $placeholder;
 
             if ($shrunk) {
                 $reasons[] = ['code' => 'shrink', 'detail' => sprintf('Halaman menyusut dari %s menjadi %s karakter', number_format($baseline->baseline_text_length), number_format($current->textLength))];

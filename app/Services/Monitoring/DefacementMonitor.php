@@ -22,10 +22,30 @@ use Illuminate\Support\Str;
  */
 class DefacementMonitor
 {
-    protected const INJECTION_CODES = [
-        'Skrip dari domain asing' => 'foreign_script',
-        'Iframe tersembunyi' => 'hidden_frame',
-        'Pola kode mencurigakan' => 'obfuscated',
+    /** Indonesian label per reason/signal code - the single source for incidents and the UI. */
+    public const INJECTION_LABELS = [
+        'signature' => 'Jejak peretas',
+        'replaced' => 'Konten terganti',
+        'shrink' => 'Konten menyusut drastis',
+        'obfuscated' => 'Kode tersamar',
+        'judol_link' => 'Link ke situs judi',
+        'external_domain' => 'Domain tautan keluar',
+        'foreign_script' => 'Skrip dari domain asing',
+        'obfuscated_js' => 'Pola kode mencurigakan',
+        'js_redirect' => 'Redirect JavaScript ke domain asing',
+        'cloaking' => 'Cloaking mesin pencari',
+        'document_write' => 'document.write baru',
+        'hidden_frame' => 'Iframe tersembunyi',
+        'foreign_frame' => 'Iframe dari domain asing',
+        'meta_refresh' => 'Meta refresh ke domain asing',
+        'hidden_links' => 'Link tersembunyi',
+        'hidden_link_block' => 'Blok link tersembunyi',
+        'link_surge' => 'Lonjakan link keluar',
+        'title_changed' => 'Judul halaman berubah',
+        'description_changed' => 'Deskripsi halaman berubah',
+        'cryptominer' => 'Skrip penambang kripto',
+        'not_profiled' => 'Halaman terlalu besar untuk diprofilkan penuh',
+        'profile_truncated' => 'Profil terpotong batas pemeriksaan',
     ];
 
     protected ?DefacementDetector $detector = null;
@@ -38,10 +58,11 @@ class DefacementMonitor
      * $snapshot must already hold the current page and its baseline columns
      * (baseline_fingerprint included).
      */
-    public function evaluate(Website $website, PageSnapshot $snapshot, PageText $text, string $body, string $fingerprint): ?DefacementFinding
+    public function evaluate(Website $website, PageSnapshot $snapshot, PageText $text, string $body, string $fingerprint, ?string $riskSeverity = null, ?array $verdict = null): ?DefacementFinding
     {
         $settings = app(DefacementSettings::class);
-        $verdict = $this->detector()->evaluate($snapshot, $text, $fingerprint, $settings);
+        // $verdict: a DefacementDetector::evaluate() result already computed by the caller.
+        $verdict ??= $this->detector()->evaluate($snapshot, $text, $fingerprint, $settings, $riskSeverity);
 
         if ($verdict['defaced']) {
             return $this->recordContent($website, $snapshot, $verdict, $text);
@@ -95,55 +116,71 @@ class DefacementMonitor
     }
 
     /**
-     * Records the daily homepage code-injection scan.
+     * Records one page's injection risk verdict (InjectionRiskEvaluator + complete):
+     * warning/critical opens or refreshes the page's injection finding and the
+     * site's single injection incident; a clean, fully read page recovers it.
+     * judol_link signals are left to the judol pipeline.
      *
-     * @param  array<int, array{jenis: string, detail: string}>  $temuan
-     * @return bool whether a new incident was raised
+     * @param  array{incident_severity: string, signals: array<int, array<string, mixed>>, complete?: bool}  $verdict
      */
-    public function recordInjection(Website $website, array $temuan): bool
+    public function recordPageInjection(Website $website, PageSnapshot $snapshot, array $verdict): ?DefacementFinding
     {
-        $url = Str::before($website->url, '#');
-        $urlHash = sha1($url);
+        if (! in_array($verdict['incident_severity'] ?? 'none', ['warning', 'critical'], true)) {
+            // Seeding judges absolute keys only: it never clears what is on record.
+            if (($verdict['complete'] ?? true) && empty($verdict['seed'])) {
+                $this->markRecovered($website, $snapshot->url_hash, 'injection');
 
-        if ($temuan === []) {
-            $this->markRecovered($website, $urlHash, 'injection');
-            $this->openInjectionIncident($website)?->resolve();
+                if (! $website->defacementFindings()->open()->where('kind', 'injection')->exists()) {
+                    $this->openInjectionIncident($website)?->resolve();
+                }
+            }
 
-            return false;
+            return null;
         }
 
-        $reasons = collect($temuan)
-            ->map(fn (array $t) => ['code' => self::INJECTION_CODES[$t['jenis']] ?? 'foreign_script', 'detail' => "{$t['jenis']}: {$t['detail']}"])
+        $reasons = collect($verdict['signals'] ?? [])
+            ->reject(fn (array $s) => in_array($s['code'] ?? null, InjectionRiskEvaluator::INFO_ONLY_CODES, true))
+            ->map(fn (array $s) => array_intersect_key($s, array_flip(['code', 'detail', 'weight', 'hidden'])))
             ->values()
             ->all();
 
         $existing = DefacementFinding::query()
             ->where('website_id', $website->id)
-            ->where('url_hash', $urlHash)
+            ->where('url_hash', $snapshot->url_hash)
             ->where('kind', 'injection')
             ->first();
 
         // Marked legitimate and still the very same code: stay quiet.
         if ($existing?->status === 'legitimate' && $this->sameReasons($existing->reasons ?? [], $reasons)) {
-            return false;
+            return null;
         }
 
-        $finding = $this->upsertFinding($website, $urlHash, 'injection', [
-            'url' => $url,
+        $finding = $this->upsertFinding($website, $snapshot->url_hash, 'injection', [
+            'page_snapshot_id' => $snapshot->id,
+            'url' => $snapshot->url,
             'reasons' => $reasons,
             'after_excerpt' => collect($reasons)->pluck('detail')->take(10)->implode("\n"),
             'last_seen_at' => now(),
         ]);
 
+        $temuan = collect($reasons)
+            ->map(fn (array $r) => ['jenis' => self::INJECTION_LABELS[$r['code']] ?? $r['code'], 'detail' => (string) $r['detail']])
+            ->take(20)
+            ->all();
+
         $incident = $this->openInjectionIncident($website);
-        $raised = $incident === null;
-        $incident ??= $this->raiseInjection($website, $temuan);
+
+        if ($incident) {
+            $this->joinInjectionIncident($incident, $snapshot->url, $temuan);
+        } else {
+            $incident = $this->raiseInjection($website, $snapshot->url, $temuan);
+        }
 
         if ($finding && $finding->incident_id !== $incident->id) {
             $finding->update(['incident_id' => $incident->id]);
         }
 
-        return $raised;
+        return $finding;
     }
 
     /**
@@ -232,6 +269,11 @@ class DefacementMonitor
                 return false;
             }
 
+            // Injection: $contentHash is the risk_hash the operator saw (TOCTOU guard).
+            if ($finding->kind === 'injection' && ! $this->absorbPendingRisk($finding, $contentHash)) {
+                return false;
+            }
+
             $snapshot = $finding->kind === 'content' ? $finding->snapshot()->lockForUpdate()->first() : null;
 
             if ($snapshot && ($contentHash === null || ! hash_equals((string) $snapshot->content_hash, $contentHash))) {
@@ -288,6 +330,34 @@ class DefacementMonitor
         }
 
         $this->settle($website);
+    }
+
+    /** The risk profile frozen as "pending" becomes the page's risk baseline. */
+    /**
+     * Refused (false) when the page's risk profile moved since the operator looked
+     * ($riskHash differs), so code added in between is never absorbed unseen.
+     */
+    protected function absorbPendingRisk(DefacementFinding $finding, ?string $riskHash): bool
+    {
+        $snapshot = $finding->page_snapshot_id
+            ? PageSnapshot::query()->lockForUpdate()->find($finding->page_snapshot_id, ['id', 'risk_hash', 'risk_profile'])
+            : null;
+
+        if (! $snapshot) {
+            return true;
+        }
+
+        if ($snapshot->risk_hash !== null && ($riskHash === null || ! hash_equals($snapshot->risk_hash, $riskHash))) {
+            return false;
+        }
+
+        $pending = $snapshot->risk_profile['pending'] ?? null;
+
+        if (is_array($pending) && is_array($pending['items'] ?? null)) {
+            $snapshot->update(['risk_profile' => ['items' => $pending['items'], 'stats' => (array) ($pending['stats'] ?? [])]]);
+        }
+
+        return true;
     }
 
     /**
@@ -347,6 +417,30 @@ class DefacementMonitor
         return $details($a) === $details($b);
     }
 
+    /**
+     * Another page joins the open injection incident: its URL and lines are added quietly.
+     *
+     * @param  array<int, array{jenis: string, detail: string}>  $temuan
+     */
+    protected function joinInjectionIncident(Incident $incident, string $url, array $temuan): void
+    {
+        $meta = (array) $incident->meta;
+        $urls = (array) ($meta['urls'] ?? []);
+
+        if (in_array($url, $urls, true)) {
+            return;
+        }
+
+        $urls = array_slice([...$urls, $url], 0, 10);
+        $meta['urls'] = $urls;
+        $meta['temuan'] = collect([...(array) ($meta['temuan'] ?? []), ...$temuan])->unique(fn (array $t) => ($t['jenis'] ?? '').'|'.($t['detail'] ?? ''))->take(20)->values()->all();
+
+        $incident->update([
+            'meta' => $meta,
+            'description' => 'Kode yang tidak dikenali di '.count($urls).' halaman: '.implode(', ', array_slice($urls, 0, 3)).(count($urls) > 3 ? ' dan lainnya' : ''),
+        ]);
+    }
+
     protected function openInjectionIncident(Website $website): ?Incident
     {
         return $website->incidents()
@@ -359,7 +453,7 @@ class DefacementMonitor
     /**
      * @param  array<int, array{jenis: string, detail: string}>  $temuan
      */
-    protected function raiseInjection(Website $website, array $temuan): Incident
+    protected function raiseInjection(Website $website, string $url, array $temuan): Incident
     {
         $summary = collect($temuan)
             ->map(fn (array $finding) => "{$finding['jenis']}: {$finding['detail']}")
@@ -372,8 +466,8 @@ class DefacementMonitor
             // Not critical: a hidden iframe is sometimes a legitimate widget.
             'severity' => 'warning',
             'title' => "Kode asing terdeteksi di {$website->name}",
-            'description' => 'Halaman depan memuat kode yang tidak dikenali: '.$summary,
-            'meta' => ['reason' => 'foreign_script', 'temuan' => $temuan],
+            'description' => "Halaman {$url} memuat kode yang tidak dikenali: ".$summary,
+            'meta' => ['reason' => 'foreign_script', 'urls' => [$url], 'temuan' => $temuan],
             'status' => 'open',
             'detected_at' => now(),
         ]);

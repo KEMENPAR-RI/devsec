@@ -9,8 +9,18 @@
         'http_410' => 'Halaman merespons HTTP 410 (sudah dihapus).',
         'not_reached' => 'Tidak terjangkau crawl lengkap beberapa kali berturut-turut.',
     ];
-    $kindLabels = ['text' => 'Teks', 'element' => 'Non-teks', 'mixed' => 'Teks + non-teks'];
-    $hasFilter = $site !== '' || $type !== '' || $kind !== '' || $search !== '' || $to !== '';
+    $kindLabels = ['text' => 'Teks', 'element' => 'Non-teks', 'mixed' => 'Teks + non-teks', 'injection' => 'Injeksi'];
+    $severityOptions = [
+        'important' => 'Peringatan & kritis',
+        'critical' => 'Kritis saja',
+        'warning' => 'Peringatan saja',
+        'info' => 'Info',
+        'none' => 'Tanpa risiko',
+        'legacy' => 'Lama (belum dinilai)',
+        'all' => 'Semua tingkat',
+    ];
+    $onlyImportant = ! in_array($severity, ['all', 'critical', 'warning', 'info', 'none', 'legacy'], true);
+    $hasFilter = $site !== '' || $type !== '' || $kind !== '' || $search !== '' || $to !== '' || ! $onlyImportant;
 @endphp
 
 <div class="mx-auto flex max-w-7xl flex-col gap-6">
@@ -24,7 +34,7 @@
             <div class="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
                 <x-confirm-dialog
                     title="Hapus riwayat sesuai filter?"
-                    message="Semua riwayat perubahan yang cocok dengan filter aktif (situs, tanggal, tipe, URL) akan dihapus permanen. Snapshot halaman tidak ikut terhapus."
+                    message="Semua riwayat perubahan yang cocok dengan filter aktif (situs, tanggal, tipe, tingkat risiko, URL) akan dihapus permanen. Snapshot halaman tidak ikut terhapus."
                     confirm-text="Ya, Hapus"
                     variant="danger"
                     target="deleteFiltered"
@@ -44,12 +54,31 @@
     <x-list-card
         :is-empty="$changes->isEmpty()"
         empty-icon="phosphor-clock-clockwise"
-        :empty-title="$hasFilter ? 'Tidak ada perubahan yang cocok' : 'Belum ada perubahan konten'"
-        :empty-message="$hasFilter ? 'Coba longgarkan filter situs, tanggal, atau tipe.' : 'Perubahan akan tercatat mulai crawl kedua - crawl pertama tiap situs hanya merekam kondisi awal.'"
+        :empty-title="$hasFilter ? 'Tidak ada perubahan yang cocok' : 'Tidak ada perubahan berisiko'"
+        :empty-message="$hasFilter ? 'Coba longgarkan filter situs, tanggal, tipe, atau tingkat risiko.' : 'Daftar ini hanya menampilkan tingkat peringatan dan kritis. Perubahan berisiko rendah dan event lama tetap tersimpan.'"
     >
+        @if ($onlyImportant)
+            <x-slot:emptyAction>
+                <button type="button" wire:click="$set('severity', 'all')" class="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                    <x-phosphor-list-bullets class="h-3.5 w-3.5" />
+                    Tampilkan semua tingkat
+                </button>
+            </x-slot:emptyAction>
+        @endif
+
         <x-slot:toolbar>
             <x-search-input model="search" placeholder="Cari URL halaman..." class="sm:max-w-xs" />
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                <label class="sr-only" for="filter-severity">Tingkat risiko</label>
+                <select id="filter-severity" wire:model.live="severity" @class([
+                    'rounded-lg border px-3 py-2 text-sm font-medium focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30',
+                    'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300' => $onlyImportant,
+                    'border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200' => ! $onlyImportant,
+                ])>
+                    @foreach ($severityOptions as $value => $optionLabel)
+                        <option value="{{ $value }}">{{ $optionLabel }}</option>
+                    @endforeach
+                </select>
                 <label class="sr-only" for="filter-site">Situs</label>
                 <select id="filter-site" wire:model.live="site" class="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
                     <option value="">Semua Situs</option>
@@ -69,6 +98,7 @@
                     <option value="">Semua Jenis</option>
                     <option value="text">Teks</option>
                     <option value="element">Non-teks</option>
+                    <option value="injection">Injeksi</option>
                 </select>
                 <div class="flex items-center gap-1.5">
                     <label class="sr-only" for="filter-from">Dari tanggal</label>
@@ -78,14 +108,14 @@
                     <input id="filter-to" type="date" wire:model.live="to" class="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 @error('to') border-red-400 @enderror">
                 </div>
             </div>
-            @if ($errors->hasAny(['site', 'type', 'kind', 'from', 'to', 'search']))
+            @if ($errors->hasAny(['site', 'type', 'kind', 'severity', 'from', 'to', 'search']))
                 <p class="w-full text-xs text-red-600 dark:text-red-400">
-                    {{ $errors->first('from') ?: ($errors->first('to') ?: ($errors->first('site') ?: ($errors->first('type') ?: ($errors->first('kind') ?: $errors->first('search'))))) }}
+                    {{ $errors->first('from') ?: ($errors->first('to') ?: ($errors->first('site') ?: ($errors->first('type') ?: ($errors->first('kind') ?: ($errors->first('severity') ?: $errors->first('search')))))) }}
                 </p>
             @endif
         </x-slot:toolbar>
 
-        <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="search, site, type, kind, from, to, gotoPage, nextPage, previousPage">
+        <div class="divide-y divide-zinc-100 transition-opacity dark:divide-zinc-800" wire:loading.class="opacity-40" wire:target="search, site, type, kind, severity, from, to, gotoPage, nextPage, previousPage">
             @foreach ($changes as $change)
                 @php
                     $meta = $typeLabels[$change->type] ?? $typeLabels['changed'];
@@ -94,12 +124,19 @@
                     $added = $change->added ?? [];
                     $removed = $change->removed ?? [];
                     $metaChanges = $change->meta_changes ?? [];
+                    $signals = collect(is_array($change->risk_signals) ? $change->risk_signals : [])->filter(fn ($s) => is_array($s))->sortByDesc(fn ($s) => (int) ($s['weight'] ?? 0));
                 @endphp
 
-                <section class="px-5 py-4" wire:key="perubahan-{{ $change->uuid }}">
+                <section @class([
+                    'px-5 py-4',
+                    'border-l-2 border-red-500' => $change->severity === 'critical',
+                    'border-l-2 border-amber-400' => $change->severity === 'warning',
+                    'border-l-2 border-transparent' => ! in_array($change->severity, ['critical', 'warning'], true),
+                ]) wire:key="perubahan-{{ $change->uuid }}">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
                         <div class="min-w-0 flex-1">
                             <div class="flex flex-wrap items-center gap-2">
+                                <x-severity-badge :severity="$change->severity" :score="$change->risk_score" />
                                 <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $meta['class'] }}">
                                     <x-dynamic-component :component="$meta['icon']" class="h-3.5 w-3.5" />
                                     {{ $meta['label'] }}
@@ -136,6 +173,25 @@
                                 </a>
                             @else
                                 <p class="mt-1.5 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{{ $change->url }}</p>
+                            @endif
+
+                            @if ($signals->isNotEmpty())
+                                <ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Sinyal risiko">
+                                    @foreach ($signals->take(3) as $signal)
+                                        <li class="inline-flex max-w-full items-center gap-1 rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                            @if (! empty($signal['hidden']))
+                                                <x-phosphor-eye-slash class="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" aria-label="tersembunyi" />
+                                            @endif
+                                            <x-risk-signal-label :code="$signal['code'] ?? null" class="font-medium" />
+                                            @if (filled($signal['detail'] ?? null))
+                                                <span class="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{{ \Illuminate\Support\Str::limit((string) $signal['detail'], 60) }}</span>
+                                            @endif
+                                        </li>
+                                    @endforeach
+                                    @if ($signals->count() > 3)
+                                        <li class="px-1 py-0.5 text-xs text-zinc-400">+{{ $signals->count() - 3 }} sinyal lain</li>
+                                    @endif
+                                </ul>
                             @endif
 
                             {{-- When it happened: the change landed somewhere between the two crawls. --}}

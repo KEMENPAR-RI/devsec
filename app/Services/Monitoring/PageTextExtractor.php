@@ -28,7 +28,7 @@ class PageTextExtractor
 
     protected const A11Y_CLASSES = ['sr-only', 'visually-hidden', 'screen-reader-text'];
 
-    /** @var array<string, true> classes hidden by a simple rule in the page's own <style> */
+    /** @var array<string, string> class => hide method, from a simple rule in the page's own <style> */
     protected array $hiddenClasses = [];
 
     /** @var WeakReference<DOMDocument>|null the document was read from */
@@ -70,6 +70,9 @@ class PageTextExtractor
     /** Set only for the duration of extractAt(). */
     protected ?string $baseUrl = null;
 
+    /** Hiding declarations shared by inline styles and <style> class rules (whitespace removed). */
+    protected const STYLE_HIDES = '/display:none|visibility:hidden|font-size:0(?:px|em|rem|pt|%)?(?=;|!|$|\})|opacity:0(?:\.0+)?(?=;|!|$|\})|clip:rect\(0|(?<![\w-])(?:left|top|text-indent|margin-left):-\d{3,}/';
+
     /** Inline JS that writes markup - judol injected this way never reaches the DOM text. */
     protected const SCRIPT_WRITERS = '/document\.write|innerHTML|outerHTML|insertAdjacentHTML/i';
 
@@ -85,6 +88,7 @@ class PageTextExtractor
         $title = '';
         $description = '';
         $elements = [];
+        $risk = null;
 
         if ($dom) {
             $this->loadHiddenClasses($dom);
@@ -123,6 +127,7 @@ class PageTextExtractor
             }
 
             $elements = $this->elements($dom, $this->baseUrl ?? $url);
+            $risk = $this->profile($dom, $html, $this->baseUrl ?? $url);
         }
 
         if ($url !== null) {
@@ -145,7 +150,24 @@ class PageTextExtractor
             count($visible),
             $this->complete,
             $elements,
+            $risk ?? null,
         );
+    }
+
+    /**
+     * Structural risk profile from the same DOM (null only when disabled). A body
+     * over max_html_bytes is still profiled - the DOM already exists and the
+     * profiler is capped - but partially, so padding cannot hide an injection.
+     */
+    protected function profile(DOMDocument $dom, string $html, ?string $base): ?InjectionProfile
+    {
+        if (! config('defacement.injection.enabled', true)) {
+            return null;
+        }
+
+        $oversize = strlen($html) > (int) config('defacement.injection.max_html_bytes', 1572864) ? strlen($html) : null;
+
+        return app(InjectionProfiler::class)->profile($dom, $base, $this, $this->complete, $oversize);
     }
 
     /** extract(), with relative element URLs resolved against $baseUrl (the final URL after redirects). */
@@ -292,7 +314,7 @@ class PageTextExtractor
         return is_string($host) && $host !== '' ? $this->domainOf($host) : null;
     }
 
-    protected function domainOf(string $host): string
+    public function domainOf(string $host): string
     {
         $host = Str::lower(Str::before($host, ':'));
 
@@ -574,14 +596,29 @@ class PageTextExtractor
     /** 'css' when hidden by attribute/style/class rule, 'a11y' for screen-reader-only classes. */
     protected function selfHidden(DOMElement $element): ?string
     {
+        $method = $this->hideMethod($element);
+
+        return $method === null ? null : ($method === 'a11y' ? 'a11y' : 'css');
+    }
+
+    /**
+     * How the element itself (ancestors not considered) is hidden: attr, display,
+     * visibility, fontsize0, opacity, offscreen, size0, color=bg, a11y - or null.
+     */
+    public function hideMethod(DOMElement $element): ?string
+    {
+        if ($element->ownerDocument) {
+            $this->loadHiddenClasses($element->ownerDocument);
+        }
+
         if ($element->hasAttribute('hidden')) {
-            return 'css';
+            return 'attr';
         }
 
         $style = Str::lower(preg_replace('/\s+/', '', $element->getAttribute('style')) ?? '');
 
-        if ($style !== '' && $this->styleHides($style)) {
-            return 'css';
+        if ($style !== '' && ($method = $this->styleHideMethod($style)) !== null) {
+            return $method;
         }
 
         $class = trim($element->getAttribute('class'));
@@ -594,7 +631,7 @@ class PageTextExtractor
 
         foreach (preg_split('/\s+/', Str::lower($class)) as $name) {
             if (isset($this->hiddenClasses[$name])) {
-                return 'css';
+                return $this->hiddenClasses[$name];
             }
 
             $a11y = $a11y || in_array($name, self::A11Y_CLASSES, true);
@@ -603,19 +640,27 @@ class PageTextExtractor
         return $a11y ? 'a11y' : null;
     }
 
-    protected function styleHides(string $style): bool
+    /** Hide method of a whitespace-free, lowercased declaration list; null when visible. */
+    protected function styleHideMethod(string $style): ?string
     {
-        if (preg_match('/display:none|visibility:hidden|font-size:0(?:px|em|rem|pt|%)?(?:;|!|$)|opacity:0(?:\.0+)?(?:;|!|$)|(?:^|;)(?:left|top|text-indent|margin-left):-\d{3,}/', $style)) {
-            return true;
+        if (preg_match(self::STYLE_HIDES, $style, $m)) {
+            return match (true) {
+                str_starts_with($m[0], 'display') => 'display',
+                str_starts_with($m[0], 'visibility') => 'visibility',
+                str_starts_with($m[0], 'font-size') => 'fontsize0',
+                str_starts_with($m[0], 'opacity') => 'opacity',
+                str_starts_with($m[0], 'clip') => 'clip',
+                default => 'offscreen',
+            };
         }
 
         if (preg_match('/(?:^|;)(?:height|width):0(?:px)?(?:;|!|$)/', $style) && str_contains($style, 'overflow:hidden')) {
-            return true;
+            return 'size0';
         }
 
         return preg_match('/(?:^|;)color:([^;!]+)/', $style, $color)
             && preg_match('/(?:^|;)background(?:-color)?:([^;!]+)/', $style, $background)
-            && $color[1] === $background[1];
+            && $color[1] === $background[1] ? 'color=bg' : null;
     }
 
     protected function combine(?string $parent, ?string $own): ?string
@@ -637,17 +682,18 @@ class PageTextExtractor
         $this->hiddenClasses = [];
 
         foreach ($dom->getElementsByTagName('style') as $style) {
-            if (preg_match_all('/\.([\w-]+)\s*\{[^}]*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i', $style->textContent, $m) === false) {
+            if (preg_match_all('/\.([\w-]+)\s*\{([^}]*)\}/', $style->textContent, $m, PREG_SET_ORDER) === false) {
                 $this->complete = false;
 
                 continue;
             }
 
-            foreach ($m[1] as $name) {
+            foreach ($m as [, $name, $body]) {
                 $name = Str::lower($name);
+                $method = $this->styleHideMethod(Str::lower(preg_replace('/\s+/', '', $body) ?? ''));
 
-                if (! in_array($name, self::A11Y_CLASSES, true)) {
-                    $this->hiddenClasses[$name] = true;
+                if ($method !== null && ! in_array($name, self::A11Y_CLASSES, true)) {
+                    $this->hiddenClasses[$name] ??= $method;
                 }
             }
         }
