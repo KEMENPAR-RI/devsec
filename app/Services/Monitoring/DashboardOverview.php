@@ -35,14 +35,6 @@ class DashboardOverview
     /** Upper bound on a background refresh's lock, so a crashed refresh can't block the key. */
     protected const REFRESH_LOCK_SECONDS = 30;
 
-    /** Live list order: status group, then load level, then name. */
-    protected const SORT_GROUP = [
-        'attack' => 0, 'down' => 1, 'offline' => 2, 'internal' => 3,
-        'unknown' => 4, 'maintenance' => 5, 'up' => 6,
-    ];
-
-    protected const LOAD_SORT = ['heavy' => 0, 'moderate' => 1, 'light' => 2, 'unknown' => 3];
-
     public static function normalizeRange(?string $range): string
     {
         return isset(self::RANGES[$range]) ? $range : self::DEFAULT_RANGE;
@@ -55,7 +47,8 @@ class DashboardOverview
      */
     public function sites(): array
     {
-        $websites = Website::orderBy('name')->get();
+        // Same order as the admin list (Website::scopeOrderForList()); liveSites() keeps it.
+        $websites = Website::orderForList()->get();
 
         $offline = Website::offlineIds($websites);
         $attacked = Website::attackedIds($websites);
@@ -127,7 +120,7 @@ class DashboardOverview
     {
         $history = WebsiteCheck::historyFor($websites->modelKeys(), self::HISTORY_SIZE);
 
-        $rows = $websites->map(function (Website $site) use ($statuses, $loadLevels, $history) {
+        return $websites->map(function (Website $site) use ($statuses, $loadLevels, $history) {
             $key = $statuses[$site->id] ?? 'unknown';
 
             return [
@@ -141,18 +134,6 @@ class DashboardOverview
                 'last_checked_at' => $site->last_checked_at,
             ];
         })->all();
-
-        // Looked up by uuid so the cached row shape stays unchanged.
-        $priority = $websites->where('is_priority', true)->pluck('uuid')->flip()->all();
-        $sortKey = fn (array $row) => [
-            ! isset($priority[$row['uuid']]),
-            self::SORT_GROUP[$row['status_key']] ?? self::SORT_GROUP['unknown'],
-            self::LOAD_SORT[$row['load_level']] ?? self::LOAD_SORT['unknown'],
-            mb_strtolower($row['name']),
-        ];
-        usort($rows, fn (array $a, array $b) => $sortKey($a) <=> $sortKey($b));
-
-        return $rows;
     }
 
     /**

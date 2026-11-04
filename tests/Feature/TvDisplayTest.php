@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Livewire\Settings\Index as SettingsIndex;
 use App\Livewire\Tv\Display;
 use App\Models\Incident;
+use App\Models\MaintenanceWindow;
 use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
@@ -357,42 +358,75 @@ class TvDisplayTest extends TestCase
 
     public function test_priority_sites_come_first_without_exposing_the_flag(): void
     {
+        $this->travel(-1)->hours();
+        $this->siteWithCheck('YYY Priority Down', 'down')->update(['is_priority' => true]);
+        $this->travelBack();
         $this->siteWithCheck('AAA Online', 'up');
         $this->siteWithCheck('BBB Down', 'down');
         $this->siteWithCheck('ZZZ Priority Online', 'up')->update(['is_priority' => true]);
-        $this->siteWithCheck('YYY Priority Down', 'down')->update(['is_priority' => true]);
 
         $cards = app(TvBoard::class)->build()['kartu'];
 
-        // Priority outranks status; status order still applies within each half.
-        $this->assertSame(['YYY Priority Down', 'ZZZ Priority Online', 'BBB Down', 'AAA Online'], array_column($cards, 'name'));
+        // Down outranks priority and is newest first regardless of priority; then priority, then the rest.
+        $this->assertSame(['BBB Down', 'YYY Priority Down', 'ZZZ Priority Online', 'AAA Online'], array_column($cards, 'name'));
         $this->assertArrayNotHasKey('priority', $cards[0]);
     }
 
-    public function test_public_page_renders_priority_sites_first(): void
+    public function test_public_page_renders_down_then_priority_then_normal_sites(): void
     {
-        $this->siteWithCheck('AAA Down', 'down');
+        $this->siteWithCheck('AAA Online', 'up');
         $this->siteWithCheck('ZZZ Priority Online', 'up')->update(['is_priority' => true]);
+        $this->siteWithCheck('MMM Down', 'down');
 
-        $this->get(route('tv'))->assertSeeInOrder(['ZZZ Priority Online', 'AAA Down']);
+        $this->get(route('tv'))->assertSeeInOrder(['MMM Down', 'ZZZ Priority Online', 'AAA Online']);
     }
 
-    public function test_priority_half_keeps_newest_problem_first_then_online_by_name(): void
+    public function test_down_non_priority_site_comes_before_priority_up_before_normal(): void
+    {
+        $this->siteWithCheck('AAA Online', 'up');
+        $this->siteWithCheck('ZZZ Priority Online', 'up')->update(['is_priority' => true]);
+        $this->siteWithCheck('MMM Down', 'down');
+
+        $this->assertSame(
+            ['MMM Down', 'ZZZ Priority Online', 'AAA Online'],
+            array_column(app(TvBoard::class)->build()['kartu'], 'name'),
+        );
+    }
+
+    public function test_every_group_is_newest_first_and_down_ignores_priority(): void
     {
         $this->travel(-2)->hours();
         $this->siteWithCheck('P Down Old', 'down')->update(['is_priority' => true]);
+        $this->siteWithCheck('P Online Old', 'up')->update(['is_priority' => true]);
+        $this->siteWithCheck('N Online Old', 'up');
         $this->travelBack();
-        $this->siteWithCheck('P Down New', 'down')->update(['is_priority' => true]);
-        $this->siteWithCheck('P Online Zed', 'up')->update(['is_priority' => true]);
-        $this->siteWithCheck('P Online Alpha', 'up')->update(['is_priority' => true]);
-        $this->siteWithCheck('N Down', 'down');
-        $this->siteWithCheck('N Online', 'up');
+        $this->siteWithCheck('N Down New', 'down');
+        $this->siteWithCheck('P Online New', 'up')->update(['is_priority' => true]);
+        $this->siteWithCheck('N Online New', 'up');
 
         $cards = app(TvBoard::class)->build()['kartu'];
 
         $this->assertSame(
-            ['P Down New', 'P Down Old', 'P Online Alpha', 'P Online Zed', 'N Down', 'N Online'],
+            ['N Down New', 'P Down Old', 'P Online New', 'P Online Old', 'N Online New', 'N Online Old'],
             array_column($cards, 'name'),
+        );
+        $this->assertArrayNotHasKey('sort_created', $cards[0]);
+    }
+
+    public function test_down_site_under_maintenance_is_not_in_the_top_group(): void
+    {
+        $this->siteWithCheck('AAA Online', 'up')->update(['is_priority' => true]);
+        $site = $this->siteWithCheck('MMM Down Maintenance', 'down');
+        MaintenanceWindow::create([
+            'website_id' => $site->id,
+            'reason' => 'Migrasi server',
+            'starts_at' => now()->subHour(),
+            'ends_at' => now()->addHour(),
+        ]);
+
+        $this->assertSame(
+            ['AAA Online', 'MMM Down Maintenance'],
+            array_column(app(TvBoard::class)->build()['kartu'], 'name'),
         );
     }
 
@@ -409,6 +443,74 @@ class TvDisplayTest extends TestCase
             $this->assertArrayNotHasKey('is_priority', $card);
         }
         $this->assertStringNotContainsString('priority', json_encode($board));
+    }
+
+    public function test_problem_group_lists_the_newest_incident_first_regardless_of_creation(): void
+    {
+        $this->travel(-2)->hours();
+        $older = $this->siteWithCheck('Down Dibuat Lama', 'down');
+        $this->travelBack();
+        $newer = $this->siteWithCheck('Down Dibuat Baru', 'down');
+        foreach ([[$older, now()->subMinutes(5)], [$newer, now()->subHours(3)]] as [$site, $at]) {
+            Incident::create([
+                'website_id' => $site->id, 'type' => 'downtime', 'severity' => 'critical',
+                'title' => 'x', 'status' => 'open', 'detected_at' => $at,
+            ]);
+        }
+
+        $this->assertSame(
+            ['Down Dibuat Lama', 'Down Dibuat Baru'],
+            array_column(app(TvBoard::class)->build()['kartu'], 'name'),
+        );
+    }
+
+    public function test_rest_group_is_priority_first_then_online_internal_and_dead(): void
+    {
+        $this->travel(-1)->hours();
+        $this->siteWithCheck('N Online', 'up');
+        $this->siteWithCheck('P Online', 'up')->update(['is_priority' => true]);
+        $this->travelBack();
+        $this->siteWithCheck('P Unknown', 'unknown')->update(['is_priority' => true]);
+        $this->siteWithCheck('N Internal', 'down')->update(['is_internal_only' => true]);
+        $this->siteWithCheck('N Unknown', 'unknown');
+
+        $this->assertSame(
+            ['P Online', 'P Unknown', 'N Online', 'N Internal', 'N Unknown'],
+            array_column(app(TvBoard::class)->build()['kartu'], 'name'),
+        );
+    }
+
+    public function test_public_html_never_contains_the_priority_or_sort_fields(): void
+    {
+        $this->siteWithCheck('P Down', 'down')->update(['is_priority' => true]);
+        $this->siteWithCheck('P Online', 'up')->update(['is_priority' => true]);
+
+        $this->get(route('tv'))->assertOk()
+            ->assertDontSee('is_priority', false)
+            ->assertDontSee('sort_created', false)
+            ->assertDontSee('"priority"', false)
+            ->assertDontSee('&quot;priority&quot;', false);
+    }
+
+    public function test_a_down_site_stays_on_the_first_slide_and_order_carries_across_slides(): void
+    {
+        $this->travel(-10)->days();
+        $this->siteWithCheck('Down Tertua', 'down');
+        $this->travelBack();
+        foreach (range(1, 17) as $i) {
+            $this->travel(-$i)->minutes();
+            $this->siteWithCheck(sprintf('Online %02d', $i), 'up');
+            $this->travelBack();
+        }
+
+        $html = $this->get(route('tv'))->assertOk()->getContent();
+        $secondSlide = strpos($html, 'wire:key="tv-slide-1"');
+
+        $this->assertNotFalse($secondSlide);
+        $this->assertLessThan($secondSlide, strpos($html, 'Down Tertua'));
+        $this->assertLessThan($secondSlide, strpos($html, 'Online 15'));
+        $this->assertGreaterThan($secondSlide, strpos($html, 'Online 16'));
+        $this->assertGreaterThan($secondSlide, strpos($html, 'Online 17'));
     }
 
     public function test_all_secondary_sites_keep_the_old_status_order(): void

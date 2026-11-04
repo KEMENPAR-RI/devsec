@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Livewire\Dashboard;
 use App\Models\Incident;
+use App\Models\MaintenanceWindow;
 use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
@@ -189,55 +190,89 @@ class DashboardOverviewTest extends TestCase
 
     // --- Live sites --------------------------------------------------------
 
-    public function test_live_sites_list_attacks_first_then_down_then_dark_ones_then_the_rest(): void
+    public function test_live_sites_list_down_sites_newest_first_then_the_rest(): void
     {
-        Website::factory()->create(['name' => 'Alpha', 'last_status' => 'up']);
-        $this->downWith('Bravo');
-        Website::factory()->create(['name' => 'Charlie', 'last_status' => 'unknown']);
-        $this->downWith('Delta', ['meta' => ['likely_cause' => 'Dugaan DDoS', 'cause_is_overload' => true]]);
-        Website::factory()->create(['name' => 'echo', 'last_status' => 'up']);
+        Website::factory()->create(['name' => 'Alpha', 'last_status' => 'up', 'created_at' => now()->subDays(1)]);
+        $this->downWith('Bravo', [], ['created_at' => now()->subDays(2)]);
+        Website::factory()->create(['name' => 'Charlie', 'last_status' => 'unknown', 'created_at' => now()->subDays(3)]);
+        $this->downWith('Delta', ['meta' => ['likely_cause' => 'Dugaan DDoS', 'cause_is_overload' => true]], ['created_at' => now()->subDays(4)]);
+        Website::factory()->create(['name' => 'echo', 'last_status' => 'up', 'created_at' => now()]);
 
         $sites = $this->overview()->sites();
         $rows = $this->overview()->liveSites(
             $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
         );
 
-        $this->assertSame(['Delta', 'Bravo', 'Charlie', 'Alpha', 'echo'], array_column($rows, 'name'));
-        $this->assertSame(['attack', 'down', 'unknown', 'up', 'up'], array_column($rows, 'status_key'));
+        $this->assertSame(['Bravo', 'Delta', 'echo', 'Alpha', 'Charlie'], array_column($rows, 'name'));
+        $this->assertSame(['down', 'attack', 'up', 'up', 'unknown'], array_column($rows, 'status_key'));
     }
 
-    public function test_live_sites_put_priority_sites_first(): void
+    public function test_live_sites_put_down_then_priority_then_the_rest(): void
     {
-        $this->downWith('Bravo');
-        Website::factory()->create(['name' => 'Zulu', 'last_status' => 'up', 'is_priority' => true]);
+        Website::factory()->create(['name' => 'Xray', 'last_status' => 'up', 'created_at' => now()]);
+        Website::factory()->create(['name' => 'Zulu', 'last_status' => 'up', 'is_priority' => true, 'created_at' => now()->subDays(2)]);
+        $this->downWith('Bravo', [], ['created_at' => now()->subDays(3)]);
 
         $sites = $this->overview()->sites();
         $rows = $this->overview()->liveSites(
             $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
         );
 
-        $this->assertSame(['Zulu', 'Bravo'], array_column($rows, 'name'));
+        $this->assertSame(['Bravo', 'Zulu', 'Xray'], array_column($rows, 'name'));
     }
 
-    public function test_live_sites_keep_status_order_within_priority_and_secondary_groups(): void
+    public function test_live_sites_down_group_ignores_priority(): void
     {
-        Website::factory()->create(['name' => 'Alpha', 'last_status' => 'up', 'is_priority' => true]);
-        $this->downWith('Yankee', [], ['is_priority' => true]);
-        $this->downWith('Bravo');
-        Website::factory()->create(['name' => 'Charlie', 'last_status' => 'up']);
+        Website::factory()->create(['name' => 'Alpha', 'last_status' => 'up', 'is_priority' => true, 'created_at' => now()->subDays(3)]);
+        $this->downWith('Yankee', [], ['is_priority' => true, 'created_at' => now()->subDays(2)]);
+        $this->downWith('Bravo', [], ['created_at' => now()->subDay()]);
+        Website::factory()->create(['name' => 'Charlie', 'last_status' => 'up', 'created_at' => now()]);
 
         $sites = $this->overview()->sites();
         $rows = $this->overview()->liveSites(
             $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
         );
 
-        $this->assertSame(['Yankee', 'Alpha', 'Bravo', 'Charlie'], array_column($rows, 'name'));
+        $this->assertSame(['Bravo', 'Yankee', 'Alpha', 'Charlie'], array_column($rows, 'name'));
         foreach ($rows as $row) {
             $this->assertArrayNotHasKey('is_priority', $row);
         }
     }
 
-    public function test_live_sites_break_ties_within_a_status_by_load_level_before_name(): void
+    public function test_live_sites_list_the_most_recently_down_site_first(): void
+    {
+        $this->downWith('Lama', ['detected_at' => now()->subHours(3)], ['created_at' => now()]);
+        $this->downWith('Baru', ['detected_at' => now()->subMinutes(5)], ['created_at' => now()->subDays(5)]);
+
+        $sites = $this->overview()->sites();
+        $rows = $this->overview()->liveSites(
+            $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
+        );
+
+        $this->assertSame(['Baru', 'Lama'], array_column($rows, 'name'));
+    }
+
+    public function test_live_sites_do_not_lead_with_a_down_site_under_maintenance(): void
+    {
+        Website::factory()->create(['name' => 'Alpha', 'last_status' => 'up', 'is_priority' => true, 'created_at' => now()->subDays(3)]);
+        $maintained = $this->downWith('Bravo', [], ['created_at' => now()]);
+        MaintenanceWindow::create([
+            'website_id' => $maintained->id,
+            'reason' => 'Migrasi server',
+            'starts_at' => now()->subHour(),
+            'ends_at' => now()->addHour(),
+        ]);
+
+        $sites = $this->overview()->sites();
+        $rows = $this->overview()->liveSites(
+            $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
+        );
+
+        $this->assertSame(['Alpha', 'Bravo'], array_column($rows, 'name'));
+        $this->assertSame('maintenance', $rows[1]['status_key']);
+    }
+
+    public function test_live_sites_report_each_load_level(): void
     {
         $light = Website::factory()->create(['name' => 'Aaa light', 'last_status' => 'up']);
         $heavy = Website::factory()->create(['name' => 'Zzz heavy', 'last_status' => 'up']);
@@ -256,8 +291,11 @@ class DashboardOverviewTest extends TestCase
             $sites['websites'], $sites['statuses'], Website::loadLevels($sites['websites']),
         );
 
-        $this->assertSame(['Zzz heavy', 'Aaa light', 'Bbb unchecked'], array_column($rows, 'name'));
-        $this->assertSame(['heavy', 'light', 'unknown'], array_column($rows, 'load_level'));
+        $levels = array_column($rows, 'load_level', 'name');
+
+        $this->assertSame('heavy', $levels['Zzz heavy']);
+        $this->assertSame('light', $levels['Aaa light']);
+        $this->assertSame('unknown', $levels['Bbb unchecked']);
     }
 
     public function test_checks_older_than_the_ranked_window_give_no_history_and_an_unknown_load_level(): void

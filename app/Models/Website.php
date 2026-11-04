@@ -156,6 +156,39 @@ class Website extends Model
     }
 
     /**
+     * Shared list order: down (not under maintenance), then priority, then the rest.
+     * Down group: most recently down first (open downtime incident, else last check, like TvBoard);
+     * other groups newest-added first; id as the pagination tie-breaker.
+     */
+    public function scopeOrderForList(Builder $query): Builder
+    {
+        $maintenance = MaintenanceWindow::query()->covering()
+            ->where(fn (Builder $q) => $q
+                ->whereColumn('maintenance_windows.website_id', $this->qualifyColumn('id'))
+                ->orWhereNull('maintenance_windows.website_id'))
+            ->toBase();
+        $downSince = Incident::query()
+            ->selectRaw('MAX(incidents.detected_at)')
+            ->whereColumn('incidents.website_id', $this->qualifyColumn('id'))
+            ->where('incidents.type', 'downtime')
+            ->where('incidents.status', 'open')
+            ->toBase();
+        $isDown = "{$this->qualifyColumn('last_status')} = 'down' AND NOT EXISTS ({$maintenance->toSql()})";
+
+        return $query
+            ->orderByRaw(
+                "CASE WHEN {$isDown} THEN 0 WHEN {$this->qualifyColumn('is_priority')} = 1 THEN 1 ELSE 2 END",
+                $maintenance->getBindings(),
+            )
+            ->orderByRaw(
+                "CASE WHEN {$isDown} THEN COALESCE(({$downSince->toSql()}), {$this->qualifyColumn('last_checked_at')}) END DESC",
+                [...$maintenance->getBindings(), ...$downSince->getBindings()],
+            )
+            ->orderByDesc($this->qualifyColumn('created_at'))
+            ->orderByDesc($this->qualifyColumn('id'));
+    }
+
+    /**
      * Whether this website's check interval has elapsed (or it has never been checked).
      *
      * A site down for a full day (isPausedForOffline()) is re-checked every

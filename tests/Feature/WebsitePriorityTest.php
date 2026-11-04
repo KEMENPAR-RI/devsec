@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Livewire\Websites\Index;
 use App\Models\AuditLog;
+use App\Models\Incident;
+use App\Models\MaintenanceWindow;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Website;
@@ -305,16 +307,109 @@ class WebsitePriorityTest extends TestCase
         $names = Livewire::actingAs($this->superadmin())->test(Index::class)
             ->viewData('websites')->pluck('name')->all();
 
+        // Down group is newest first only: priority does not reorder it.
         $this->assertSame([
-            'Penting Down',
             'Biasa Down Baru',
             'Biasa Down Lama',
+            'Penting Down',
             'Penting Up Baru',
             'Penting Up Lama',
             'Biasa Unknown',
             'Biasa Up Baru',
             'Biasa Up Lama',
         ], $names);
+    }
+
+    public function test_down_group_lists_the_most_recently_down_site_first(): void
+    {
+        $older = Website::factory()->create(['name' => 'Down Lama', 'last_status' => 'down', 'created_at' => now()]);
+        $recent = Website::factory()->create(['name' => 'Down Baru', 'last_status' => 'down', 'created_at' => now()->subDays(5)]);
+        Website::factory()->create(['name' => 'Penting Up', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->addMinute()]);
+        foreach ([[$older, now()->subHours(3)], [$recent, now()->subMinutes(5)]] as [$site, $at]) {
+            Incident::create([
+                'website_id' => $site->id, 'type' => 'downtime', 'severity' => 'critical',
+                'title' => 'x', 'status' => 'open', 'detected_at' => $at,
+            ]);
+        }
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Down Baru', 'Down Lama', 'Penting Up'], $names);
+    }
+
+    public function test_down_site_under_active_maintenance_is_not_in_the_down_group(): void
+    {
+        Website::factory()->create(['name' => 'Penting Up', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->subDays(3)]);
+        $maintained = Website::factory()->create(['name' => 'Biasa Down Pemeliharaan', 'last_status' => 'down', 'created_at' => now()->subDays(2)]);
+        Website::factory()->create(['name' => 'Biasa Down', 'last_status' => 'down', 'created_at' => now()->subDays(5)]);
+        Website::factory()->create(['name' => 'Biasa Up Baru', 'last_status' => 'up', 'created_at' => now()]);
+        MaintenanceWindow::create([
+            'website_id' => $maintained->id,
+            'reason' => 'Migrasi server',
+            'starts_at' => now()->subHour(),
+            'ends_at' => now()->addHour(),
+        ]);
+        // A finished window no longer exempts anything.
+        MaintenanceWindow::create([
+            'website_id' => null,
+            'reason' => 'Selesai',
+            'starts_at' => now()->subDays(2),
+            'ends_at' => now()->subDay(),
+        ]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Biasa Down', 'Penting Up', 'Biasa Up Baru', 'Biasa Down Pemeliharaan'], $names);
+    }
+
+    public function test_an_all_sites_maintenance_window_exempts_every_down_site(): void
+    {
+        Website::factory()->create(['name' => 'Biasa Down', 'last_status' => 'down', 'created_at' => now()->subDays(5)]);
+        Website::factory()->create(['name' => 'Penting Up', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->subDays(6)]);
+        MaintenanceWindow::create([
+            'website_id' => null,
+            'reason' => 'Migrasi server',
+            'starts_at' => now()->subHour(),
+            'ends_at' => now()->addHour(),
+        ]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Penting Up', 'Biasa Down'], $names);
+    }
+
+    public function test_down_sites_without_an_open_incident_fall_back_to_the_last_check_time(): void
+    {
+        Website::factory()->create(['name' => 'Down Dicek Lama', 'last_status' => 'down', 'last_checked_at' => now()->subHours(3), 'created_at' => now()]);
+        Website::factory()->create(['name' => 'Down Dicek Baru', 'last_status' => 'down', 'last_checked_at' => now()->subMinute(), 'created_at' => now()->subDays(5)]);
+        Website::factory()->create(['name' => 'Penting Up', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->addMinute()]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Down Dicek Baru', 'Down Dicek Lama', 'Penting Up'], $names);
+    }
+
+    public function test_a_resolved_incident_does_not_count_as_the_down_time(): void
+    {
+        $open = Website::factory()->create(['name' => 'Down Insiden Terbuka', 'last_status' => 'down', 'last_checked_at' => now()->subHours(5), 'created_at' => now()->subDays(5)]);
+        $resolved = Website::factory()->create(['name' => 'Down Insiden Selesai', 'last_status' => 'down', 'last_checked_at' => now()->subHours(4), 'created_at' => now()]);
+        Incident::create([
+            'website_id' => $open->id, 'type' => 'downtime', 'severity' => 'critical',
+            'title' => 'x', 'status' => 'open', 'detected_at' => now()->subHours(2),
+        ]);
+        Incident::create([
+            'website_id' => $resolved->id, 'type' => 'downtime', 'severity' => 'critical',
+            'title' => 'x', 'status' => 'resolved', 'detected_at' => now()->subMinute(), 'resolved_at' => now(),
+        ]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Down Insiden Terbuka', 'Down Insiden Selesai'], $names);
     }
 
     public function test_down_sites_lead_every_admin_page_order(): void

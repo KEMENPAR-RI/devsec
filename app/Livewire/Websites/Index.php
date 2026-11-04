@@ -589,11 +589,8 @@ class Index extends Component
         // Same filter "select all" uses, so the box can never tick a different set
         // of sites than the one on screen.
         $websites = $this->filteredQuery()
-            // Down sites first, then priority, then newest first: a freshly added site is the one being checked on.
-            ->orderByRaw("CASE WHEN last_status = 'down' THEN 0 ELSE 1 END")
-            ->orderByDesc('is_priority')
-            ->latest()
-            ->orderByDesc('id')
+            // See Website::scopeOrderForList().
+            ->orderForList()
             // Counted in the page query itself, so the row badges add no per-row queries.
             ->withCount([
                 'incidents as open_incidents_count' => fn ($q) => $q->open(),

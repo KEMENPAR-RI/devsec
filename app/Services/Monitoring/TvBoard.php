@@ -87,6 +87,8 @@ class TvBoard
                 'up_for' => $upSince ? $this->upFor(max(0, now()->timestamp - $upSince->timestamp)) : '',
                 'last_down_at' => $lastDown?->translatedFormat('d M Y, H:i') ?? 'Belum pernah',
                 'priority' => (bool) $site->is_priority,
+                // Sort-only keys, stripped below: newest-added first, like the admin list.
+                'sort_created' => [$site->created_at?->timestamp ?? 0, $site->id],
             ];
 
             if ($key === 'up') {
@@ -107,15 +109,15 @@ class TvBoard
         }
 
         usort($masalah, fn ($a, $b) => $b['occurred_at_ts'] <=> $a['occurred_at_ts']);
-        usort($online, fn ($a, $b) => strcmp($a['name'], $b['name']));
-        usort($internal, fn ($a, $b) => strcmp($a['name'], $b['name']));
+        usort($online, fn ($a, $b) => $b['sort_created'] <=> $a['sort_created']);
+        usort($internal, fn ($a, $b) => $b['sort_created'] <=> $a['sort_created']);
         usort($mati, fn ($a, $b) => $b['occurred_at_ts'] <=> $a['occurred_at_ts']);
 
-        // Priority sites first; status-group order (problems on top) is kept within each half.
-        $kartu = collect([$masalah, $online, $internal, $mati])->flatten(1)
-            ->partition('priority')->flatten(1)
+        // Down sites first (newest problem first, priority ignored), then priority, then the rest.
+        $kartu = collect($masalah)
+            ->concat(collect(array_merge($online, $internal, $mati))->partition('priority')->flatten(1))
             // The flag only drives ordering and is not exposed on the public board.
-            ->map(fn ($row) => Arr::except($row, 'priority'))->values()->all();
+            ->map(fn ($row) => Arr::except($row, ['priority', 'sort_created']))->values()->all();
 
         return [
             'diperbarui' => now()->translatedFormat('d M Y, H:i:s'),
