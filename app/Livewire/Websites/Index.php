@@ -589,7 +589,8 @@ class Index extends Component
         // Same filter "select all" uses, so the box can never tick a different set
         // of sites than the one on screen.
         $websites = $this->filteredQuery()
-            // Priority sites on top, then newest first: a freshly added site is the one being checked on.
+            // Down sites first, then priority, then newest first: a freshly added site is the one being checked on.
+            ->orderByRaw("CASE WHEN last_status = 'down' THEN 0 ELSE 1 END")
             ->orderByDesc('is_priority')
             ->latest()
             ->orderByDesc('id')

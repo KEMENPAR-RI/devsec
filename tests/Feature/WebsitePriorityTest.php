@@ -269,6 +269,69 @@ class WebsitePriorityTest extends TestCase
         $this->assertSame([], array_intersect($page1, $page2));
     }
 
+    public function test_down_secondary_site_is_listed_before_up_priority_site(): void
+    {
+        Website::factory()->create(['name' => 'Penting Up', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()]);
+        Website::factory()->create(['name' => 'Biasa Down', 'is_priority' => false, 'last_status' => 'down', 'created_at' => now()->subDays(3)]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Biasa Down', 'Penting Up'], $names);
+    }
+
+    public function test_among_up_sites_priority_is_listed_before_secondary(): void
+    {
+        Website::factory()->create(['name' => 'Biasa Up', 'is_priority' => false, 'last_status' => 'up', 'created_at' => now()]);
+        Website::factory()->create(['name' => 'Penting Up', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->subDays(3)]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame(['Penting Up', 'Biasa Up'], $names);
+    }
+
+    public function test_full_down_priority_newest_ordering(): void
+    {
+        Website::factory()->create(['name' => 'Biasa Up Baru', 'last_status' => 'up', 'created_at' => now()]);
+        Website::factory()->create(['name' => 'Biasa Up Lama', 'last_status' => 'up', 'created_at' => now()->subDays(4)]);
+        Website::factory()->create(['name' => 'Penting Up Lama', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->subDays(5)]);
+        Website::factory()->create(['name' => 'Penting Up Baru', 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->subDays(1)]);
+        Website::factory()->create(['name' => 'Biasa Down Lama', 'last_status' => 'down', 'created_at' => now()->subDays(6)]);
+        Website::factory()->create(['name' => 'Biasa Down Baru', 'last_status' => 'down', 'created_at' => now()->subDays(2)]);
+        Website::factory()->create(['name' => 'Penting Down', 'is_priority' => true, 'last_status' => 'down', 'created_at' => now()->subDays(7)]);
+        Website::factory()->create(['name' => 'Biasa Unknown', 'last_status' => 'unknown', 'created_at' => now()->addMinute()]);
+
+        $names = Livewire::actingAs($this->superadmin())->test(Index::class)
+            ->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame([
+            'Penting Down',
+            'Biasa Down Baru',
+            'Biasa Down Lama',
+            'Penting Up Baru',
+            'Penting Up Lama',
+            'Biasa Unknown',
+            'Biasa Up Baru',
+            'Biasa Up Lama',
+        ], $names);
+    }
+
+    public function test_down_sites_lead_every_admin_page_order(): void
+    {
+        foreach (range(1, 10) as $i) {
+            Website::factory()->create(['name' => "Penting {$i}", 'is_priority' => true, 'last_status' => 'up', 'created_at' => now()->subMinutes($i)]);
+        }
+        Website::factory()->create(['name' => 'Biasa Down', 'last_status' => 'down', 'created_at' => now()->subDays(9)]);
+
+        $component = Livewire::actingAs($this->superadmin())->test(Index::class);
+        $page1 = $component->viewData('websites')->pluck('name')->all();
+        $page2 = $component->call('gotoPage', 2)->viewData('websites')->pluck('name')->all();
+
+        $this->assertSame('Biasa Down', $page1[0]);
+        $this->assertSame(['Penting 10'], $page2);
+    }
+
     public function test_pages_do_not_repeat_or_drop_sites_when_created_at_ties(): void
     {
         $this->freezeSecond();
