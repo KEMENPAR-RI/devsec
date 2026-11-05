@@ -3,6 +3,23 @@
 use App\Services\Backup\DatabaseBackup;
 use Illuminate\Support\Facades\Schedule;
 
+// Queue workers run from the scheduler so the server needs only the one
+// `schedule:run` cron line (no systemd/supervisor). Each tick drains its queues
+// and exits; withoutOverlapping keeps one worker per group alive, and
+// runInBackground stops a long scan from holding up every other task here.
+// The overlap lock expiry (10 min) must exceed --max-time plus the longest job
+// timeout (checks 55+150s, scans 240+300s), or a second worker could start
+// beside a healthy one. Timeouts must stay below DB_QUEUE_RETRY_AFTER (320).
+Schedule::command('queue:work database --queue='.implode(',', [config('monitoring.queues.checks_high'), config('monitoring.queues.checks'), 'default']).' --stop-when-empty --max-time=55 --tries=1 --timeout=150 --memory=128')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->runInBackground();
+
+Schedule::command('queue:work database --queue='.config('monitoring.queues.scans').' --stop-when-empty --max-time=240 --tries=1 --timeout=300 --memory=128')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->runInBackground();
+
 // Monitoring: probe every active website for down/attack signals every minute
 // (each website only actually checked once its own interval has elapsed).
 Schedule::command('websites:check')->everyMinute()->withoutOverlapping(10);

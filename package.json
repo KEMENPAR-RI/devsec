@@ -5,7 +5,7 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "start": "concurrently -c \"#93c5fd,#fb7185,#fdba74,#c4b5fd\" \"php artisan serve\" \"php artisan queue:work\" \"php artisan schedule:work\" \"vite\" --names=server,queue,schedule,vite --kill-others"
+        "start": "concurrently -c \"#93c5fd,#fb7185,#fdba74\" \"php artisan serve\" \"php artisan schedule:work\" \"vite\" --names=server,schedule,vite --kill-others"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",

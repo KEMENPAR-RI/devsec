@@ -3,7 +3,7 @@
 Untuk pembaruan yang **tidak** menambah migrasi atau dependency (mayoritas
 kasus), urutannya:
 
-- [ ] `.env` server wajib berisi `DB_QUEUE_RETRY_AFTER=320` (harus > `--timeout` terbesar, 300) dan `DB_HOST=127.0.0.1` (worker systemd memakai `PrivateTmp`, socket `/tmp/mysql.sock` tidak terlihat).
+- [ ] `.env` server wajib berisi `DB_QUEUE_RETRY_AFTER=320` (harus > `--timeout` terbesar, 300) dan `DB_HOST=127.0.0.1` (worker dijalankan scheduler sebagai user cron; `127.0.0.1` menghindari masalah socket `/tmp/mysql.sock`, terutama kalau memakai worker systemd).
 
 ```bash
 cd /www/wwwroot/deadsec.apiprs.my.id
@@ -20,9 +20,7 @@ $PHP artisan config:cache
 $PHP artisan route:cache
 $PHP artisan view:cache
 
-$PHP artisan queue:restart
-ls -d storage bootstrap/cache        # wajib ada, kalau tidak worker gagal 226/NAMESPACE
-sudo systemctl restart security-worker security-worker-scans
+$PHP artisan queue:restart           # hanya berpengaruh bila memakai worker systemd/supervisor
 $PHP artisan up
 ```
 
@@ -44,13 +42,14 @@ Cara memastikan sebuah kelas sudah ada di CSS terbangun:
 grep -o 'bg-orange-500' public/build/assets/*.css | head -1
 ```
 
-## Kenapa worker perlu di-restart
+## Kenapa worker tidak perlu di-restart
 
-Worker adalah proses PHP yang berumur panjang: ia memuat kode aplikasi sekali
-saat start dan menyimpannya di memori. Tanpa restart, worker terus menjalankan
-**kode versi lama** sampai `--max-time=3600` mendaur-ulang prosesnya sendiri -
-jadi selama sampai satu jam, web menampilkan versi baru sementara pengecekan
-otomatis masih berjalan dengan versi lama.
+Worker dijalankan scheduler (lihat bagian di bawah): tiap menit ia start baru,
+menghabiskan antrean, lalu berhenti. Jadi kode terbaru langsung dipakai pada
+menit berikutnya tanpa langkah restart.
+
+Kalau server masih memakai worker systemd/supervisor (opsional, lihat bawah),
+worker itu berumur panjang dan **wajib** di-restart setiap deploy:
 
 ```bash
 sudo systemctl restart security-worker security-worker-scans          # systemd
@@ -104,13 +103,23 @@ Tertentu" tetap berfungsi, karena keduanya jalan langsung di dalam request web.
 Itu sebabnya gejalanya terbaca seperti "crawler rusak", padahal worker-nya yang
 tidak ada.
 
-## Langkah pemasangan
+## Cara default: worker dijalankan scheduler (hanya perlu 1 cron)
+
+`routes/console.php` mendaftarkan dua `queue:work --stop-when-empty` yang
+dipicu tiap menit oleh scheduler, jadi **tidak perlu systemd/supervisor**:
+
+- antrean `checks-high,checks,default` (uptime + email notifikasi), `--max-time=55`, `--timeout=150`
+- antrean `scans` (crawl judol), `--max-time=240`, `--timeout=300`
+
+Keduanya `withoutOverlapping` (maksimal satu proses per kelompok) dan
+`runInBackground` (scan yang lama tidak menahan tugas terjadwal lain).
+Konsekuensinya, job baru diambil paling lambat sekitar 1 menit setelah masuk antrean.
 
 ### 1. Bersihkan antrean yang menumpuk lebih dulu
 
-Wajib dilakukan **sebelum** worker dinyalakan. Kalau tidak, worker akan langsung
-memborong ribuan job basi sekaligus - menjalankan pengecekan berumur berhari-hari
-terhadap semua situs serentak.
+Lakukan **sebelum** cron dipasang bila antrean pernah menumpuk. Kalau tidak,
+worker akan langsung memborong ribuan job basi sekaligus - menjalankan pengecekan
+berumur berhari-hari terhadap semua situs serentak.
 
 ```bash
 php artisan queue:flush-stale --failed
@@ -119,17 +128,41 @@ php artisan queue:flush-stale --failed
 Tidak ada yang hilang: scheduler menjadwalkan ulang kedua job itu pada tick
 berikutnya dengan data terbaru.
 
-### 2. Pasang worker
+### 2. Pasang scheduler
 
-Pilih **salah satu**, jangan keduanya - kalau dua-duanya aktif, setiap job jalan
-dua kali.
+Ini satu-satunya baris cron yang dibutuhkan. Jalankan sebagai user pemilik
+direktori aplikasi (mis. `www`), karena user itu juga yang menjalankan worker:
 
-**systemd** (VPS/server sendiri):
+```
+* * * * * cd /www/wwwroot/deadsec.apiprs.my.id && /www/server/php/84/bin/php artisan schedule:run >> /dev/null 2>&1
+```
 
-Ada dua worker, keduanya wajib dipasang:
+### 3. Matikan worker lama (jika ada) dan hapus cron `--sync`
 
-- `security-worker` - antrean `checks-high,checks,default` (uptime + email notifikasi), `--timeout=150`
-- `security-worker-scans` - antrean `scans` (crawl judol), `--timeout=300`
+Kalau sebelumnya memasang worker systemd/supervisor, matikan supaya tidak jalan
+bersamaan dengan worker scheduler:
+
+```bash
+sudo systemctl disable --now security-worker security-worker-scans   # systemd
+sudo supervisorctl stop security-worker:* security-worker-scans:*    # supervisor (lalu hapus programnya)
+```
+
+Hapus juga baris ini dari crontab bila ada, karena setiap situs jadi dipindai
+dua kali - sekali oleh cron, sekali oleh worker:
+
+```
+* * * * * php /var/www/security/artisan websites:scan-judol --sync
+```
+
+## Alternatif: worker berumur panjang (systemd/supervisor)
+
+Hanya bila butuh latensi nol atau hardening systemd. **Hapus dulu** dua entri
+`queue:work` di `routes/console.php`, lalu pasang **salah satu** (jangan keduanya):
+
+**systemd** (VPS/server sendiri), dua worker wajib dipasang:
+
+- `security-worker` - antrean `checks-high,checks,default`, `--timeout=150`
+- `security-worker-scans` - antrean `scans`, `--timeout=300`
 
 ```bash
 sudo cp deploy/security-worker.service deploy/security-worker-scans.service /etc/systemd/system/
@@ -148,34 +181,11 @@ sudo supervisorctl update
 sudo supervisorctl status
 ```
 
-systemd lebih disarankan: supervisor tidak bisa memakai hardening (`ProtectSystem=strict` dkk.) yang ada di file `.service`.
-
 Di plugin Supervisor aaPanel: tambah dua daemon, salin `command`, `directory`,
-dan `user` dari tiap `[program:...]` di file itu.
-
-Sesuaikan `User`, `Group`, path PHP (`/www/server/php/84/bin/php`) dan path
-direktori di file-nya dengan server. Kedua worker memakai `--memory=128` dan
-`--max-jobs`/`--max-time` supaya proses didaur-ulang sebelum memori membengkak
-(RAM server 1GB).
-
-### 3. Hapus cron `--sync`
-
-Kalau sebelumnya ada baris ini di crontab, **hapus**:
-
-```
-* * * * * php /var/www/security/artisan websites:scan-judol --sync
-```
-
-Dengan worker aktif, baris itu membuat setiap situs dipindai dua kali - sekali
-oleh cron, sekali oleh worker.
-
-### 4. Pastikan scheduler jalan
-
-Ini satu-satunya baris cron yang dibutuhkan:
-
-```
-* * * * * cd /var/www/security && php artisan schedule:run >> /dev/null 2>&1
-```
+dan `user` dari tiap `[program:...]` di file itu. Sesuaikan `User`, `Group`,
+path PHP dan path direktori dengan server. Kedua worker memakai `--memory=128`
+dan `--max-jobs`/`--max-time` supaya proses didaur-ulang sebelum memori
+membengkak (RAM server 1GB). Scheduler tetap wajib (1 baris cron di atas).
 
 ## Memastikan sudah benar
 
@@ -183,7 +193,14 @@ Ini satu-satunya baris cron yang dibutuhkan:
 # Harus mendekati 0 dan tidak terus bertambah.
 $PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:scans
 
-# Harus menampilkan job yang diproses, bukan diam saja.
+# Pastikan worker terdaftar di scheduler.
+$PHP artisan schedule:list | grep queue:work
+
+# Worker scheduler tidak punya log sendiri; job gagal tercatat di sini.
+$PHP artisan queue:failed
+tail -20 storage/logs/laravel.log
+
+# Hanya bila memakai worker berumur panjang:
 sudo journalctl -u security-worker -u security-worker-scans -f   # systemd
 tail -f storage/logs/worker.log storage/logs/worker-scans.log    # supervisor
 ```
@@ -202,7 +219,7 @@ sampai kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
 
 Env terkait antrean (lihat `.env.example`, default sudah aman):
 
-- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS`, `MONITORING_QUEUE_SCANS` - nama antrean; kalau diubah, `--queue=` di file worker harus ikut diubah
+- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS`, `MONITORING_QUEUE_SCANS` - nama antrean; worker scheduler otomatis mengikuti. Hanya file systemd/supervisor yang `--queue=`-nya harus diubah manual
 - `JUDOL_MAX_QUEUE` - batas job scan yang boleh menunggu di antrean `scans`
 - `JUDOL_MAX_DISPATCH_PER_TICK` - jumlah scan yang di-dispatch per tick scheduler
 - `MAIL_TIMEOUT` - timeout SMTP (detik) agar email lambat tidak menahan worker checks
@@ -234,7 +251,9 @@ Situs internal (`is_internal_only`) memang selalu terbaca `down` dari luar, jadi
 situs seperti itu tidak akan pernah masuk crawl otomatis. Tombol "Cek Judol" di
 halaman detail tetap bisa dipakai untuk memindainya secara manual.
 
-## Kalau worker gagal jalan
+## Kalau worker systemd/supervisor gagal jalan
+
+Bagian ini hanya untuk alternatif worker berumur panjang.
 
 ### `status=200/CHDIR` - "Changing to the requested working directory failed"
 

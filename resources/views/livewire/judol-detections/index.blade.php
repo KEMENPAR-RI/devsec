@@ -45,11 +45,9 @@
             <p class="text-xs leading-relaxed">
                 Ada {{ $queuePending }} pekerjaan menunggu di antrean dan tidak ada yang mengerjakannya, jadi crawl
                 otomatis tidak pernah jalan - meski "Cek Judol" dan "Cek URL Tertentu" tetap berfungsi karena
-                keduanya jalan langsung saat diklik. Jalankan worker antrean di server
-                (<code class="rounded bg-amber-100 px-1 dark:bg-amber-500/20">php artisan queue:work</code> lewat
-                supervisor/systemd), atau pakai
-                <code class="rounded bg-amber-100 px-1 dark:bg-amber-500/20">php artisan websites:scan-judol --sync</code>
-                di cron kalau server tidak bisa menjalankan worker.
+                keduanya jalan langsung saat diklik. Pastikan scheduler berjalan di server
+                (<code class="rounded bg-amber-100 px-1 dark:bg-amber-500/20">php artisan schedule:run</code> tiap menit
+                lewat cron), karena worker antrean dijalankan olehnya.
             </p>
         </div>
     @endif
