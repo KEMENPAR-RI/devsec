@@ -59,6 +59,57 @@ class SsrfGuardTest extends TestCase
         $this->assertNull(OutboundUrlGuard::reason('https://judol-test.example'));
     }
 
+    public function test_guard_allows_a_host_resolving_into_an_allowed_private_range(): void
+    {
+        config(['monitoring.allowed_private_cidrs' => ['10.10.100.0/24']]);
+        OutboundUrlGuard::fakeDns(['www.intranet.example' => ['10.10.100.156']]);
+
+        $this->assertNull(OutboundUrlGuard::reason('https://www.intranet.example'));
+    }
+
+    public function test_guard_still_refuses_private_addresses_outside_the_allowed_range(): void
+    {
+        config(['monitoring.allowed_private_cidrs' => ['10.10.100.0/24']]);
+        OutboundUrlGuard::fakeDns([
+            'other.intranet.example' => ['10.10.101.5'],
+            'mixed.intranet.example' => ['10.10.100.5', '192.168.1.1'],
+        ]);
+
+        $this->assertNotNull(OutboundUrlGuard::reason('https://other.intranet.example'));
+        $this->assertNotNull(OutboundUrlGuard::reason('https://mixed.intranet.example'));
+        $this->assertNotNull(OutboundUrlGuard::reason('http://10.10.101.5/'));
+    }
+
+    public function test_allowlist_never_unblocks_loopback_metadata_or_cgnat(): void
+    {
+        config(['monitoring.allowed_private_cidrs' => ['127.0.0.0/8', '169.254.0.0/16', '100.64.0.0/10', '0.0.0.0/0']]);
+
+        foreach (['http://127.0.0.1/', 'http://169.254.169.254/', 'http://100.64.0.1/', 'http://10.0.0.5/'] as $url) {
+            $this->assertNotNull(OutboundUrlGuard::reason($url), "{$url} seharusnya tetap ditolak");
+        }
+    }
+
+    public function test_allowed_private_range_stays_hidden_from_dns_snapshots(): void
+    {
+        config(['monitoring.allowed_private_cidrs' => ['10.10.100.0/24']]);
+
+        $this->assertFalse(OutboundUrlGuard::isPublicAddress('10.10.100.156'));
+    }
+
+    public function test_bulk_import_accepts_hosts_in_the_allowed_private_range(): void
+    {
+        config(['monitoring.allowed_private_cidrs' => ['10.10.100.0/24']]);
+        OutboundUrlGuard::fakeDns(['www.intranet.example' => ['10.10.100.156']]);
+
+        Livewire::actingAs(User::factory()->create())
+            ->test(Index::class)
+            ->set('bulkInput', "www.intranet.example\nhttp://192.168.1.1")
+            ->call('bulkImport');
+
+        $this->assertDatabaseCount('websites', 1);
+        $this->assertDatabaseHas('websites', ['url' => 'https://www.intranet.example']);
+    }
+
     public function test_website_form_rejects_an_internal_url(): void
     {
         Livewire::actingAs(User::factory()->create())

@@ -232,7 +232,7 @@ class OutboundUrlGuard
         }
 
         if (filter_var($host, FILTER_VALIDATE_IP)) {
-            return [static::isPublic($host) ? null : static::privateAddressMessage($host, $host), []];
+            return [static::isFetchable($host) ? null : static::privateAddressMessage($host, $host), []];
         }
 
         $addresses = static::lookUp($host);
@@ -244,7 +244,7 @@ class OutboundUrlGuard
         }
 
         foreach ($addresses as $address) {
-            if (! static::isPublic($address)) {
+            if (! static::isFetchable($address)) {
                 return [static::privateAddressMessage($host, $address), []];
             }
         }
@@ -278,6 +278,54 @@ class OutboundUrlGuard
     public static function isPublicAddress(string $address): bool
     {
         return static::isPublic($address);
+    }
+
+    /**
+     * Whether the monitor may connect to an address: public, or inside one of the
+     * operator-approved private ranges (monitoring.allowed_private_cidrs) for
+     * sites whose public name resolves to an intranet address from this server.
+     * Kept apart from isPublic(), which also decides what DNS snapshots may show.
+     */
+    protected static function isFetchable(string $address): bool
+    {
+        return static::isPublic($address) || static::isAllowedPrivate($address);
+    }
+
+    /**
+     * Only RFC 1918-style private space can be allowed. Loopback, link-local
+     * (cloud metadata), CGNAT and other reserved ranges stay blocked even if a
+     * configured CIDR happens to cover them.
+     */
+    protected static function isAllowedPrivate(string $address): bool
+    {
+        $address = static::normalize($address);
+
+        if (! filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_RES_RANGE)) {
+            return false;
+        }
+
+        foreach (static::EXTRA_BLOCKED_CIDRS as $cidr) {
+            if (static::inCidr($address, $cidr)) {
+                return false;
+            }
+        }
+
+        foreach ((array) config('monitoring.allowed_private_cidrs', []) as $cidr) {
+            $cidr = trim((string) $cidr);
+
+            // Malformed or overly broad entries (/0-/7) are ignored rather than trusted.
+            if (! preg_match('#^(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})$#', $cidr, $m)
+                || ! filter_var($m[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+                || (int) $m[2] < 8 || (int) $m[2] > 32) {
+                continue;
+            }
+
+            if (static::inCidr($address, $cidr)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected static function isPublic(string $address): bool

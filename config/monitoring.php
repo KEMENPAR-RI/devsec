@@ -18,6 +18,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Rentang IP Privat yang Boleh Dipantau
+    |--------------------------------------------------------------------------
+    |
+    | Penjaga SSRF menolak situs yang domainnya resolve ke IP privat dari server
+    | ini. Domain kemenpar.go.id resolve ke alamat intranet lewat DNS internal,
+    | jadi rentang intranet itu diizinkan di sini (CIDR IPv4 dipisah koma,
+    | /8 sampai /32). Loopback, link-local/metadata cloud, dan CGNAT tetap
+    | diblokir apa pun isinya. Isi MONITORING_ALLOWED_PRIVATE_CIDRS= (kosong)
+    | untuk mematikan allowlist sepenuhnya.
+    |
+    */
+    'allowed_private_cidrs' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('MONITORING_ALLOWED_PRIVATE_CIDRS', '10.10.100.0/24,192.168.55.0/24,172.17.100.0/24')),
+    ))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cek Ulang Situs Offline
     |--------------------------------------------------------------------------
     |
