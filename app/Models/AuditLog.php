@@ -43,7 +43,7 @@ class AuditLog extends Model
      * from - and the log is deliberately the one table nobody may delete.
      */
     public const REDACTED_FIELDS = [
-        'password', 'remember_token', 'anthropic_api_key', 'mail_password',
+        'password', 'remember_token', 'anthropic_api_key', 'ai_api_key', 'mail_password',
         'api_key', 'secret', 'token', 'recaptcha_secret_key',
     ];
 

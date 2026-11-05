@@ -5,17 +5,12 @@ use Illuminate\Support\Facades\Schedule;
 
 // Queue workers run from the scheduler so the server needs only the one
 // `schedule:run` cron line (no systemd/supervisor). Each tick drains its queues
-// and exits; withoutOverlapping keeps one worker per group alive, and
-// runInBackground stops a long scan from holding up every other task here.
-// The overlap lock expiry (10 min) must exceed --max-time plus the longest job
-// timeout (checks 55+150s, scans 240+300s), or a second worker could start
-// beside a healthy one. Timeouts must stay below DB_QUEUE_RETRY_AFTER (320).
+// and exits; withoutOverlapping keeps one worker alive, and runInBackground
+// stops a long check from holding up every other task here. The overlap lock
+// expiry (10 min) must exceed --max-time plus the longest job timeout (55+150s),
+// or a second worker could start beside a healthy one. Timeouts must stay below
+// DB_QUEUE_RETRY_AFTER (320).
 Schedule::command('queue:work database --queue='.implode(',', [config('monitoring.queues.checks_high'), config('monitoring.queues.checks'), 'default']).' --stop-when-empty --max-time=55 --tries=1 --timeout=150 --memory=128')
-    ->everyMinute()
-    ->withoutOverlapping(10)
-    ->runInBackground();
-
-Schedule::command('queue:work database --queue='.config('monitoring.queues.scans').' --stop-when-empty --max-time=240 --tries=1 --timeout=300 --memory=128')
     ->everyMinute()
     ->withoutOverlapping(10)
     ->runInBackground();
@@ -23,9 +18,6 @@ Schedule::command('queue:work database --queue='.config('monitoring.queues.scans
 // Monitoring: probe every active website for down/attack signals every minute
 // (each website only actually checked once its own interval has elapsed).
 Schedule::command('websites:check')->everyMinute()->withoutOverlapping(10);
-
-// Monitoring: crawl every active website for judol (online gambling) spam content.
-Schedule::command('websites:scan-judol')->everyMinute()->withoutOverlapping(10);
 
 // Monitoring: DNS records and domain expiry, once a day. Separate from the
 // per-minute probe because these are answered by a resolver and a registry, not
@@ -35,10 +27,6 @@ Schedule::command('websites:check-domains')->dailyAt('00:30')->withoutOverlappin
 // Monitoring: security headers and TLS of the watched sites. Daily, because
 // browser-hardening headers change about once a year - see GradeSecurity.
 Schedule::command('websites:grade-security')->dailyAt('00:35')->withoutOverlapping(120);
-
-// Monitoring: foreign scripts, hidden frames, and obfuscated code on each
-// homepage. Daily - injected code stays put, so more often buys nothing.
-Schedule::command('websites:scan-defacement')->dailyAt('00:40')->withoutOverlapping(120);
 
 // Monitoring: chase critical incidents nobody has closed. Every five minutes
 // so the reminder lands close to the configured window rather than up to an hour
@@ -57,10 +45,6 @@ Schedule::command('db:backup')
 // Monitoring: roll raw checks up into permanent daily totals, then prune those
 // past the retention window - see App\Console\Commands\PruneWebsiteChecks.
 Schedule::command('websites:prune-checks')->dailyAt('03:15')->withoutOverlapping(120);
-
-// Monitoring: content-change history, page snapshots and closed defacement
-// findings past the retention window - see App\Console\Commands\PruneContentHistory.
-Schedule::command('websites:prune-content')->dailyAt('03:20')->withoutOverlapping(120);
 
 // Audit: the only thing that removes a trail line, and it runs unattended - see
 // App\Console\Commands\PruneAuditLogs for why there is no button for this.

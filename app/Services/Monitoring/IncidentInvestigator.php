@@ -9,24 +9,24 @@ use RuntimeException;
 use Throwable;
 
 /**
- * On-demand "why did this happen" analysis for one incident - reuses the same
- * Anthropic credentials configured for judol classification (JudolAiSettings),
- * since it's the one Claude API key this app has. Given the incident's own detail
- * lines plus the website's recent check history, asks Claude for a plain-language
- * root cause and next steps. Triggered explicitly per incident (never automatic),
- * so no cost-control gating is needed beyond the credential being configured.
+ * On-demand "why did this happen" analysis for one incident, using the AI
+ * provider configured in Pengaturan (AiSettings / AiChat). Given the incident's
+ * own detail lines plus the website's recent check history, asks the model for a
+ * plain-language root cause and next steps. Triggered explicitly per incident
+ * (never automatic), so no cost-control gating is needed beyond the provider
+ * being configured.
  */
 class IncidentInvestigator
 {
-    public function __construct(protected JudolAiSettings $settings) {}
+    public function __construct(protected AiSettings $settings, protected ?AiChat $chat = null) {}
 
     /**
-     * @throws RuntimeException when no API key is configured or the API call fails
+     * @throws RuntimeException when no provider is configured or the API call fails
      */
     public function investigate(Incident $incident): string
     {
-        if (! $this->settings->hasApiKey()) {
-            throw new RuntimeException('Belum ada Anthropic API key yang dikonfigurasi. Atur di halaman Pengaturan.');
+        if (! $this->settings->configured()) {
+            throw new RuntimeException('Belum ada provider AI yang dikonfigurasi. Atur di halaman Pengaturan.');
         }
 
         $website = $incident->website;
@@ -70,8 +70,7 @@ class IncidentInvestigator
         PROMPT;
 
         try {
-            $message = $this->settings->client()->messages->create(
-                model: $this->settings->model(),
+            $reply = ($this->chat ??= new AiChat($this->settings))->complete(
                 // Room for the whole diagnosis. The three sections asked for below -
                 // cause, pattern, concrete next steps - ran past 500 tokens often
                 // enough that the answer arrived cut off mid-sentence, and it is the
@@ -117,35 +116,26 @@ class IncidentInvestigator
                 format Markdown sama sekali (tanpa #, **, _, backtick, atau tabel). Pakai
                 baris baru dan angka/tanda hubung biasa kalau perlu memberi daftar.
                 SYS,
-                messages: [['role' => 'user', 'content' => $prompt]],
+                user: $prompt,
             );
         } catch (Throwable $e) {
             throw new RuntimeException($this->describeApiError($e), previous: $e);
         }
 
+        $analysis = static::cleanAnalysisText($reply['text']);
+
         // A reply that hit the ceiling anyway would end mid-sentence, and stored
         // silently it reads as a finished diagnosis. Say so instead of pretending.
-        $truncated = $message->stopReason === 'max_tokens';
-
-        foreach ($message->content as $block) {
-            if ($block->type === 'text' && trim($block->text) !== '') {
-                $analysis = static::cleanAnalysisText($block->text);
-
-                return $truncated
-                    ? $analysis.'
+        return $reply['truncated']
+            ? $analysis.'
 
 (Analisis terpotong karena mencapai batas panjang - jalankan "Selidiki Ulang" untuk hasil lengkap.)'
-                    : $analysis;
-            }
-        }
-
-        throw new RuntimeException('AI tidak mengembalikan analisis (respons kosong).');
+            : $analysis;
     }
 
     /**
      * Kept as the entry point the analysis flow (and the backfill migration that
-     * cleaned pre-existing rows) calls; the logic itself is shared with the judol
-     * classifier's reasoning - see App\Support\AiText.
+     * cleaned pre-existing rows) calls; the logic itself lives in App\Support\AiText.
      */
     public static function cleanAnalysisText(string $text): string
     {

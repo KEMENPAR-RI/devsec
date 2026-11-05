@@ -9,10 +9,10 @@ use Illuminate\Support\Facades\Cache;
 
 /**
  * Generic key-value store for runtime-editable config (Pengaturan page) - things
- * that used to require an .env change + restart, like the Anthropic API key and
- * the AI-classifier toggle. Values that came from config/*.php stay as the
+ * that used to require an .env change + restart, like the AI provider key and
+ * the SMTP password. Values that came from config/*.php stay as the
  * fallback default whenever no override has been saved here - see
- * App\Services\Monitoring\JudolAiSettings for the read pattern.
+ * App\Services\Monitoring\AiSettings for the read pattern.
  *
  * Reads are served by two layers, because these keys are read constantly and
  * written almost never:

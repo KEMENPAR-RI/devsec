@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Jobs\CheckWebsiteJob;
-use App\Jobs\ScanWebsiteForJudolJob;
 use App\Livewire\Websites\Index;
 use App\Livewire\Websites\Show;
 use App\Models\Incident;
@@ -16,7 +15,6 @@ use Database\Seeders\RoleSeeder;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Cache\Repository as Cache;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -28,8 +26,8 @@ use RuntimeException;
 use Tests\TestCase;
 
 /**
- * Checks and crawls run on separate queues (worker A: checks-high,checks,default;
- * worker B: scans), and the scheduler never grows a backlog of duplicates.
+ * Checks run on their own queues (checks-high, checks) and the scheduler never
+ * grows a backlog of duplicates.
  */
 class QueueRoutingTest extends TestCase
 {
@@ -53,83 +51,16 @@ class QueueRoutingTest extends TestCase
     {
         $this->assertSame('checks-high', (new CheckWebsiteJob(Website::factory()->create(['is_priority' => true])))->queue);
         $this->assertSame('checks', (new CheckWebsiteJob(Website::factory()->create(['is_priority' => false])))->queue);
-        $this->assertSame('scans', (new ScanWebsiteForJudolJob(Website::factory()->create()))->queue);
     }
 
     public function test_queue_names_come_from_config(): void
     {
-        config(['monitoring.queues.scans' => 'crawl']);
+        config(['monitoring.queues.checks' => 'probes']);
 
-        $this->assertSame('crawl', (new ScanWebsiteForJudolJob(Website::factory()->create()))->queue);
-    }
-
-    public function test_the_judol_job_is_unique_per_site(): void
-    {
-        $website = Website::factory()->create();
-        $job = new ScanWebsiteForJudolJob($website);
-
-        $this->assertInstanceOf(ShouldBeUnique::class, $job);
-        $this->assertSame((string) $website->id, $job->uniqueId());
-        $this->assertSame(7200, $job->uniqueFor);
+        $this->assertSame('probes', (new CheckWebsiteJob(Website::factory()->create(['is_priority' => false])))->queue);
     }
 
     // --- Dispatch brake --------------------------------------------------------
-
-    public function test_scan_judol_queues_at_most_the_per_tick_cap_priority_first(): void
-    {
-        Queue::fake();
-        config(['judol.max_dispatch_per_tick' => 2]);
-
-        $old = Website::factory()->create(['last_status' => 'up', 'judol_scanned_at' => now()->subDays(3)]);
-        Website::factory()->create(['last_status' => 'up', 'judol_scanned_at' => now()->subDays(2)]);
-        $priority = Website::factory()->create(['is_priority' => true, 'last_status' => 'up', 'judol_scanned_at' => now()->subDay()]);
-
-        $this->artisan('websites:scan-judol')->assertSuccessful();
-
-        Queue::assertPushed(ScanWebsiteForJudolJob::class, 2);
-        Queue::assertPushedOn('scans', ScanWebsiteForJudolJob::class, fn ($job) => $job->website->is($priority));
-        Queue::assertPushedOn('scans', ScanWebsiteForJudolJob::class, fn ($job) => $job->website->is($old));
-    }
-
-    public function test_scan_judol_waits_while_the_scans_queue_is_full(): void
-    {
-        Queue::fake();
-        config(['judol.max_queue' => 2]);
-        Queue::pushOn('scans', 'placeholder-a');
-        Queue::pushOn('scans', 'placeholder-b');
-
-        $website = Website::factory()->create(['last_status' => 'up', 'judol_scanned_at' => null]);
-
-        $this->artisan('websites:scan-judol')->assertSuccessful();
-
-        Queue::assertNotPushed(ScanWebsiteForJudolJob::class);
-        $this->assertNull($website->fresh()->judol_scanned_at, 'not dispatched, so not stamped');
-    }
-
-    public function test_scan_judol_only_fills_the_room_left_in_the_queue(): void
-    {
-        Queue::fake();
-        config(['judol.max_queue' => 2, 'judol.max_dispatch_per_tick' => 5]);
-        Queue::pushOn('scans', 'placeholder');
-
-        Website::factory()->count(3)->create(['last_status' => 'up', 'judol_scanned_at' => null]);
-
-        $this->artisan('websites:scan-judol')->assertSuccessful();
-
-        Queue::assertPushed(ScanWebsiteForJudolJob::class, 1);
-    }
-
-    public function test_scan_judol_does_not_stamp_a_site_whose_crawl_is_still_queued(): void
-    {
-        Queue::fake();
-        $website = Website::factory()->create(['last_status' => 'up', 'judol_scanned_at' => null]);
-        (new UniqueLock(app(Cache::class)))->acquire(new ScanWebsiteForJudolJob($website));
-
-        $this->artisan('websites:scan-judol')->assertSuccessful();
-
-        Queue::assertNotPushed(ScanWebsiteForJudolJob::class);
-        $this->assertNull($website->fresh()->judol_scanned_at);
-    }
 
     public function test_websites_check_does_not_stamp_a_site_whose_check_is_still_queued(): void
     {
@@ -154,16 +85,6 @@ class QueueRoutingTest extends TestCase
         $this->assertLockIsFree(new CheckWebsiteJob($website));
     }
 
-    public function test_scan_judol_releases_the_lock_when_dispatch_fails(): void
-    {
-        $website = Website::factory()->create(['last_status' => 'up', 'judol_scanned_at' => null]);
-        Bus::partialMock()->shouldReceive('dispatch')->andThrow(new RuntimeException('queue down'));
-
-        $this->assertThrows(fn () => Artisan::call('websites:scan-judol', ['--now' => true]), RuntimeException::class);
-
-        $this->assertLockIsFree(new ScanWebsiteForJudolJob($website));
-    }
-
     public function test_check_now_buttons_release_the_lock_when_dispatch_fails(): void
     {
         (new RoleSeeder)->run();
@@ -176,7 +97,6 @@ class QueueRoutingTest extends TestCase
         foreach ([
             [fn () => $index->call('checkNow', $website), new CheckWebsiteJob($website)],
             [fn () => $show->call('checkNow'), new CheckWebsiteJob($website)],
-            [fn () => $show->call('scanJudolNow'), new ScanWebsiteForJudolJob($website)],
         ] as [$click, $job]) {
             try {
                 $click();
@@ -221,7 +141,7 @@ class QueueRoutingTest extends TestCase
     public function test_per_minute_commands_hold_their_mutex_for_minutes_not_a_day(): void
     {
         $event = collect(app(Schedule::class)->events())
-            ->first(fn ($event) => str_contains((string) $event->command, 'websites:scan-judol'));
+            ->first(fn ($event) => str_contains((string) $event->command, 'websites:check'));
 
         $this->assertTrue($event->withoutOverlapping);
         $this->assertSame(10, $event->expiresAt);
@@ -232,8 +152,8 @@ class QueueRoutingTest extends TestCase
     public function test_a_capped_backlog_behind_a_busy_worker_is_not_stalled(): void
     {
         config(['queue.default' => 'database']);
-        $this->insertJob('scans', waitingMinutes: 40);
-        $this->insertJob('scans', waitingMinutes: 41, reservedMinutesAgo: 1);
+        $this->insertJob('reports', waitingMinutes: 40);
+        $this->insertJob('reports', waitingMinutes: 41, reservedMinutesAgo: 1);
 
         $this->assertFalse(app(QueueHealth::class)->isStalled());
     }
@@ -242,7 +162,7 @@ class QueueRoutingTest extends TestCase
     {
         config(['queue.default' => 'database']);
         $this->insertJob('checks', waitingMinutes: 40);
-        $this->insertJob('scans', waitingMinutes: 41, reservedMinutesAgo: 1);
+        $this->insertJob('reports', waitingMinutes: 41, reservedMinutesAgo: 1);
 
         $this->assertTrue(app(QueueHealth::class)->isStalled());
     }
@@ -257,11 +177,11 @@ class QueueRoutingTest extends TestCase
         $this->assertFalse(app(QueueHealth::class)->isStalled());
     }
 
-    public function test_a_busy_scans_worker_does_not_hide_a_missing_checks_worker(): void
+    public function test_a_busy_worker_on_an_unrelated_queue_does_not_hide_a_missing_checks_worker(): void
     {
         config(['queue.default' => 'database']);
         $this->insertJob('checks-high', waitingMinutes: 40);
-        $this->insertJob('scans', waitingMinutes: 41, reservedMinutesAgo: 1);
+        $this->insertJob('reports', waitingMinutes: 41, reservedMinutesAgo: 1);
 
         $this->assertTrue(app(QueueHealth::class)->isStalled());
     }

@@ -2,14 +2,14 @@
     {{-- Header --}}
     <div class="enter">
         <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Pengaturan</h1>
-        <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Konfigurasi AI untuk deteksi judol - tersimpan di database, berlaku langsung tanpa deploy ulang.</p>
+        <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Provider AI, email, dan konfigurasi aplikasi - tersimpan di database, berlaku langsung tanpa deploy ulang.</p>
     </div>
 
     @php
         $tabs = [
-            'ai' => ['label' => 'Klasifikasi AI', 'icon' => 'robot', 'errors' => ['apiKey', 'workspaceId', 'aiModel', 'confidenceThreshold', 'maxImages']],
+            'ai' => ['label' => 'Provider AI', 'icon' => 'robot', 'errors' => ['apiKey', 'workspaceId', 'aiProvider', 'aiBaseUrl', 'aiModel']],
             'email' => ['label' => 'Konfigurasi Email', 'icon' => 'envelope-simple', 'errors' => ['mailHost', 'mailPort', 'mailUsername', 'mailPassword', 'mailEncryption', 'mailFromAddress', 'mailFromName', 'mailTemplateSubject', 'mailTemplateBody']],
-            'app' => ['label' => 'Konfigurasi Aplikasi', 'icon' => 'sliders-horizontal', 'errors' => ['appName', 'appTimezone', 'logo', 'favicon', 'defaultCheckIntervalMinutes', 'defaultJudolScanIntervalMinutes', 'defaultDownThresholdFailures', 'defaultResponseTimeThresholdMs', 'tvPollSeconds', 'recaptchaSiteKey', 'recaptchaSecretKey', 'recaptchaMinScore', 'backupFrequency', 'backupTime', 'backupKeep']],
+            'app' => ['label' => 'Konfigurasi Aplikasi', 'icon' => 'sliders-horizontal', 'errors' => ['appName', 'appTimezone', 'logo', 'favicon', 'defaultCheckIntervalMinutes', 'defaultDownThresholdFailures', 'defaultResponseTimeThresholdMs', 'tvPollSeconds', 'recaptchaSiteKey', 'recaptchaSecretKey', 'recaptchaMinScore', 'backupFrequency', 'backupTime', 'backupKeep']],
         ];
     @endphp
 
@@ -58,12 +58,83 @@
         <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
         <div class="flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-white">
             <x-phosphor-robot class="h-4.5 w-4.5 text-accent-500" />
-            Klasifikasi AI (Judol)
+            Provider AI (Analisis Insiden)
+        </div>
+
+        {{-- Provider --}}
+        <div class="flex flex-col gap-2">
+            <label for="aiProvider" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Provider</label>
+            <select
+                wire:model.live="aiProvider"
+                id="aiProvider"
+                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('aiProvider') border-red-400 @enderror"
+            >
+                @foreach (\App\Services\Monitoring\AiSettings::PROVIDERS as $value => $label)
+                    <option value="{{ $value }}">{{ $label }}</option>
+                @endforeach
+            </select>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400">
+                "Kompatibel OpenAI" untuk provider kustom mana pun yang menyediakan endpoint <code>/chat/completions</code> (OpenAI, OpenRouter, LiteLLM, vLLM, Ollama, dsb). Dipakai untuk fitur "Selidiki" pada halaman Insiden.
+            </p>
+            @error('aiProvider')
+                <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
+            @enderror
+        </div>
+
+        {{-- Base URL --}}
+        <div class="flex flex-col gap-2">
+            <label for="aiBaseUrl" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Base URL @if ($aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_ANTHROPIC)<span class="font-normal text-zinc-400">(opsional)</span>@endif
+            </label>
+            <input
+                wire:model="aiBaseUrl"
+                id="aiBaseUrl"
+                type="url"
+                autocomplete="off"
+                placeholder="{{ $aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_OPENAI ? 'mis. https://api.openai.com/v1' : 'https://api.anthropic.com' }}"
+                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:placeholder:text-zinc-500 @error('aiBaseUrl') border-red-400 @enderror"
+            >
+            <p class="text-xs text-zinc-500 dark:text-zinc-400">
+                @if ($aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_OPENAI)
+                    Alamat dasar API, tanpa <code>/chat/completions</code>. Server di jaringan internal hanya bisa dipakai bila alamatnya terdaftar di <code>MONITORING_ALLOWED_PRIVATE_CIDRS</code>.
+                @else
+                    Kosongkan untuk memakai API resmi Anthropic.
+                @endif
+            </p>
+            @error('aiBaseUrl')
+                <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
+            @enderror
+        </div>
+
+        {{-- Model --}}
+        <div class="flex flex-col gap-2">
+            <label for="aiModel" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Model</label>
+            <input
+                wire:model="aiModel"
+                id="aiModel"
+                type="text"
+                autocomplete="off"
+                list="aiModelSuggestions"
+                placeholder="{{ $aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_OPENAI ? 'mis. gpt-4o-mini' : 'claude-haiku-4-5' }}"
+                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:placeholder:text-zinc-500 @error('aiModel') border-red-400 @enderror"
+            >
+            @if ($aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_ANTHROPIC)
+                <datalist id="aiModelSuggestions">
+                    <option value="claude-haiku-4-5">Murah & cepat (direkomendasikan)</option>
+                    <option value="claude-sonnet-5">Lebih akurat, lebih mahal</option>
+                    <option value="claude-opus-5">Paling akurat, paling mahal</option>
+                </datalist>
+            @endif
+            @error('aiModel')
+                <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
+            @enderror
         </div>
 
         {{-- API Key --}}
         <div class="flex flex-col gap-2">
-            <label for="apiKey" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Anthropic API Key</label>
+            <label for="apiKey" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                API Key @if ($aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_OPENAI)<span class="font-normal text-zinc-400">(kosongkan bila server tidak memerlukannya)</span>@endif
+            </label>
             <div class="relative" x-data="{ show: false }">
                 <x-phosphor-key class="pointer-events-none absolute left-3 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-zinc-400" />
                 <input
@@ -71,7 +142,7 @@
                     id="apiKey"
                     :type="show ? 'text' : 'password'"
                     autocomplete="off"
-                    placeholder="{{ $apiKeyIsSet ? 'Tersimpan - isi untuk mengganti' : 'sk-ant-...' }}"
+                    placeholder="{{ $apiKeyIsSet ? 'Tersimpan - isi untuk mengganti' : ($aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_OPENAI ? 'sk-...' : 'sk-ant-...') }}"
                     class="w-full rounded-lg border border-zinc-200 bg-white py-2.5 pl-10 pr-10 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white dark:placeholder:text-zinc-500 @error('apiKey') border-red-400 @enderror"
                 >
                 <button
@@ -95,7 +166,7 @@
                     </span>
                     <x-confirm-dialog
                         title="Hapus API Key Tersimpan?"
-                        message="Deteksi AI tidak akan berjalan sampai API key baru disimpan."
+                        message="Analisis AI tidak akan berjalan sampai API key baru disimpan."
                         confirm-text="Ya, Hapus"
                         variant="danger"
                         target="clearApiKey"
@@ -107,7 +178,7 @@
                     </x-confirm-dialog>
                 @else
                     <span class="inline-flex items-center gap-1">
-                        <x-phosphor-warning-circle class="h-3.5 w-3.5" /> Belum diatur - deteksi AI tidak berjalan tanpa API key
+                        <x-phosphor-warning-circle class="h-3.5 w-3.5" /> Belum diatur - analisis AI tidak berjalan tanpa API key
                     </span>
                 @endif
                 <button type="button" wire:click="testConnection" wire:loading.attr="disabled" wire:target="testConnection" class="ml-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-200 px-2.5 py-1 font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
@@ -137,7 +208,8 @@
             @endif
         </div>
 
-        {{-- Workspace ID (opsional) --}}
+        {{-- Workspace ID (opsional, khusus Anthropic) --}}
+        @if ($aiProvider === \App\Services\Monitoring\AiSettings::PROVIDER_ANTHROPIC)
         <div class="flex flex-col gap-2">
             <label for="workspaceId" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                 Workspace ID <span class="font-normal text-zinc-400">(opsional)</span>
@@ -157,85 +229,7 @@
                 <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
             @enderror
         </div>
-
-        </div>
-
-        <div class="flex flex-col gap-6 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
-
-        {{-- Toggle aktif --}}
-        <div class="flex items-center justify-between gap-4">
-            <div>
-                <p class="text-sm font-medium text-zinc-900 dark:text-white">Aktifkan Klasifikasi AI</p>
-                <p class="text-xs text-zinc-500 dark:text-zinc-400">Konfirmasi/bantah temuan keyword filter lewat Claude (teks & gambar) sebelum insiden dibuat.</p>
-            </div>
-            <button
-                type="button"
-                role="switch"
-                :aria-checked="$wire.aiEnabled"
-                wire:click="$toggle('aiEnabled')"
-                @class([
-                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition',
-                    'bg-accent-600' => $aiEnabled,
-                    'bg-zinc-200 dark:bg-zinc-700' => ! $aiEnabled,
-                ])
-            >
-                <span @class([
-                    'inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow transition',
-                    'translate-x-6' => $aiEnabled,
-                    'translate-x-1' => ! $aiEnabled,
-                ])></span>
-            </button>
-        </div>
-
-        {{-- Model --}}
-        <div class="flex flex-col gap-2">
-            <label for="aiModel" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Model</label>
-            <select
-                wire:model="aiModel"
-                id="aiModel"
-                class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white"
-            >
-                <option value="claude-haiku-4-5">Claude Haiku 4.5 - murah & cepat (direkomendasikan)</option>
-                <option value="claude-sonnet-5">Claude Sonnet 5 - lebih akurat, lebih mahal</option>
-                <option value="claude-opus-5">Claude Opus 5 - paling akurat, paling mahal</option>
-            </select>
-        </div>
-
-        {{-- Confidence & max images --}}
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div class="flex flex-col gap-2">
-                <label for="confidenceThreshold" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Ambang Batas Confidence</label>
-                <input
-                    wire:model="confidenceThreshold"
-                    id="confidenceThreshold"
-                    type="number"
-                    step="0.05"
-                    min="0"
-                    max="1"
-                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('confidenceThreshold') border-red-400 @enderror"
-                >
-                <p class="text-xs text-zinc-500 dark:text-zinc-400">Di bawah ini, bantahan AI dianggap belum yakin - insiden tetap dibuat dari keyword match.</p>
-                @error('confidenceThreshold')
-                    <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
-                @enderror
-            </div>
-
-            <div class="flex flex-col gap-2">
-                <label for="maxImages" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Maks. Gambar per Halaman</label>
-                <input
-                    wire:model="maxImages"
-                    id="maxImages"
-                    type="number"
-                    min="0"
-                    max="10"
-                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('maxImages') border-red-400 @enderror"
-                >
-                <p class="text-xs text-zinc-500 dark:text-zinc-400">Gambar promosi (banner) yang dikirim ke Claude untuk dibaca. 0 menonaktifkan pembacaan gambar.</p>
-                @error('maxImages')
-                    <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p>
-                @enderror
-            </div>
-        </div>
+        @endif
 
         </div>
 
@@ -253,10 +247,6 @@
                 </x-loading-label>
             </button>
         </div>
-
-        <p class="text-xs text-zinc-400 dark:text-zinc-500">
-            Kelola kata kunci judol & ambang batas keyword filter dari halaman <a href="{{ route('deteksi-judol') }}" wire:navigate class="font-medium text-accent-600 hover:underline dark:text-accent-400">Deteksi Judol</a>.
-        </p>
     </div>
 
     {{-- Email notifications --}}
@@ -285,7 +275,7 @@
                 ])></span>
             </button>
         </div>
-        <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">Kirim salinan setiap notifikasi (down time, serangan, SSL, judol) lewat email ke semua akun terdaftar, selain yang sudah tampil di lonceng notifikasi.</p>
+        <p class="-mt-4 text-xs text-zinc-500 dark:text-zinc-400">Kirim salinan setiap notifikasi (down time, serangan, SSL, DNS) lewat email ke semua akun terdaftar, selain yang sudah tampil di lonceng notifikasi.</p>
 
         {{-- SMTP --}}
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -529,7 +519,7 @@
                         <option value="{{ $value }}">{{ $label }}</option>
                     @endforeach
                 </select>
-                <p class="text-xs text-zinc-500 dark:text-zinc-400">Dipakai untuk menampilkan semua waktu (insiden, deteksi, notifikasi). Sekarang: {{ now()->translatedFormat('d M Y, H:i') }}.</p>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400">Dipakai untuk menampilkan semua waktu (insiden, notifikasi). Sekarang: {{ now()->translatedFormat('d M Y, H:i') }}.</p>
                 @error('appTimezone') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
             </div>
 
@@ -655,15 +645,6 @@
                     class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('defaultCheckIntervalMinutes') border-red-400 @enderror"
                 >
                 @error('defaultCheckIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-            </div>
-
-            <div class="flex flex-col gap-2">
-                <label for="defaultJudolScanIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Scan Judol (menit)</label>
-                <input
-                    wire:model="defaultJudolScanIntervalMinutes" id="defaultJudolScanIntervalMinutes" type="number" min="5" max="10080"
-                    class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-white @error('defaultJudolScanIntervalMinutes') border-red-400 @enderror"
-                >
-                @error('defaultJudolScanIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
             </div>
 
             <div class="flex flex-col gap-2">
@@ -1143,7 +1124,7 @@
                 </div>
 
                 <p class="text-zinc-500 dark:text-zinc-400">
-                    Satu entri cron ini juga yang menjalankan pengecekan uptime dan pemindaian judol. Untuk memastikan sudah benar, jalankan <code class="rounded bg-white px-1 py-0.5 dark:bg-zinc-900">php artisan schedule:list</code> - kalau <code class="rounded bg-white px-1 py-0.5 dark:bg-zinc-900">db:backup</code> muncul di sana, sisanya ditangani cron.
+                    Satu entri cron ini juga yang menjalankan pengecekan uptime dan tugas terjadwal lainnya. Untuk memastikan sudah benar, jalankan <code class="rounded bg-white px-1 py-0.5 dark:bg-zinc-900">php artisan schedule:list</code> - kalau <code class="rounded bg-white px-1 py-0.5 dark:bg-zinc-900">db:backup</code> muncul di sana, sisanya ditangani cron.
                 </p>
             </div>
         </div>

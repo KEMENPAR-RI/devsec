@@ -6,7 +6,7 @@
 ])
 
 {{--
-    Reusable shell for every list page (Situs, Insiden, Deteksi Judol, Notifikasi) -
+    Reusable shell for every list page (Situs, Insiden, Notifikasi) -
     one card holding the search/filter toolbar, the list content, and pagination,
     so all four stay visually symmetric and share one place to restyle from.
 

@@ -3,11 +3,9 @@
 namespace Tests\Feature;
 
 use App\Livewire\Incidents\Index as IncidentsIndex;
-use App\Livewire\JudolDetections\Index as JudolDetectionsIndex;
 use App\Livewire\Notifications\Index as NotificationsIndex;
 use App\Livewire\Websites\Index as WebsitesIndex;
 use App\Models\Incident;
-use App\Models\JudolFinding;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\WebsiteDownNotification;
@@ -52,35 +50,6 @@ class ListSearchTest extends TestCase
             ->set('search', 'kemenpar')
             ->assertSee('Situs down')
             ->assertDontSee('Insiden lain');
-    }
-
-    /**
-     * The judol page lists injection sites, so its search reaches what an operator
-     * actually has in hand: a domain, a phrase, a region, or a URL.
-     */
-    public function test_searching_judol_findings_filters_by_evidence_or_url(): void
-    {
-        $user = User::factory()->create();
-        $website = Website::factory()->create(['name' => 'Portal Kemenpar']);
-
-        JudolFinding::create([
-            'website_id' => $website->id, 'region_key' => 'footer', 'region_label' => 'Footer',
-            'attack_type' => 'backlink_injection', 'linked_domains' => ['gacor88.com'],
-            'affected_urls' => ['https://kemenpar.go.id/slot-gacor.html'], 'affected_count' => 1,
-            'status' => 'new', 'first_seen_at' => now(), 'last_seen_at' => now(),
-        ]);
-        JudolFinding::create([
-            'website_id' => $website->id, 'region_key' => 'header', 'region_label' => 'Header',
-            'attack_type' => 'backlink_injection', 'linked_domains' => ['togel99.net'],
-            'affected_urls' => ['https://kemenpar.go.id/normal-page.html'], 'affected_count' => 1,
-            'status' => 'new', 'first_seen_at' => now(), 'last_seen_at' => now(),
-        ]);
-
-        Livewire::actingAs($user)
-            ->test(JudolDetectionsIndex::class)
-            ->set('search', 'gacor88')
-            ->assertSee('gacor88.com')
-            ->assertDontSee('togel99.net');
     }
 
     public function test_searching_notifications_filters_by_title_or_message(): void

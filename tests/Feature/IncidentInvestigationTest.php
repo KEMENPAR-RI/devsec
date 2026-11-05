@@ -8,8 +8,8 @@ use App\Livewire\Incidents\Index;
 use App\Models\Incident;
 use App\Models\User;
 use App\Models\Website;
+use App\Services\Monitoring\AiSettings;
 use App\Services\Monitoring\IncidentInvestigator;
-use App\Services\Monitoring\JudolAiSettings;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -31,7 +31,7 @@ class IncidentInvestigationTest extends TestCase
             'title' => 'Situs down', 'status' => 'open', 'detected_at' => now(),
         ]);
 
-        $this->app->instance(IncidentInvestigator::class, new class(new JudolAiSettings) extends IncidentInvestigator
+        $this->app->instance(IncidentInvestigator::class, new class(new AiSettings) extends IncidentInvestigator
         {
             public function investigate(Incident $incident): string
             {
@@ -58,18 +58,18 @@ class IncidentInvestigationTest extends TestCase
             'title' => 'Situs down', 'status' => 'open', 'detected_at' => now(),
         ]);
 
-        $this->app->instance(IncidentInvestigator::class, new class(new JudolAiSettings) extends IncidentInvestigator
+        $this->app->instance(IncidentInvestigator::class, new class(new AiSettings) extends IncidentInvestigator
         {
             public function investigate(Incident $incident): string
             {
-                throw new RuntimeException('Belum ada Anthropic API key yang dikonfigurasi. Atur di halaman Pengaturan.');
+                throw new RuntimeException('Belum ada provider AI yang dikonfigurasi. Atur di halaman Pengaturan.');
             }
         });
 
         Livewire::actingAs($user)
             ->test(Index::class)
             ->call('investigate', $incident->uuid)
-            ->assertSee('Belum ada Anthropic API key yang dikonfigurasi. Atur di halaman Pengaturan.');
+            ->assertSee('Belum ada provider AI yang dikonfigurasi. Atur di halaman Pengaturan.');
 
         $this->assertNull($incident->fresh()->ai_analysis);
     }
@@ -114,7 +114,7 @@ class IncidentInvestigationTest extends TestCase
 
     protected function investigatorWithExposedDescribeApiError(): IncidentInvestigator
     {
-        return new class(new JudolAiSettings) extends IncidentInvestigator
+        return new class(new AiSettings) extends IncidentInvestigator
         {
             public function describeApiErrorForTest(Throwable $e): string
             {

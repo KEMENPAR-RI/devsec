@@ -2,14 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Jobs\ScanWebsiteForJudolJob;
 use App\Livewire\Websites\Index;
 use App\Models\Incident;
-use App\Models\JudolKeyword;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Website;
-use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\WebsiteChecker;
 use Database\Seeders\RoleSeeder;
 use Exception;
@@ -21,7 +18,6 @@ use Illuminate\Support\Sleep;
 use Livewire\Livewire;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
-use Throwable;
 
 /**
  * An offline site only comes back online on a check that really reached it.
@@ -109,71 +105,6 @@ class OfflineStaysOfflineTest extends TestCase
         $this->assertSame('up', $website->last_status);
         $this->assertSame(0, $website->consecutive_failures);
         $this->assertSame(0, Incident::where('website_id', $website->id)->open()->count());
-    }
-
-    // --- Judol crawl never touches uptime state --------------------------------
-
-    public static function failedCrawls(): array
-    {
-        return [
-            'timeout' => [fn () => throw new ConnectionException('cURL error 28: Operation timed out')],
-            'dns' => [fn () => throw new ConnectionException('cURL error 6: Could not resolve host')],
-            '503' => [fn () => Http::response('', 503)],
-            '403 blocked' => [fn () => Http::response('Forbidden', 403)],
-        ];
-    }
-
-    #[DataProvider('failedCrawls')]
-    public function test_a_failed_crawl_of_an_offline_site_leaves_it_offline(callable $response): void
-    {
-        JudolKeyword::firstOrCreate(['keyword' => 'togel singapore'], ['is_active' => true]);
-        Http::fake(['*' => $response]);
-        // A 403 as the last probe makes the down site scannable, so the crawl really runs.
-        $website = $this->offlineSite(lastStatusCode: 403);
-
-        (new ScanWebsiteForJudolJob($website->fresh()))->handle(new JudolScanner);
-
-        $this->assertStillOffline($website, expectedFailures: 3, expectedChecks: 3);
-    }
-
-    #[DataProvider('failedCrawls')]
-    public function test_a_failed_crawl_of_an_online_site_leaves_it_online(callable $response): void
-    {
-        JudolKeyword::firstOrCreate(['keyword' => 'togel singapore'], ['is_active' => true]);
-        Http::fake(['*' => $response]);
-        $website = Website::factory()->create(['url' => 'https://up.example', 'last_status' => 'up']);
-
-        (new JudolScanner)->scan($website->fresh());
-
-        $website->refresh();
-        $this->assertSame('up', $website->last_status);
-        $this->assertSame(0, $website->consecutive_failures);
-        $this->assertSame(0, $website->checks()->count());
-    }
-
-    public function test_a_failed_manual_url_scan_leaves_an_offline_site_offline(): void
-    {
-        Http::fake(fn () => throw new ConnectionException('cURL error 28: Operation timed out'));
-        $website = $this->offlineSite();
-
-        try {
-            (new JudolScanner)->scanUrlNow($website->fresh(), 'https://down.example/slot.html');
-        } catch (Throwable) {
-            // Surfaced to the operator as a form error; the status is what matters here.
-        }
-
-        $this->assertStillOffline($website, expectedFailures: 3, expectedChecks: 3);
-    }
-
-    public function test_a_skipped_scan_of_an_unreachable_offline_site_leaves_it_offline(): void
-    {
-        Http::fake(['*' => Http::response('ok', 200)]);
-        $website = $this->offlineSite();
-
-        (new ScanWebsiteForJudolJob($website->fresh()))->handle(new JudolScanner);
-
-        Http::assertNothingSent();
-        $this->assertStillOffline($website, expectedFailures: 3, expectedChecks: 3);
     }
 
     // --- Operator edits ----------------------------------------------------------

@@ -651,7 +651,6 @@ class DashboardOverviewTest extends TestCase
         Livewire::actingAs(User::factory()->create(['role_id' => $without->id]))
             ->test(Dashboard::class)
             ->assertOk()
-            ->assertSee('Judol baru')
             ->assertDontSee('Insiden terbuka')
             ->assertDontSee('Insiden Belum Selesai')
             ->assertDontSee('Insiden Terbaru')
@@ -700,8 +699,7 @@ class DashboardOverviewTest extends TestCase
             ->assertOk()
             ->assertDontSee('Tambah Situs')
             ->assertDontSee('Lihat semua situs')
-            ->assertDontSee(route('insiden'), escape: false)
-            ->assertDontSee(route('deteksi-judol'), escape: false);
+            ->assertDontSee(route('insiden'), escape: false);
 
         $this->assertFalse($component->instance()->canManage);
         $this->assertFalse($component->instance()->canViewSites);

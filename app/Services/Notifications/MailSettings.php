@@ -10,7 +10,7 @@ use Throwable;
  * Resolves email-notification config dynamically from the settings table (managed
  * from the Pengaturan page) - SMTP credentials plus a customizable subject/body
  * template - falling back to config('mail.*') / .env whenever no override has
- * been saved yet, same read pattern as App\Services\Monitoring\JudolAiSettings.
+ * been saved yet, same read pattern as App\Services\Monitoring\AiSettings.
  *
  * Email is entirely opt-in: enabled() gates whether the 'mail' channel is added
  * at all (see App\Notifications\Concerns\SendsIncidentEmail), so a fresh install
@@ -158,7 +158,7 @@ class MailSettings
             '{{website_name}}' => 'Nama situs (kosong untuk email non-insiden)',
             '{{website_url}}' => 'URL situs (kosong untuk email non-insiden)',
             '{{severity}}' => 'Tingkat keparahan (critical/warning/info)',
-            '{{type}}' => 'Jenis email (downtime/attack/ssl/judol/recovered/password_reset)',
+            '{{type}}' => 'Jenis email (downtime/attack/ssl/recovered/password_reset)',
             '{{detected_at}}' => 'Waktu kejadian terdeteksi',
             '{{app_name}}' => 'Nama aplikasi',
         ];
@@ -193,8 +193,7 @@ class MailSettings
         $actionLabel = (string) ($data['action_label'] ?? 'Lihat Detail');
 
         // Plain text arriving from outside the template. {{title}} and {{message}}
-        // in particular carry data read off a monitored site - JudolContentDetected
-        // builds its message from the domains a hacked page links out to - so they
+        // in particular can carry data read off a monitored site, so they
         // are escaped here rather than trusted, same as renderDetails() already
         // does for every row of the details table.
         $text = [

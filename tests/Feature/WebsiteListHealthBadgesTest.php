@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Livewire\Websites\Index;
 use App\Models\Incident;
-use App\Models\JudolDetection;
 use App\Models\User;
 use App\Models\Website;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -37,14 +36,6 @@ class WebsiteListHealthBadgesTest extends TestCase
             ]);
         }
 
-        JudolDetection::create([
-            'website_id' => $website->id,
-            'url' => $website->url.'/slot.html',
-            'matched_keywords' => ['slot gacor'],
-            'status' => 'new',
-            'detected_at' => now(),
-        ]);
-
         return $website;
     }
 
@@ -66,31 +57,8 @@ class WebsiteListHealthBadgesTest extends TestCase
         Livewire::actingAs($user)
             ->test(Index::class)
             ->assertSeeHtml('2 insiden terbuka')
-            ->assertSeeHtml('Judol baru (belum ditinjau) di 1 halaman')
             ->assertSeeHtml('nama host tidak cocok dengan sertifikat')
             ->assertSeeHtml('Nilai keamanan header &amp; TLS: B (81/100)');
-    }
-
-    public function test_reviewed_or_ignored_judol_findings_do_not_light_the_chip(): void
-    {
-        $user = User::factory()->create();
-        $website = $this->siteWithFindings();
-
-        foreach (['ignored', 'reviewed'] as $status) {
-            JudolDetection::create([
-                'website_id' => $website->id,
-                'url' => $website->url."/{$status}.html",
-                'matched_keywords' => ['slot gacor'],
-                'status' => $status,
-                'detected_at' => now(),
-            ]);
-        }
-
-        Livewire::actingAs($user)->test(Index::class)->assertSeeHtml('Judol baru (belum ditinjau) di 1 halaman');
-
-        JudolDetection::where('status', 'new')->update(['status' => 'ignored']);
-
-        Livewire::actingAs($user)->test(Index::class)->assertDontSeeHtml('Judol baru (belum ditinjau)');
     }
 
     public function test_query_count_does_not_grow_with_the_number_of_rows(): void

@@ -15,8 +15,8 @@ use Tests\TestCase;
  *
  * The first is the content of the sites it watches: a monitored site being under
  * someone else's control is not an edge case here, it is the entire premise of
- * the judol scanner. Everything the crawler brings back - the URLs above all -
- * is therefore hostile text that happens to be stored in our own database.
+ * a monitor. Everything it brings back - error messages above all - is
+ * therefore hostile text that happens to be stored in our own database.
  *
  * The second is the request headers, which any client can write. They decide who
  * the rate limiter thinks it is talking to.
@@ -26,25 +26,22 @@ class UntrustedInputTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * A judol incident quotes the flagged page's URL, and that URL was read
-     * straight off an <a href> on the hacked site (JudolScanner::resolveUrl
-     * returns an absolute href verbatim, normalizeUrl only drops the fragment).
-     * The detail block on this page is the one place that renders those lines as
-     * HTML, so it is the one place the markup could have executed.
+     * A downtime incident quotes the error the monitored site answered with, which
+     * the site controls. The detail block on this page is the one place that
+     * renders those lines as HTML, so it is the one place the markup could have
+     * executed.
      */
-    public function test_a_url_harvested_from_a_hacked_site_cannot_inject_markup(): void
+    public function test_text_read_from_a_monitored_site_cannot_inject_markup(): void
     {
         $website = Website::factory()->create(['name' => 'Portal Layanan']);
 
         Incident::create([
             'website_id' => $website->id,
-            'type' => 'judol',
+            'type' => 'downtime',
             'severity' => 'critical',
-            'title' => 'Konten judi online terdeteksi di Portal Layanan',
-            'description' => 'Halaman terindikasi konten judi online.',
-            // The slug matches a keyword (which is what gets the page flagged at
-            // all) and the query string carries the payload.
-            'meta' => ['url' => 'https://portal.test/slot-gacor/?x=<img src=x onerror=alert(1)>'],
+            'title' => 'Portal Layanan tidak dapat diakses',
+            'description' => 'Situs tidak merespons.',
+            'meta' => ['error_message' => 'Bad gateway <img src=x onerror=alert(1)>'],
             'status' => 'open',
             'detected_at' => now(),
         ]);
@@ -54,20 +51,19 @@ class UntrustedInputTest extends TestCase
 
         $response->assertOk();
         $response->assertDontSee('<img src=x', escape: false);
-        $response->assertSee('URL Halaman: https://portal.test/slot-gacor/?x=&lt;img src=x', escape: false);
+        $response->assertSee('Pesan Error: Bad gateway &lt;img src=x', escape: false);
     }
 
     /**
-     * The same text reaches the admin a second way, in the alert email:
-     * JudolContentDetected builds its {{message}} out of the domains the hacked
-     * page links to. {{title}} and {{message}} are dropped into an HTML body, so
-     * they are escaped like every other value that came from outside.
+     * The same text reaches the admin a second way, in the alert email.
+     * {{title}} and {{message}} are dropped into an HTML body, so they are
+     * escaped like every other value that came from outside.
      */
     public function test_the_email_body_escapes_the_text_it_is_handed(): void
     {
         $html = TemplatedMail::for([
-            'title' => 'Konten judi online di Portal <script>alert(1)</script>',
-            'message' => 'Tautan ke situs judi: <img src=x onerror=alert(1)>',
+            'title' => 'Situs down di Portal <script>alert(1)</script>',
+            'message' => 'Pesan dari situs: <img src=x onerror=alert(1)>',
         ])->render();
 
         $this->assertStringNotContainsString('<script>', $html);

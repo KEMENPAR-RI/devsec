@@ -119,7 +119,6 @@ class AppConfigurationTest extends TestCase
         Livewire::actingAs($this->superadmin())
             ->test(SettingsIndex::class)
             ->set('defaultCheckIntervalMinutes', 12)
-            ->set('defaultJudolScanIntervalMinutes', 240)
             ->set('defaultDownThresholdFailures', 5)
             ->set('defaultResponseTimeThresholdMs', 20000)
             ->call('save')
@@ -129,7 +128,6 @@ class AppConfigurationTest extends TestCase
             ->test(WebsitesIndex::class)
             ->call('openCreate')
             ->assertSet('checkIntervalMinutes', 12)
-            ->assertSet('judolScanIntervalMinutes', 240)
             ->assertSet('downThresholdFailures', 5)
             ->assertSet('responseTimeThresholdMs', 20000);
     }
@@ -159,7 +157,7 @@ class AppConfigurationTest extends TestCase
         $this->actingAs($this->superadmin())
             ->get(route('pengaturan'))
             ->assertOk()
-            ->assertSee('Klasifikasi AI')
+            ->assertSee('Provider AI')
             ->assertSee('Konfigurasi Email')
             ->assertSee('Konfigurasi Aplikasi')
             // The template editor kept its home inside the email tab.

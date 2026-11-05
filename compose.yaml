@@ -80,18 +80,6 @@ services:
       app:
         condition: service_healthy
 
-  # Mirrors deploy/security-worker-scans.service (scans)
-  queue-scans:
-    <<: *php
-    command: >-
-      php artisan queue:work database
-      --queue=${MONITORING_QUEUE_SCANS:-scans}
-      --sleep=5 --tries=1 --timeout=300 --max-time=3600 --memory=128 --max-jobs=100
-    stop_grace_period: 330s
-    depends_on:
-      app:
-        condition: service_healthy
-
   scheduler:
     <<: *php
     command: ["php", "artisan", "schedule:work"]

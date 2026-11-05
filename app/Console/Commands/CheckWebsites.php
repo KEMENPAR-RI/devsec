@@ -38,9 +38,8 @@ class CheckWebsites extends Command
                 continue;
             }
 
-            // Mark "just dispatched" before the check even runs - see ScanJudol for
-            // why (same class of bug: a slow/hanging probe could otherwise still be
-            // "due" on the next tick and get queued a second time).
+            // Mark "just dispatched" before the check even runs: a slow/hanging probe
+            // could otherwise still be "due" on the next tick and get queued a second time.
             try {
                 $website->update(['last_checked_at' => now()]);
                 Bus::dispatch($job);

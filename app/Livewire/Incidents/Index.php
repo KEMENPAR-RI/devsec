@@ -92,9 +92,7 @@ class Index extends Component
     {
         $this->authorize('insiden.delete');
 
-        // Scoped to what this page actually lists - wiping judol incidents from here
-        // would silently break the detections that link to them.
-        Incident::query()->where('type', '!=', 'judol')->delete();
+        Incident::query()->delete();
 
         $this->resetPage();
         $this->toastSuccess('Semua data insiden website berhasil dihapus.');
@@ -106,9 +104,6 @@ class Index extends Component
     protected function baseQuery()
     {
         return Incident::query()
-            // Judol findings have their own page, with their own evidence and
-            // workflow; leaving them here buried the website-health incidents.
-            ->where('type', '!=', 'judol')
             ->when($this->type, fn ($q) => $q->where('type', $this->type))
             ->when($this->status, fn ($q) => $q->where('status', $this->status))
             ->when($this->search, fn ($q) => $q->where(fn ($q) => $q

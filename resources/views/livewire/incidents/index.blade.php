@@ -3,14 +3,14 @@
     <div class="enter flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
             <h1 class="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">Insiden</h1>
-            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Down time, anomali serangan, SSL, perubahan DNS, dan masa berlaku domain - dikelompokkan per situs per hari. Temuan judol ada di halaman Deteksi Judol.</p>
+            <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Down time, anomali serangan, SSL, perubahan DNS, dan masa berlaku domain - dikelompokkan per situs per hari.</p>
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-auto">
             @can('insiden.delete')
                 <x-confirm-dialog
                     title="Hapus Semua Data Insiden?"
-                    message="Semua insiden website (down time, serangan, SSL) akan dihapus, apa pun filter yang aktif. Temuan judol tidak ikut terhapus. Tindakan ini tidak bisa dibatalkan."
+                    message="Semua insiden website (down time, serangan, SSL) akan dihapus, apa pun filter yang aktif. Tindakan ini tidak bisa dibatalkan."
                     confirm-text="Ya, Hapus Semua"
                     variant="danger"
                     target="deleteAll"
@@ -95,8 +95,6 @@
                                     ])>
                                         @if ($incident->type === 'downtime')
                                             <x-phosphor-wifi-x class="h-3.5 w-3.5" />
-                                        @elseif ($incident->type === 'judol')
-                                            <x-phosphor-shield-warning class="h-3.5 w-3.5" />
                                         @elseif ($incident->type === 'ssl')
                                             <x-phosphor-lock-key class="h-3.5 w-3.5" />
                                         @else

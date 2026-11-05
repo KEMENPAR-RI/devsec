@@ -3,16 +3,13 @@
 namespace Tests\Feature;
 
 use App\Models\Incident;
-use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\User;
 use App\Models\Website;
 use App\Notifications\AttackAnomalyDetected;
-use App\Notifications\JudolContentDetected;
 use App\Notifications\SslExpiringNotification;
 use App\Notifications\WebsiteDownNotification;
 use App\Notifications\WebsiteRecoveredNotification;
-use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\WebsiteChecker;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -197,20 +194,6 @@ class IncidentEmailCoverageTest extends TestCase
 
         $this->assertEmailed(SslExpiringNotification::class);
         $this->assertSslIncident($website, 'chain', 'warning');
-    }
-
-    public function test_judol_emails(): void
-    {
-        JudolKeyword::firstOrCreate(['keyword' => 'slot gacor'], ['is_active' => true]);
-        Http::fake([
-            'judol.example/sitemap.xml' => Http::response('', 404),
-            'judol.example' => Http::response('<title>Slot Gacor</title>', 200),
-        ]);
-        $website = Website::factory()->create(['url' => 'http://judol.example']);
-
-        (new JudolScanner)->scan($website);
-
-        $this->assertEmailed(JudolContentDetected::class);
     }
 
     public function test_nothing_is_emailed_while_email_is_switched_off(): void

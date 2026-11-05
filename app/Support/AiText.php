@@ -2,11 +2,9 @@
 
 namespace App\Support;
 
-use Illuminate\Support\Str;
-
 /**
  * Strips Markdown out of model-written prose so it renders as clean text wherever
- * the app prints it as-is (incident analysis panel, judol AI findings).
+ * the app prints it as-is (incident analysis panel).
  *
  * Asking for plain text in the prompt helps but is not reliable - models reach for
  * "## Heading" and "**bold**" by habit - so the syntax is removed deterministically
@@ -42,14 +40,5 @@ class AiText
 
         // Stripping headings and rules tends to leave runs of blank lines behind.
         return trim(preg_replace('/\n{3,}/', "\n\n", $lines));
-    }
-
-    /**
-     * A one-paragraph form for places with no room for line breaks (badge tooltips,
-     * the manual-scan result strip on a site's page).
-     */
-    public static function inline(string $text): string
-    {
-        return Str::squish(str_replace('•', '-', static::clean($text)));
     }
 }

@@ -64,7 +64,7 @@
                                 'font-semibold' => $isUnread,
                                 'font-medium' => ! $isUnread,
                             ])>{{ $notification->data['title'] ?? 'Notifikasi' }}</span>
-                            {{-- Batched findings (JudolContentDetected) carry a count --}}
+                            {{-- Batched notifications carry a count --}}
                             @if (($notification->data['count'] ?? 1) > 1)
                                 <span class="mt-0.5 shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">{{ $notification->data['count'] }}</span>
                             @endif

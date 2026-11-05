@@ -54,8 +54,6 @@ class Index extends Component
 
     public int $checkIntervalMinutes = 5;
 
-    public int $judolScanIntervalMinutes = 360;
-
     public int $downThresholdFailures = 3;
 
     public int $responseTimeThresholdMs = 15000;
@@ -99,13 +97,12 @@ class Index extends Component
     {
         $this->authorize('situs.create');
 
-        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'judolScanIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'dnsIpRotates', 'isPriority', 'domainExpiresAt']);
+        $this->reset(['editing', 'name', 'url', 'checkIntervalMinutes', 'downThresholdFailures', 'responseTimeThresholdMs', 'isActive', 'isInternalOnly', 'dnsIpRotates', 'isPriority', 'domainExpiresAt']);
 
         // Defaults come from Pengaturan > Konfigurasi Aplikasi rather than being
         // hard-coded here, so an operator can set them once for every new site.
         $defaults = app(AppSettings::class)->websiteDefaults();
         $this->checkIntervalMinutes = $defaults['check_interval_minutes'];
-        $this->judolScanIntervalMinutes = $defaults['judol_scan_interval_minutes'];
         $this->downThresholdFailures = $defaults['down_threshold_failures'];
         $this->responseTimeThresholdMs = $defaults['response_time_threshold_ms'];
         $this->isActive = true;
@@ -120,7 +117,6 @@ class Index extends Component
         $this->name = $website->name;
         $this->url = $website->url;
         $this->checkIntervalMinutes = $website->check_interval_minutes;
-        $this->judolScanIntervalMinutes = $website->judol_scan_interval_minutes;
         $this->downThresholdFailures = $website->down_threshold_failures;
         $this->responseTimeThresholdMs = $website->response_time_threshold_ms;
         $this->isActive = $website->is_active;
@@ -143,7 +139,6 @@ class Index extends Component
                 Rule::unique('websites', 'url')->ignore($this->editing?->id),
             ],
             'checkIntervalMinutes' => ['required', 'integer', 'min:1', 'max:1440'],
-            'judolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'downThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
             'responseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:25000'],
             'isActive' => ['boolean'],
@@ -169,7 +164,6 @@ class Index extends Component
             'name' => $data['name'],
             'url' => rtrim($data['url'], '/'),
             'check_interval_minutes' => $data['checkIntervalMinutes'],
-            'judol_scan_interval_minutes' => $data['judolScanIntervalMinutes'],
             'down_threshold_failures' => $data['downThresholdFailures'],
             'response_time_threshold_ms' => $data['responseTimeThresholdMs'],
             'is_active' => $data['isActive'],
@@ -200,8 +194,7 @@ class Index extends Component
     }
 
     /**
-     * Wipes every website - cascades (DB foreign keys) to its checks, incidents,
-     * and judol detections too. Bound to both "Reset" and "Hapus Data" in the view.
+     * Wipes every website - cascades (DB foreign keys) to its checks and incidents too. Bound to both "Reset" and "Hapus Data" in the view.
      */
     public function deleteAll(): void
     {
@@ -210,7 +203,7 @@ class Index extends Component
         Website::query()->delete();
 
         $this->resetPage();
-        $this->toastSuccess('Semua data situs (beserta riwayat cek, insiden, dan deteksi judolnya) berhasil dihapus.');
+        $this->toastSuccess('Semua data situs (beserta riwayat cek dan insidennya) berhasil dihapus.');
     }
 
     public function openBulk(): void
@@ -321,7 +314,6 @@ class Index extends Component
      */
     public array $massApply = [
         'checkIntervalMinutes' => false,
-        'judolScanIntervalMinutes' => false,
         'downThresholdFailures' => false,
         'responseTimeThresholdMs' => false,
         'isActive' => false,
@@ -330,8 +322,6 @@ class Index extends Component
     ];
 
     public int $massCheckIntervalMinutes = 5;
-
-    public int $massJudolScanIntervalMinutes = 360;
 
     public int $massDownThresholdFailures = 3;
 
@@ -346,7 +336,6 @@ class Index extends Component
     /** The mass-edit form field for each toggle, and the column it writes to. */
     protected const MASS_FIELDS = [
         'checkIntervalMinutes' => ['massCheckIntervalMinutes', 'check_interval_minutes'],
-        'judolScanIntervalMinutes' => ['massJudolScanIntervalMinutes', 'judol_scan_interval_minutes'],
         'downThresholdFailures' => ['massDownThresholdFailures', 'down_threshold_failures'],
         'responseTimeThresholdMs' => ['massResponseTimeThresholdMs', 'response_time_threshold_ms'],
         'isActive' => ['massIsActive', 'is_active'],
@@ -375,7 +364,6 @@ class Index extends Component
         // to apply, not whatever the last edited site happened to use.
         $defaults = app(AppSettings::class)->websiteDefaults();
         $this->massCheckIntervalMinutes = $defaults['check_interval_minutes'];
-        $this->massJudolScanIntervalMinutes = $defaults['judol_scan_interval_minutes'];
         $this->massDownThresholdFailures = $defaults['down_threshold_failures'];
         $this->massResponseTimeThresholdMs = $defaults['response_time_threshold_ms'];
 
@@ -594,8 +582,6 @@ class Index extends Component
             // Counted in the page query itself, so the row badges add no per-row queries.
             ->withCount([
                 'incidents as open_incidents_count' => fn ($q) => $q->open(),
-                // Only unreviewed findings, like DashboardOverview::newJudolCount().
-                'judolDetections' => fn ($q) => $q->where('status', 'new'),
             ])
             ->paginate(10);
 

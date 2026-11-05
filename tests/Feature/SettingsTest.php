@@ -2,28 +2,22 @@
 
 namespace Tests\Feature;
 
-use App\Livewire\JudolDetections\Index;
 use App\Livewire\Settings\Index as SettingsIndex;
-use App\Models\JudolDetection;
-use App\Models\JudolFinding;
-use App\Models\JudolKeyword;
 use App\Models\Setting;
 use App\Models\User;
-use App\Models\Website;
-use App\Services\Monitoring\JudolAiClassifier;
-use App\Services\Monitoring\JudolAiSettings;
-use App\Services\Monitoring\JudolScanner;
+use App\Services\Monitoring\AiChat;
+use App\Services\Monitoring\AiSettings;
 use App\Services\Notifications\MailSettings;
+use App\Services\Security\OutboundUrlGuard;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Livewire\Livewire;
+use ReflectionMethod;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -56,56 +50,60 @@ class SettingsTest extends TestCase
         $this->assertNull(Setting::get('some_key'));
     }
 
-    public function test_judol_ai_settings_falls_back_to_config_until_overridden(): void
+    public function test_ai_settings_default_to_anthropic_until_overridden(): void
     {
-        config([
-            'judol.ai.model' => 'claude-haiku-4-5',
-            'judol.ai.confidence_threshold' => 0.5,
-            'judol.ai.max_images' => 3,
-        ]);
+        $settings = new AiSettings;
 
-        $settings = new JudolAiSettings;
-
-        $this->assertFalse($settings->enabled());
+        $this->assertSame('anthropic', $settings->provider());
+        $this->assertSame('https://api.anthropic.com', $settings->baseUrl());
         $this->assertSame('claude-haiku-4-5', $settings->model());
-        $this->assertSame(0.5, $settings->confidenceThreshold());
-        $this->assertSame(3, $settings->maxImages());
+        $this->assertFalse($settings->configured());
 
-        Setting::set('judol_ai_enabled', '1');
-        Setting::set('judol_ai_model', 'claude-sonnet-5');
-        Setting::set('judol_ai_confidence_threshold', '0.8');
-        Setting::set('judol_ai_max_images', '5');
+        Setting::set('ai_model', 'claude-sonnet-5');
+        $this->assertSame('claude-sonnet-5', (new AiSettings)->model());
 
-        // A fresh instance to be sure nothing is memoized on the object itself.
-        $settings = new JudolAiSettings;
-
-        $this->assertTrue($settings->enabled());
-        $this->assertSame('claude-sonnet-5', $settings->model());
-        $this->assertSame(0.8, $settings->confidenceThreshold());
-        $this->assertSame(5, $settings->maxImages());
+        // A blank saved model never wins over the default.
+        Setting::set('ai_model', '');
+        $this->assertSame('claude-haiku-4-5', (new AiSettings)->model());
     }
 
-    public function test_judol_ai_settings_model_falls_back_to_the_default_even_when_the_config_value_is_blank(): void
+    public function test_a_custom_provider_is_configured_with_an_endpoint_and_a_model_even_without_a_key(): void
     {
-        config(['judol.ai.model' => '']);
+        Setting::set('ai_provider', 'openai');
 
-        $this->assertSame('claude-haiku-4-5', (new JudolAiSettings)->model());
+        $settings = new AiSettings;
+        $this->assertSame('', $settings->baseUrl());
+        $this->assertSame('', $settings->model());
+        $this->assertFalse($settings->configured());
 
-        Setting::set('judol_ai_model', 'claude-sonnet-5');
-        $this->assertSame('claude-sonnet-5', (new JudolAiSettings)->model());
+        Setting::set('ai_base_url', 'https://llm.example.com/v1/');
+        Setting::set('ai_model', 'llama3');
+
+        $settings = new AiSettings;
+        $this->assertSame('https://llm.example.com/v1', $settings->baseUrl());
+        $this->assertTrue($settings->configured());
+        $this->assertFalse($settings->hasApiKey());
     }
 
-    public function test_judol_ai_settings_decrypts_the_stored_api_key(): void
+    public function test_an_unknown_provider_falls_back_to_anthropic(): void
+    {
+        Setting::set('ai_provider', 'something-else');
+
+        $this->assertSame('anthropic', (new AiSettings)->provider());
+    }
+
+    public function test_ai_settings_decrypts_the_stored_api_key(): void
     {
         // Nothing saved yet - no key at all, .env is never consulted.
-        $settings = new JudolAiSettings;
+        $settings = new AiSettings;
         $this->assertFalse($settings->hasApiKey());
         $this->assertNull($settings->apiKey());
 
-        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-real-key'));
+        Setting::set('ai_api_key', Crypt::encryptString('sk-ant-real-key'));
 
-        $settings = new JudolAiSettings;
+        $settings = new AiSettings;
         $this->assertTrue($settings->hasApiKey());
+        $this->assertTrue($settings->configured());
         $this->assertSame('sk-ant-real-key', $settings->apiKey());
     }
 
@@ -114,20 +112,18 @@ class SettingsTest extends TestCase
         putenv('ANTHROPIC_API_KEY=sk-test');
         putenv('ANTHROPIC_AUTH_TOKEN=env-token');
         putenv('ANTHROPIC_BASE_URL=http://attacker.example');
-        Setting::set('judol_ai_enabled', '1');
 
-        $settings = new JudolAiSettings;
-        $this->assertFalse($settings->usable());
+        $this->assertFalse((new AiSettings)->configured());
 
         try {
-            $settings->client();
-            $this->fail('client() must not be built from env credentials');
+            $this->anthropicClient(new AiChat(new AiSettings));
+            $this->fail('the client must not be built from env credentials');
         } catch (RuntimeException) {
         }
 
         // With a saved key, env still can't add a token or redirect the base URL.
-        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-real-key'));
-        $client = (new JudolAiSettings)->client();
+        Setting::set('ai_api_key', Crypt::encryptString('sk-ant-real-key'));
+        $client = $this->anthropicClient(new AiChat(new AiSettings));
 
         $this->assertSame('sk-ant-real-key', $client->apiKey);
         $this->assertSame('', $client->authToken);
@@ -136,9 +132,9 @@ class SettingsTest extends TestCase
 
     public function test_client_is_bounded_by_configured_timeout_and_retries(): void
     {
-        config(['judol.ai.timeout' => 12.5, 'judol.ai.max_retries' => 0]);
+        config(['ai.timeout' => 12.5, 'ai.max_retries' => 0]);
 
-        $client = (new JudolAiSettings)->client('sk-ant-test', 'ws-1');
+        $client = $this->anthropicClient(new AiChat(new AiSettings, ['api_key' => 'sk-ant-test', 'workspace_id' => 'ws-1']));
         $options = (fn () => $this->options)->call($client);
 
         $this->assertSame(12.5, $options->timeout);
@@ -151,9 +147,10 @@ class SettingsTest extends TestCase
 
     public function test_client_caps_a_large_retry_after(): void
     {
-        config(['judol.ai.max_retry_delay' => 10]);
+        config(['ai.max_retry_delay' => 10]);
 
-        $transporter = (fn () => $this->options)->call((new JudolAiSettings)->client('sk-ant-test'))->transporter;
+        $client = $this->anthropicClient(new AiChat(new AiSettings, ['api_key' => 'sk-ant-test']));
+        $transporter = (fn () => $this->options)->call($client)->transporter;
         $transporter->getConfig('handler')->setHandler(new MockHandler([
             new Response(429, ['retry-after' => '600', 'retry-after-ms' => '600000']),
             new Response(429, ['retry-after' => '3']),
@@ -168,48 +165,16 @@ class SettingsTest extends TestCase
         $this->assertSame('3', $transporter->sendRequest($request)->getHeaderLine('retry-after'));
     }
 
-    public function test_scanner_skips_ai_when_only_env_has_a_key(): void
-    {
-        putenv('ANTHROPIC_API_KEY=sk-test');
-        NotificationFacade::fake();
-        Setting::set('judol_ai_enabled', '1');
-        JudolKeyword::firstOrCreate(['keyword' => 'slot gacor'], ['is_active' => true]);
-        Http::fake(['envkey.example' => Http::response('<title>Slot Gacor</title>', 200)]);
-
-        $calls = 0;
-        $this->app->instance(JudolAiClassifier::class, new class(new JudolAiSettings, $calls) extends JudolAiClassifier
-        {
-            public function __construct(JudolAiSettings $settings, public int &$calls)
-            {
-                parent::__construct($settings);
-            }
-
-            public function classify(string $url, string $text, array $matchedKeywords, array $imageUrls = []): array
-            {
-                $this->calls++;
-
-                return ['is_judol' => true, 'confidence' => 1.0, 'reasoning' => 'x'];
-            }
-        });
-
-        $website = Website::factory()->create(['url' => 'http://envkey.example']);
-        (new JudolScanner)->scanUrlNow($website, 'http://envkey.example');
-
-        $this->assertSame(0, $calls);
-        $this->assertNull(JudolDetection::where('website_id', $website->id)->firstOrFail()->ai_verdict);
-    }
-
     public function test_undecryptable_stored_key_is_not_usable(): void
     {
         Log::spy();
-        Setting::set('judol_ai_enabled', '1');
-        Setting::set('anthropic_api_key', 'not-a-valid-ciphertext');
+        Setting::set('ai_api_key', 'not-a-valid-ciphertext');
 
-        $settings = new JudolAiSettings;
+        $settings = new AiSettings;
 
         $this->assertNull($settings->apiKey());
         $this->assertFalse($settings->hasApiKey());
-        $this->assertFalse($settings->usable());
+        $this->assertFalse($settings->configured());
         Log::shouldHaveReceived('warning')->withArgs(
             fn (string $message) => ! str_contains($message, 'not-a-valid-ciphertext')
         );
@@ -222,76 +187,63 @@ class SettingsTest extends TestCase
         Livewire::actingAs($user)
             ->test(SettingsIndex::class)
             ->set('apiKey', 'sk-ant-new-key')
-            ->set('aiEnabled', true)
             ->set('aiModel', 'claude-sonnet-5')
-            ->set('confidenceThreshold', 0.7)
-            ->set('maxImages', 2)
             ->call('save')
             ->assertHasNoErrors();
 
-        $this->assertSame('sk-ant-new-key', Crypt::decryptString(Setting::get('anthropic_api_key')));
-        $this->assertSame('1', Setting::get('judol_ai_enabled'));
-        $this->assertSame('claude-sonnet-5', Setting::get('judol_ai_model'));
-        $this->assertSame('0.7', Setting::get('judol_ai_confidence_threshold'));
-        $this->assertSame('2', Setting::get('judol_ai_max_images'));
+        $this->assertSame('sk-ant-new-key', Crypt::decryptString(Setting::get('ai_api_key')));
+        $this->assertSame('anthropic', Setting::get('ai_provider'));
+        $this->assertSame('claude-sonnet-5', Setting::get('ai_model'));
     }
 
-    public function test_settings_page_rejects_an_invalid_confidence_threshold(): void
+    public function test_settings_page_saves_a_custom_provider(): void
     {
-        $user = User::factory()->create();
+        OutboundUrlGuard::fakeDns(['llm.example.com' => ['93.184.216.34']]);
 
-        Livewire::actingAs($user)
+        Livewire::actingAs(User::factory()->create())
             ->test(SettingsIndex::class)
-            ->set('confidenceThreshold', 1.5)
+            ->set('aiProvider', 'openai')
+            ->set('aiBaseUrl', 'https://llm.example.com/v1/')
+            ->set('aiModel', 'llama3')
             ->call('save')
-            ->assertHasErrors(['confidenceThreshold']);
+            ->assertHasNoErrors();
+
+        $this->assertSame('openai', Setting::get('ai_provider'));
+        $this->assertSame('https://llm.example.com/v1', Setting::get('ai_base_url'));
+        $this->assertSame('llama3', Setting::get('ai_model'));
+        $this->assertTrue((new AiSettings)->configured());
+    }
+
+    public function test_a_custom_provider_requires_an_endpoint_and_a_model(): void
+    {
+        Livewire::actingAs(User::factory()->create())
+            ->test(SettingsIndex::class)
+            ->set('aiProvider', 'openai')
+            ->set('aiBaseUrl', '')
+            ->set('aiModel', '')
+            ->call('save')
+            ->assertHasErrors(['aiBaseUrl', 'aiModel']);
+    }
+
+    public function test_settings_page_rejects_an_unknown_provider(): void
+    {
+        Livewire::actingAs(User::factory()->create())
+            ->test(SettingsIndex::class)
+            ->set('aiProvider', 'skynet')
+            ->call('save')
+            ->assertHasErrors(['aiProvider']);
     }
 
     public function test_clear_api_key_removes_the_stored_setting(): void
     {
         $user = User::factory()->create();
-        Setting::set('anthropic_api_key', Crypt::encryptString('sk-ant-existing'));
+        Setting::set('ai_api_key', Crypt::encryptString('sk-ant-existing'));
 
         Livewire::actingAs($user)
             ->test(SettingsIndex::class)
             ->call('clearApiKey');
 
-        $this->assertNull(Setting::get('anthropic_api_key'));
-    }
-
-    public function test_judol_detections_page_can_manage_keywords_and_threshold(): void
-    {
-        $user = User::factory()->create();
-        $keyword = JudolKeyword::create(['keyword' => 'contoh spam lama', 'is_active' => true]);
-
-        $component = Livewire::actingAs($user)
-            ->test(Index::class)
-            ->set('newKeyword', 'spam baru unik')
-            ->call('addKeyword')
-            ->assertHasNoErrors();
-
-        $this->assertDatabaseHas('judol_keywords', ['keyword' => 'spam baru unik', 'is_active' => true]);
-
-        $component->call('toggleKeyword', $keyword->uuid);
-        $this->assertFalse($keyword->fresh()->is_active);
-
-        $component->call('removeKeyword', $keyword->uuid);
-        $this->assertDatabaseMissing('judol_keywords', ['id' => $keyword->id]);
-
-        $component->set('threshold', 2)->call('saveThreshold')->assertHasNoErrors();
-        $this->assertSame('2', Setting::get('judol_score_threshold'));
-    }
-
-    public function test_judol_detections_page_rejects_a_duplicate_keyword(): void
-    {
-        $user = User::factory()->create();
-        JudolKeyword::create(['keyword' => 'sudah ada', 'is_active' => true]);
-
-        Livewire::actingAs($user)
-            ->test(Index::class)
-            ->set('newKeyword', 'sudah ada')
-            ->call('addKeyword')
-            ->assertHasErrors(['newKeyword']);
+        $this->assertNull(Setting::get('ai_api_key'));
     }
 
     public function test_settings_page_saves_mail_config_and_encrypts_the_password(): void
@@ -365,35 +317,8 @@ class SettingsTest extends TestCase
             ->assertSet('mailTemplateBody', $mailSettings->defaultBodyTemplate());
     }
 
-    /**
-     * The re-check button now hangs off an affected URL inside an injection site,
-     * so the page has to be reached the way the crawl reaches it: scan(), which
-     * files the finding, rather than scanUrlNow(), which files only the detection.
-     */
-    public function test_recheck_button_removes_a_now_stale_detection(): void
+    private function anthropicClient(AiChat $chat)
     {
-        NotificationFacade::fake();
-        $user = User::factory()->create();
-        $keyword = JudolKeyword::create(['keyword' => 'frasa ui stale tes', 'is_active' => true]);
-
-        Http::fake([
-            'ui-stale-test.example/sitemap.xml' => Http::response('', 404),
-            'ui-stale-test.example' => Http::response('<html><body><p>Frasa UI Stale Tes</p></body></html>', 200),
-        ]);
-
-        $website = Website::factory()->create(['url' => 'http://ui-stale-test.example', 'last_status' => 'up']);
-        (new JudolScanner)->scan($website);
-
-        $detection = JudolDetection::where('website_id', $website->id)->firstOrFail();
-        $finding = JudolFinding::where('website_id', $website->id)->firstOrFail();
-
-        $keyword->delete();
-
-        Livewire::actingAs($user)
-            ->test(Index::class)
-            ->call('recheckUrl', $finding->uuid, 0)
-            ->assertDispatched('toast', fn (string $event, array $params) => str_contains($params['message'], 'sudah bersih sekarang'));
-
-        $this->assertDatabaseMissing('judol_detections', ['id' => $detection->id]);
+        return (new ReflectionMethod($chat, 'anthropicClient'))->invoke($chat);
     }
 }

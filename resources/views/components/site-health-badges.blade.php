@@ -1,7 +1,7 @@
 @props(['website', 'columns' => false])
 
 {{--
-    Compact SSL / domain / grade / incident / judol chips for one site row.
+    Compact SSL / domain / grade / incident chips for one site row.
     Reads only columns and withCount values already on $website - no queries.
     columns: fixed-width cells so rows line up in the desktop column group;
     otherwise chips flow inline and empty ones are skipped.
@@ -60,7 +60,6 @@
     $gradeTitle = $grade ? "Nilai keamanan header & TLS: {$grade} ({$website->security_score}/100)" : 'Nilai keamanan: belum dinilai';
 
     $openIncidents = (int) ($website->open_incidents_count ?? 0);
-    $judolPages = (int) ($website->judol_detections_count ?? 0);
 
     $chip = 'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px] font-medium tabular-nums whitespace-nowrap';
     $cell = $columns ? 'w-16 justify-center' : '';
@@ -94,13 +93,4 @@
             <span class="w-11" aria-hidden="true"></span>
         @endif
     @endcan
-
-    @if ($judolPages > 0)
-        <span title="Judol baru (belum ditinjau) di {{ $judolPages }} halaman" class="{{ $chip }} {{ $columns ? 'w-11 justify-center' : '' }} {{ $tones['red'] }}">
-            <x-phosphor-shield-warning class="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span class="sr-only">Judol baru belum ditinjau, jumlah halaman:</span>{{ $judolPages }}
-        </span>
-    @elseif ($columns)
-        <span class="w-11" aria-hidden="true"></span>
-    @endif
 </span>

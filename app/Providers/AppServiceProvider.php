@@ -5,9 +5,7 @@ namespace App\Providers;
 use App\Models\User;
 use App\Services\AppSettings;
 use App\Services\Backup\DatabaseBackup;
-use App\Services\Monitoring\InjectionProfiler;
-use App\Services\Monitoring\JudolAiSettings;
-use App\Services\Monitoring\UrlKeywordMatcher;
+use App\Services\Monitoring\AiSettings;
 use App\Services\Notifications\MailSettings;
 use App\Services\Security\Recaptcha;
 use App\Support\Permissions;
@@ -26,15 +24,14 @@ class AppServiceProvider extends ServiceProvider
      * Every one of these reads the same settings table and holds no per-call
      * state, so a fresh instance per use bought nothing - and they are asked
      * constantly: AppSettings on every rendered timestamp, MailSettings on every
-     * notification, JudolAiSettings on every scanned page. Registering them as
-     * singletons means one instance per request instead of dozens, and lets each
+     * notification. Registering them as singletons means one instance per request instead of dozens, and lets each
      * safely memoize what it resolves (see AppSettings).
      *
      * @var array<int, class-string>
      */
     protected const SETTINGS_SERVICES = [
         AppSettings::class,
-        JudolAiSettings::class,
+        AiSettings::class,
         MailSettings::class,
         Recaptcha::class,
         DatabaseBackup::class,
@@ -48,10 +45,6 @@ class AppServiceProvider extends ServiceProvider
         foreach (self::SETTINGS_SERVICES as $service) {
             $this->app->singleton($service);
         }
-
-        // One keyword automaton / profiler per job or request (ADR 0002).
-        $this->app->scoped(UrlKeywordMatcher::class);
-        $this->app->scoped(InjectionProfiler::class);
     }
 
     /**

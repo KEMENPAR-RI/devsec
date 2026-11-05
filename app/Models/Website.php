@@ -4,7 +4,6 @@ namespace App\Models;
 
 use App\Models\Concerns\Auditable;
 use App\Models\Concerns\HasUuid;
-use App\Services\Monitoring\JudolScanner;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -25,13 +24,11 @@ class Website extends Model
         'is_internal_only',
         'is_priority',
         'check_interval_minutes',
-        'judol_scan_interval_minutes',
         'down_threshold_failures',
         'response_time_threshold_ms',
         'last_status',
         'consecutive_failures',
         'last_checked_at',
-        'judol_scanned_at',
         'ssl_checked_at',
         'ssl_expires_at',
         'ssl_issuer',
@@ -66,7 +63,7 @@ class Website extends Model
         return [
             'id', 'uuid', 'created_at', 'updated_at',
             'last_status', 'consecutive_failures', 'last_checked_at',
-            'judol_scanned_at', 'ssl_checked_at',
+            'ssl_checked_at',
             'ssl_expires_at', 'ssl_issuer', 'ssl_names', 'ssl_chain_valid', 'ssl_hostname_match', 'ssl_error',
             // DNS drift is reported as its own incident, with a readable diff -
             // dumping the raw record set into the audit log too would bury the
@@ -86,7 +83,6 @@ class Website extends Model
             'is_internal_only' => 'boolean',
             'is_priority' => 'boolean',
             'last_checked_at' => 'datetime',
-            'judol_scanned_at' => 'datetime',
             'ssl_checked_at' => 'datetime',
             'ssl_expires_at' => 'datetime',
             'ssl_names' => 'array',
@@ -119,35 +115,6 @@ class Website extends Model
     public function incidents(): HasMany
     {
         return $this->hasMany(Incident::class);
-    }
-
-    public function judolDetections(): HasMany
-    {
-        return $this->hasMany(JudolDetection::class);
-    }
-
-    /**
-     * Injection sites - one per region of markup carrying spam, however many pages
-     * render it. See JudolFinding for why this is separate from judolDetections().
-     */
-    public function judolFindings(): HasMany
-    {
-        return $this->hasMany(JudolFinding::class);
-    }
-
-    public function pageSnapshots(): HasMany
-    {
-        return $this->hasMany(PageSnapshot::class);
-    }
-
-    public function pageChanges(): HasMany
-    {
-        return $this->hasMany(PageChange::class);
-    }
-
-    public function defacementFindings(): HasMany
-    {
-        return $this->hasMany(DefacementFinding::class);
     }
 
     public function scopeActive(Builder $query): Builder
@@ -251,65 +218,6 @@ class Website extends Model
         $failuresPerDay = (int) ceil(1440 / max((int) $this->check_interval_minutes, 1));
 
         return $this->consecutive_failures >= $failuresPerDay;
-    }
-
-    /**
-     * Whether this website's judol-scan interval has elapsed (or it has never
-     * been scanned) - a full-site crawl is much heavier than an uptime ping, so
-     * it needs its own (longer) cadence rather than firing every schedule tick.
-     */
-    public function isDueForJudolScan(): bool
-    {
-        return $this->judol_scanned_at === null
-            || $this->judol_scanned_at->addMinutes($this->judol_scan_interval_minutes)->isPast();
-    }
-
-    /**
-     * Whether a judol crawl against this site is worth running at all.
-     *
-     * A crawl only makes sense on a site that actually responds: on a down site
-     * every one of the up-to-max_pages fetches is guaranteed to fail the same way
-     * the uptime probe just did, so the job burns its whole timeout budget (page
-     * count x connect timeout x retries) to learn nothing, fails, and gets
-     * redispatched on the next due tick. Uptime checking is what decides whether a
-     * site is reachable - the scanner consumes that verdict instead of
-     * rediscovering it one dead URL at a time.
-     *
-     * 'unknown' (never checked - typically a site added moments ago, or a typo'd
-     * URL) is excluded too: websites:check runs every minute, so the first probe
-     * lands well before the much longer judol_scan_interval_minutes elapses.
-     *
-     * Mirrors the existing "only when up" gate around SSL inspection in
-     * WebsiteChecker::maybeCheckSsl().
-     *
-     * 'down' is not automatically excluded, because the uptime probe calls a site
-     * down for two different reasons. A host that never answers has nothing to
-     * crawl, as above. But a host answering 403 - a WAF refusing the probe while
-     * the site itself serves normally - is up in every sense that matters here,
-     * and skipping it is how a compromised site ends up with judol incidents but
-     * an empty findings list: manual URL checks kept flagging pages, while the
-     * crawl that builds findings was never allowed to run. See
-     * JudolScanner::crawl(), which stops on its own if nothing is reachable.
-     */
-    public function isScannable(): bool
-    {
-        if ($this->last_status === 'up') {
-            return true;
-        }
-
-        if ($this->last_status !== 'down') {
-            return false;
-        }
-
-        // Only an access refusal, not any answer at all: a server erroring 5xx on
-        // its own homepage is failing, and its other pages will fail the same way.
-        // The absence of a status means the request never got that far (timeout,
-        // DNS, refused connection) - genuinely nothing to crawl.
-        return in_array(
-            (int) $this->checks()->latest('checked_at')->value('status_code'),
-            JudolScanner::ACCESS_REFUSED_STATUSES,
-            true
-        );
     }
 
     /**

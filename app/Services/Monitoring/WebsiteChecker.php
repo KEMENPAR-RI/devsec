@@ -39,6 +39,8 @@ use Throwable;
  */
 class WebsiteChecker
 {
+    public const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
     // Body bytes kept per response; only hashed and measured here, so 2 MB is plenty.
     public const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -154,8 +156,7 @@ class WebsiteChecker
      * Fetches a URL, retrying once without SSL verification if the first attempt
      * fails on a certificate/chain problem - a handful of hosts present a chain
      * curl doesn't trust yet (e.g. a newer intermediate CA) even though real
-     * browsers accept it fine, which was showing up as false "down" alerts. Mirrors
-     * JudolScanner::fetchWithError() - same root cause, same fix.
+     * browsers accept it fine, which was showing up as false "down" alerts.
      *
      * @throws Throwable when both the initial attempt and (if applicable) the
      *                   no-verify retry fail
@@ -198,7 +199,7 @@ class WebsiteChecker
     protected function httpClient(bool $verifySsl = true, int|float $timeout = 20): PendingRequest
     {
         return Http::withHeaders([
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'User-Agent' => self::BROWSER_USER_AGENT,
             'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language' => 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
         ])

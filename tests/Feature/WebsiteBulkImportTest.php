@@ -41,7 +41,6 @@ class WebsiteBulkImportTest extends TestCase
         $this->assertNotNull($website);
         $this->assertTrue($website->is_active);
         $this->assertSame(5, $website->check_interval_minutes);
-        $this->assertSame(360, $website->judol_scan_interval_minutes);
         $this->assertSame(3, $website->down_threshold_failures);
         $this->assertSame(15000, $website->response_time_threshold_ms);
     }

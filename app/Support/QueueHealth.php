@@ -8,12 +8,10 @@ use Throwable;
 /**
  * Whether anything is actually consuming the queue.
  *
- * Every automatic scan and website check runs as a queued job, so a deployment
- * with no queue worker fails in the most confusing way possible: nothing errors,
- * no log line appears, and the parts that run inside a web request ("Cek URL
- * Tertentu", "Cek Judol") keep working perfectly - so it reads as "the crawler is
- * broken" rather than "no worker is running". Jobs just accumulate in the jobs
- * table forever.
+ * Every automatic website check runs as a queued job, so a deployment with no
+ * queue worker fails in the most confusing way possible: nothing errors, no log
+ * line appears, and the monitoring just silently stops. Jobs accumulate in the
+ * jobs table forever.
  *
  * This turns that silence into something the UI can say out loud. Only the
  * database queue driver can be inspected this way; on any other driver the
@@ -23,8 +21,8 @@ class QueueHealth
 {
     /**
      * A job still waiting after this long means nothing is picking it up. Well
-     * above a full crawl's 300s timeout, so a worker that is merely busy with a
-     * long scan is not mistaken for a worker that does not exist.
+     * above the longest job timeout, so a worker that is merely busy with a
+     * long check is not mistaken for a worker that does not exist.
      */
     protected const STALE_MINUTES = 15;
 
@@ -62,7 +60,6 @@ class QueueHealth
                 config('monitoring.queues.checks'),
                 config('queue.connections.database.queue', 'default'),
             ])),
-            [config('monitoring.queues.scans')],
         ];
     }
 
@@ -99,8 +96,7 @@ class QueueHealth
             return false;
         }
 
-        // A capped scans backlog can legitimately wait past the threshold; it is
-        // only stalled when no worker serving that queue reserved a job recently.
+        // It is only stalled when no worker serving that queue reserved a job recently.
         $staleBefore = now()->subMinutes(self::STALE_MINUTES)->timestamp;
         $groups = $this->workerGroups();
 

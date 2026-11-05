@@ -174,7 +174,7 @@ class SecurityGrader
     protected function fetchHeaders(string $url): ?array
     {
         try {
-            $response = Http::withHeaders(['User-Agent' => JudolScanner::BROWSER_USER_AGENT])
+            $response = Http::withHeaders(['User-Agent' => WebsiteChecker::BROWSER_USER_AGENT])
                 ->timeout(15)
                 ->connectTimeout(10)
                 ->withOptions(OutboundUrlGuard::httpOptions())

@@ -9,7 +9,7 @@
             @can('situs.delete')
                 <x-confirm-dialog
                     title="Hapus Semua Data Situs?"
-                    message="Ini juga menghapus seluruh riwayat cek, insiden, dan deteksi judol dari semua situs. Tindakan ini tidak bisa dibatalkan."
+                    message="Ini juga menghapus seluruh riwayat cek dan insiden dari semua situs. Tindakan ini tidak bisa dibatalkan."
                     confirm-text="Ya, Hapus Semua"
                     variant="danger"
                     target="deleteAll"
@@ -51,7 +51,7 @@
         $emptyTitle = $this->hasFilters() ? 'Tidak ada situs yang cocok' : 'Belum ada situs';
         $emptyMessage = $this->hasFilters()
             ? ($search ? "Tidak ada situs yang cocok dengan \"{$search}\" pada filter ini." : 'Tidak ada situs pada filter ini.')
-            : 'Tambahkan situs pertama untuk mulai memantau down time, serangan, dan konten judol.';
+            : 'Tambahkan situs pertama untuk mulai memantau down time, serangan, SSL, dan domain.';
     @endphp
 
     <x-list-card
@@ -306,7 +306,7 @@
                                 @error('url') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
                             </div>
 
-                            <div class="grid grid-cols-2 gap-4">
+                            <div class="grid grid-cols-1 gap-4">
                                 <div class="flex flex-col gap-1.5">
                                     <label for="checkIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Cek Uptime (menit)</label>
                                     <input
@@ -314,14 +314,6 @@
                                         class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
                                     >
                                     @error('checkIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                                </div>
-                                <div class="flex flex-col gap-1.5">
-                                    <label for="judolScanIntervalMinutes" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Interval Scan Judol (menit)</label>
-                                    <input
-                                        id="judolScanIntervalMinutes" type="number" min="5" wire:model="judolScanIntervalMinutes"
-                                        class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                                    >
-                                    @error('judolScanIntervalMinutes') <p class="text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
                                 </div>
                             </div>
 
@@ -508,7 +500,6 @@
                     @php
                         $massFields = [
                             'checkIntervalMinutes' => ['label' => 'Interval Cek Uptime (menit)', 'model' => 'massCheckIntervalMinutes', 'min' => 1, 'step' => 1],
-                            'judolScanIntervalMinutes' => ['label' => 'Interval Scan Judol (menit)', 'model' => 'massJudolScanIntervalMinutes', 'min' => 5, 'step' => 1],
                             'downThresholdFailures' => ['label' => 'Ambang Batas Down', 'model' => 'massDownThresholdFailures', 'min' => 1, 'step' => 1],
                             'responseTimeThresholdMs' => ['label' => 'Ambang Batas Response Time (ms)', 'model' => 'massResponseTimeThresholdMs', 'min' => 200, 'step' => 100],
                         ];

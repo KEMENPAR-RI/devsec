@@ -30,14 +30,14 @@ class MassEditWebsitesTest extends TestCase
             ->test(Index::class)
             ->set('selected', [$a->uuid, $b->uuid])
             ->call('openMassEdit')
-            ->set('massApply.judolScanIntervalMinutes', true)
-            ->set('massJudolScanIntervalMinutes', 30)
+            ->set('massApply.responseTimeThresholdMs', true)
+            ->set('massResponseTimeThresholdMs', 20000)
             ->call('massSave')
             ->assertHasNoErrors();
 
-        $this->assertSame(30, $a->fresh()->judol_scan_interval_minutes);
-        $this->assertSame(30, $b->fresh()->judol_scan_interval_minutes);
-        $this->assertSame(60, $untouched->fresh()->judol_scan_interval_minutes, 'a site nobody selected must not move');
+        $this->assertSame(20000, $a->fresh()->response_time_threshold_ms);
+        $this->assertSame(20000, $b->fresh()->response_time_threshold_ms);
+        $this->assertSame(15000, $untouched->fresh()->response_time_threshold_ms, 'a site nobody selected must not move');
     }
 
     /**
@@ -46,22 +46,22 @@ class MassEditWebsitesTest extends TestCase
      */
     public function test_fields_that_were_not_ticked_are_left_alone(): void
     {
-        $site = $this->site(['check_interval_minutes' => 7, 'response_time_threshold_ms' => 9000]);
+        $site = $this->site(['check_interval_minutes' => 7, 'down_threshold_failures' => 4]);
 
         Livewire::actingAs($this->superadmin())
             ->test(Index::class)
             ->set('selected', [$site->uuid])
             ->call('openMassEdit')
-            ->set('massApply.judolScanIntervalMinutes', true)
-            ->set('massJudolScanIntervalMinutes', 45)
+            ->set('massApply.responseTimeThresholdMs', true)
+            ->set('massResponseTimeThresholdMs', 12000)
             ->call('massSave')
             ->assertHasNoErrors();
 
         $site->refresh();
 
-        $this->assertSame(45, $site->judol_scan_interval_minutes);
+        $this->assertSame(12000, $site->response_time_threshold_ms);
         $this->assertSame(7, $site->check_interval_minutes, 'an untouched field must survive');
-        $this->assertSame(9000, $site->response_time_threshold_ms);
+        $this->assertSame(4, $site->down_threshold_failures);
     }
 
     public function test_saving_with_nothing_ticked_is_refused(): void
@@ -87,13 +87,13 @@ class MassEditWebsitesTest extends TestCase
             ->test(Index::class)
             ->set('selected', [$site->uuid])
             ->call('openMassEdit')
-            ->set('massApply.judolScanIntervalMinutes', true)
-            // Below the min of 5 the single-site form enforces.
-            ->set('massJudolScanIntervalMinutes', 1)
+            ->set('massApply.responseTimeThresholdMs', true)
+            // Below the min of 200 the single-site form enforces.
+            ->set('massResponseTimeThresholdMs', 100)
             ->call('massSave')
-            ->assertHasErrors('massJudolScanIntervalMinutes');
+            ->assertHasErrors('massResponseTimeThresholdMs');
 
-        $this->assertSame(60, $site->fresh()->judol_scan_interval_minutes);
+        $this->assertSame(15000, $site->fresh()->response_time_threshold_ms);
     }
 
     /**
@@ -110,7 +110,7 @@ class MassEditWebsitesTest extends TestCase
             ->call('openMassEdit')
             ->set('massApply.checkIntervalMinutes', true)
             ->set('massCheckIntervalMinutes', 10)
-            ->set('massJudolScanIntervalMinutes', 1)
+            ->set('massResponseTimeThresholdMs', 100)
             ->call('massSave')
             ->assertHasNoErrors();
 
@@ -187,7 +187,6 @@ class MassEditWebsitesTest extends TestCase
             'name' => "Situs {$n}",
             'url' => "https://situs-{$n}.test",
             'check_interval_minutes' => 5,
-            'judol_scan_interval_minutes' => 60,
             'down_threshold_failures' => 3,
             'response_time_threshold_ms' => 15000,
             'is_active' => true,

@@ -95,7 +95,7 @@ class Dashboard extends Component
         return $this->snapshot()['summary'];
     }
 
-    /** @return array{uptime: ?float, avg_ms: ?int, open_incidents: int, new_judol: int} */
+    /** @return array{uptime: ?float, avg_ms: ?int, open_incidents: int} */
     #[Computed]
     public function metrics(): array
     {
@@ -105,7 +105,6 @@ class Dashboard extends Component
             'uptime' => $performance['uptime'],
             'avg_ms' => $performance['avg_ms'],
             'open_incidents' => $this->openIncidentsCount,
-            'new_judol' => $this->overview()->newJudolCount(),
         ];
     }
 
@@ -171,12 +170,6 @@ class Dashboard extends Component
     public function canViewIncidents(): bool
     {
         return Gate::allows('insiden.view');
-    }
-
-    #[Computed]
-    public function canViewJudol(): bool
-    {
-        return Gate::allows('deteksi-judol.view');
     }
 
     public function render()

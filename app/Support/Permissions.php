@@ -53,27 +53,6 @@ class Permissions
                 'abilities' => ['view', 'update', 'delete'],
                 'description' => 'Down time, anomali serangan, SSL, DNS, dan masa berlaku domain.',
             ],
-            'deteksi-judol' => [
-                'label' => 'Deteksi Judol',
-                'icon' => 'shield-warning',
-                // Findings are raised by the scanner, never added by hand; "update"
-                // covers managing kata kunci, the threshold, and a finding's status.
-                'abilities' => ['view', 'update', 'delete'],
-                'description' => 'Temuan konten judi online dan kata kuncinya.',
-            ],
-            'defacement' => [
-                'label' => 'Defacement',
-                'icon' => 'warning-octagon',
-                // Findings come from the scanner; "update" = tandai sah / selesai / ambang.
-                'abilities' => ['view', 'update', 'delete'],
-                'description' => 'Temuan defacement konten dan kode asing di halaman situs.',
-            ],
-            'perubahan-konten' => [
-                'label' => 'Perubahan Konten',
-                'icon' => 'clock-clockwise',
-                'abilities' => ['view', 'delete'],
-                'description' => 'Riwayat perubahan konten halaman hasil crawling.',
-            ],
             'notifikasi' => [
                 'label' => 'Notifikasi',
                 'icon' => 'bell',
@@ -93,7 +72,7 @@ class Permissions
                 // View only: a report is derived from data that lives elsewhere,
                 // so there is nothing here to create, edit, or delete.
                 'abilities' => ['view'],
-                'description' => 'Rekap bulanan uptime, insiden, dan temuan per situs.',
+                'description' => 'Rekap bulanan uptime dan insiden per situs.',
             ],
             'audit' => [
                 'label' => 'Log Audit',

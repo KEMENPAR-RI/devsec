@@ -7,7 +7,7 @@ use App\Services\Notifications\MailSettings;
 
 /**
  * Mixed into every dispatched Notification class (WebsiteDownNotification,
- * WebsiteRecoveredNotification, AttackAnomalyDetected, JudolContentDetected) to
+ * WebsiteRecoveredNotification, AttackAnomalyDetected) to
  * add email delivery on top of the existing in-app (database) notification,
  * without duplicating the same via()/toMail() pair four times.
  *
@@ -37,9 +37,8 @@ trait SendsIncidentEmail
         $data['website_url'] = $this->website->url;
         $data['action_url'] = $data['url'] ?? url('/');
 
-        // A batched notification (JudolContentDetected) sets its own detected_at
-        // from the earliest item it covers; the single-incident ones fall back to
-        // their incident's timestamp.
+        // A batched notification sets its own detected_at from the earliest item it
+        // covers; the single-incident ones fall back to their incident's timestamp.
         $data['detected_at'] ??= ($this->incident ?? null)?->detected_at?->translatedFormat('d M Y, H:i')
             ?? now()->translatedFormat('d M Y, H:i');
 

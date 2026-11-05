@@ -6,9 +6,11 @@ use App\Console\Commands\EscalateIncidents;
 use App\Livewire\Concerns\InteractsWithToasts;
 use App\Mail\IncidentEmail;
 use App\Models\Setting;
+use App\Rules\PublicUrl;
 use App\Services\AppSettings;
 use App\Services\Backup\DatabaseBackup;
-use App\Services\Monitoring\JudolAiSettings;
+use App\Services\Monitoring\AiChat;
+use App\Services\Monitoring\AiSettings;
 use App\Services\Monitoring\ReputationChecker;
 use App\Services\Notifications\MailSettings;
 use App\Services\Notifications\WebhookNotifier;
@@ -39,19 +41,18 @@ class Index extends Component
     public bool $apiKeyIsSet = false;
 
     /**
-     * Only needed for an "identity-linked" API key (personal/OAuth keys spanning
-     * multiple workspaces) - see JudolAiSettings::workspaceId(). Not a secret, so
-     * stored in plain text (unlike apiKey) and safe to prefill/round-trip.
+     * Only needed for an Anthropic "identity-linked" API key (personal/OAuth keys
+     * spanning multiple workspaces) - see AiSettings::workspaceId(). Not a secret,
+     * so stored in plain text (unlike apiKey) and safe to prefill/round-trip.
      */
     public string $workspaceId = '';
 
-    public bool $aiEnabled = false;
+    public string $aiProvider = AiSettings::PROVIDER_ANTHROPIC;
 
-    public string $aiModel = 'claude-haiku-4-5';
+    /** Blank means the provider's own default (Anthropic only; a custom provider needs one). */
+    public string $aiBaseUrl = '';
 
-    public float $confidenceThreshold = 0.5;
-
-    public int $maxImages = 3;
+    public string $aiModel = '';
 
     /** @var array{success: bool, message: string}|null */
     public ?array $testResult = null;
@@ -114,8 +115,6 @@ class Index extends Component
 
     public int $defaultCheckIntervalMinutes = 5;
 
-    public int $defaultJudolScanIntervalMinutes = 360;
-
     public int $defaultDownThresholdFailures = 3;
 
     public int $defaultResponseTimeThresholdMs = 15000;
@@ -152,16 +151,15 @@ class Index extends Component
     /** @var array{success: bool, message: string}|null */
     public ?array $backupResult = null;
 
-    public function mount(JudolAiSettings $settings, MailSettings $mailSettings, AppSettings $appSettings, Recaptcha $recaptcha): void
+    public function mount(AiSettings $settings, MailSettings $mailSettings, AppSettings $appSettings, Recaptcha $recaptcha): void
     {
         $this->authorize('pengaturan.view');
 
         $this->apiKeyIsSet = $settings->hasApiKey();
         $this->workspaceId = (string) $settings->workspaceId();
-        $this->aiEnabled = $settings->enabled();
+        $this->aiProvider = $settings->provider();
+        $this->aiBaseUrl = (string) Setting::get('ai_base_url');
         $this->aiModel = $settings->model();
-        $this->confidenceThreshold = $settings->confidenceThreshold();
-        $this->maxImages = $settings->maxImages();
 
         $this->mailEnabled = $mailSettings->enabled();
         $this->mailHost = (string) $mailSettings->host();
@@ -177,7 +175,6 @@ class Index extends Component
         $this->appName = $appSettings->name();
         $this->appTimezone = $appSettings->timezone();
         $this->defaultCheckIntervalMinutes = $appSettings->defaultCheckIntervalMinutes();
-        $this->defaultJudolScanIntervalMinutes = $appSettings->defaultJudolScanIntervalMinutes();
         $this->defaultDownThresholdFailures = $appSettings->defaultDownThresholdFailures();
         $this->defaultResponseTimeThresholdMs = $appSettings->defaultResponseTimeThresholdMs();
         $this->tvPollSeconds = $appSettings->tvPollSeconds();
@@ -346,9 +343,14 @@ class Index extends Component
         $this->validate([
             'apiKey' => ['nullable', 'string', 'max:200'],
             'workspaceId' => ['nullable', 'string', 'max:100'],
-            'aiModel' => ['required', 'string', 'in:claude-haiku-4-5,claude-sonnet-5,claude-opus-5'],
-            'confidenceThreshold' => ['required', 'numeric', 'min:0', 'max:1'],
-            'maxImages' => ['required', 'integer', 'min:0', 'max:10'],
+            'aiProvider' => ['required', Rule::in(array_keys(AiSettings::PROVIDERS))],
+            'aiBaseUrl' => [
+                'nullable', 'string', 'url:http,https', 'max:255',
+                // A custom provider has no default endpoint to fall back to.
+                'required_if:aiProvider,'.AiSettings::PROVIDER_OPENAI,
+                new PublicUrl,
+            ],
+            'aiModel' => ['nullable', 'string', 'max:100', 'required_if:aiProvider,'.AiSettings::PROVIDER_OPENAI],
             'mailEnabled' => ['boolean'],
             'mailHost' => ['nullable', 'string', 'max:255', 'required_if:mailEnabled,true'],
             'mailPort' => ['required', 'integer', 'min:1', 'max:65535'],
@@ -362,7 +364,6 @@ class Index extends Component
             'appName' => ['required', 'string', 'max:60'],
             'appTimezone' => ['required', 'string', Rule::in(array_keys($this->appSettings()->timezoneOptions()))],
             'defaultCheckIntervalMinutes' => ['required', 'integer', 'min:1', 'max:1440'],
-            'defaultJudolScanIntervalMinutes' => ['required', 'integer', 'min:5', 'max:10080'],
             'defaultDownThresholdFailures' => ['required', 'integer', 'min:1', 'max:20'],
             'defaultResponseTimeThresholdMs' => ['required', 'integer', 'min:200', 'max:25000'],
             'tvPollSeconds' => ['required', 'integer', 'min:10', 'max:3600'],
@@ -395,21 +396,20 @@ class Index extends Component
         }
 
         if (filled($this->apiKey)) {
-            Setting::set('anthropic_api_key', Crypt::encryptString(trim($this->apiKey)));
+            Setting::set('ai_api_key', Crypt::encryptString(trim($this->apiKey)));
             $this->apiKeyIsSet = true;
             $this->apiKey = '';
         }
 
         if (filled($this->workspaceId)) {
-            Setting::set('anthropic_workspace_id', trim($this->workspaceId));
+            Setting::set('ai_workspace_id', trim($this->workspaceId));
         } else {
-            Setting::forget('anthropic_workspace_id');
+            Setting::forget('ai_workspace_id');
         }
 
-        Setting::set('judol_ai_enabled', $this->aiEnabled ? '1' : '0');
-        Setting::set('judol_ai_model', $this->aiModel);
-        Setting::set('judol_ai_confidence_threshold', (string) $this->confidenceThreshold);
-        Setting::set('judol_ai_max_images', (string) $this->maxImages);
+        Setting::set('ai_provider', $this->aiProvider);
+        Setting::set('ai_base_url', rtrim(trim($this->aiBaseUrl), '/') ?: null);
+        Setting::set('ai_model', trim($this->aiModel) ?: null);
 
         Setting::set('mail_enabled', $this->mailEnabled ? '1' : '0');
         Setting::set('mail_host', trim($this->mailHost) ?: null);
@@ -431,7 +431,6 @@ class Index extends Component
         Setting::set('app_name', trim($this->appName) ?: null);
         Setting::set('app_timezone', $this->appTimezone);
         Setting::set('default_check_interval_minutes', (string) $this->defaultCheckIntervalMinutes);
-        Setting::set('default_judol_scan_interval_minutes', (string) $this->defaultJudolScanIntervalMinutes);
         Setting::set('default_down_threshold_failures', (string) $this->defaultDownThresholdFailures);
         Setting::set('default_response_time_threshold_ms', (string) $this->defaultResponseTimeThresholdMs);
         Setting::set('tv_poll_seconds', (string) $this->tvPollSeconds);
@@ -500,10 +499,10 @@ class Index extends Component
     {
         $this->authorize('pengaturan.update');
 
-        Setting::forget('anthropic_api_key');
+        Setting::forget('ai_api_key');
         $this->apiKeyIsSet = false;
         $this->testResult = null;
-        $this->toastSuccess('API key dihapus. Deteksi AI tidak akan berjalan sampai API key baru disimpan.');
+        $this->toastSuccess('API key dihapus. Analisis AI tidak akan berjalan sampai API key baru disimpan.');
     }
 
     public function clearMailPassword(): void
@@ -530,31 +529,42 @@ class Index extends Component
     }
 
     /**
-     * Cheap connectivity check (metadata call, no completion tokens spent) - lets an
-     * admin confirm a key actually works right after pasting it, before saving, or
-     * confirm the currently-saved key still works (e.g. after rotating it).
+     * Cheap connectivity check (metadata call, no completion tokens spent where the
+     * provider allows it) - lets an admin confirm the endpoint and key actually work
+     * right after typing them, before saving, or confirm the saved ones still work
+     * (e.g. after rotating the key).
      */
-    public function testConnection(JudolAiSettings $settings): void
+    public function testConnection(AiSettings $settings): void
     {
         $this->authorize('pengaturan.update');
 
-        $this->validate(['aiModel' => ['required', 'string']]);
+        $this->validate([
+            'aiProvider' => ['required', Rule::in(array_keys(AiSettings::PROVIDERS))],
+            'aiBaseUrl' => ['nullable', 'string', 'url:http,https', 'max:255', 'required_if:aiProvider,'.AiSettings::PROVIDER_OPENAI, new PublicUrl],
+            'aiModel' => ['nullable', 'string', 'max:100', 'required_if:aiProvider,'.AiSettings::PROVIDER_OPENAI],
+        ]);
 
-        $key = filled($this->apiKey) ? trim($this->apiKey) : $settings->apiKey();
+        $anthropic = $this->aiProvider === AiSettings::PROVIDER_ANTHROPIC;
 
-        if (blank($key)) {
+        // Test with whatever is currently in the form (even if unsaved yet). Blank
+        // Anthropic fields use its defaults, not whatever a saved custom provider has.
+        $chat = new AiChat($settings, [
+            'provider' => $this->aiProvider,
+            'base_url' => trim($this->aiBaseUrl) ?: ($anthropic ? (string) config('ai.anthropic_base_url') : ''),
+            'model' => trim($this->aiModel) ?: ($anthropic ? (string) config('ai.default_model') : ''),
+            'api_key' => $this->apiKey,
+            'workspace_id' => $this->workspaceId,
+        ]);
+
+        if ($anthropic && blank($this->apiKey) && ! $settings->hasApiKey()) {
             $this->testResult = ['success' => false, 'message' => 'Belum ada API key untuk diuji.'];
 
             return;
         }
 
-        // Test with whatever is currently in the form (even if unsaved yet), falling
-        // back to the saved workspace ID when the field was left untouched.
-        $workspaceId = filled($this->workspaceId) ? trim($this->workspaceId) : $settings->workspaceId();
-
         try {
-            $settings->client($key, $workspaceId)->models->retrieve($this->aiModel);
-            $this->testResult = ['success' => true, 'message' => 'Koneksi berhasil - API key valid.'];
+            $chat->ping();
+            $this->testResult = ['success' => true, 'message' => 'Koneksi berhasil.'];
         } catch (Throwable $e) {
             $this->testResult = ['success' => false, 'message' => $e->getMessage()];
         }

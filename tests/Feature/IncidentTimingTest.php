@@ -3,13 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Incident;
-use App\Models\JudolDetection;
-use App\Models\JudolKeyword;
 use App\Models\Website;
-use App\Services\Monitoring\JudolScanner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Notification as NotificationFacade;
 use Tests\TestCase;
 
 class IncidentTimingTest extends TestCase
@@ -56,48 +51,10 @@ class IncidentTimingTest extends TestCase
     {
         $website = Website::factory()->create();
         $incident = Incident::create([
-            'website_id' => $website->id, 'type' => 'judol', 'severity' => 'critical',
+            'website_id' => $website->id, 'type' => 'ssl', 'severity' => 'critical',
             'title' => 'x', 'status' => 'open', 'detected_at' => now(),
         ]);
 
         $this->assertNull($incident->outageWindow());
-    }
-
-    public function test_a_flagged_page_records_the_last_modified_header_the_server_sent(): void
-    {
-        // The page's own Last-Modified is the closest thing to "when was this spam
-        // injected" - detected_at only says when the crawl happened to notice.
-        NotificationFacade::fake();
-        JudolKeyword::create(['keyword' => 'frasa waktu tes', 'is_active' => true]);
-
-        Http::fake([
-            'timing-test.example' => Http::response(
-                '<title>Frasa Waktu Tes</title>',
-                200,
-                ['Last-Modified' => 'Wed, 12 Aug 2026 07:00:00 GMT'],
-            ),
-        ]);
-
-        $website = Website::factory()->create(['url' => 'http://timing-test.example']);
-        (new JudolScanner)->scanUrlNow($website, 'http://timing-test.example');
-
-        $detection = JudolDetection::where('website_id', $website->id)->firstOrFail();
-
-        $this->assertNotNull($detection->page_last_modified_at);
-        // 07:00 GMT is the instant the server reported, whatever timezone it is displayed in.
-        $this->assertSame('2026-08-12 07:00', $detection->page_last_modified_at->utc()->format('Y-m-d H:i'));
-    }
-
-    public function test_a_page_without_the_header_simply_records_no_change_date(): void
-    {
-        NotificationFacade::fake();
-        JudolKeyword::create(['keyword' => 'frasa tanpa header', 'is_active' => true]);
-
-        Http::fake(['no-header-test.example' => Http::response('<title>Frasa Tanpa Header</title>', 200)]);
-
-        $website = Website::factory()->create(['url' => 'http://no-header-test.example']);
-        (new JudolScanner)->scanUrlNow($website, 'http://no-header-test.example');
-
-        $this->assertNull(JudolDetection::where('website_id', $website->id)->firstOrFail()->page_last_modified_at);
     }
 }

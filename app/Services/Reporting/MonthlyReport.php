@@ -3,7 +3,6 @@
 namespace App\Services\Reporting;
 
 use App\Models\Incident;
-use App\Models\JudolDetection;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Models\WebsiteCheckDaily;
@@ -39,9 +38,8 @@ class MonthlyReport
 
         $uptime = $this->uptimeByWebsite($start, $end);
         $incidents = $this->incidentsByWebsite($start, $end);
-        $judol = $this->judolByWebsite($start, $end);
 
-        $rows = $websites->map(function (Website $website) use ($uptime, $incidents, $judol) {
+        $rows = $websites->map(function (Website $website) use ($uptime, $incidents) {
             $stats = $uptime[$website->id] ?? null;
             $byType = $incidents[$website->id] ?? [];
 
@@ -60,7 +58,6 @@ class MonthlyReport
                 'insiden_ssl' => $byType['ssl'] ?? 0,
                 'insiden_dns' => $byType['dns'] ?? 0,
                 'insiden_domain' => $byType['domain'] ?? 0,
-                'temuan_judol' => $judol[$website->id] ?? 0,
                 'nilai_keamanan' => $website->security_grade,
                 'skor_keamanan' => $website->security_score,
                 'domain_kedaluwarsa' => $website->domain_expires_at,
@@ -89,7 +86,6 @@ class MonthlyReport
             'situs_terukur' => $measured->count(),
             'uptime_rata' => $measured->isEmpty() ? null : round($measured->avg('uptime'), 2),
             'insiden_total' => $rows->sum('insiden_total'),
-            'temuan_judol' => $rows->sum('temuan_judol'),
             'situs_tanpa_insiden' => $rows->where('insiden_total', 0)->count(),
         ];
     }
@@ -168,20 +164,6 @@ class MonthlyReport
     }
 
     /**
-     * @return array<int, int>
-     */
-    protected function judolByWebsite(Carbon $start, Carbon $end): array
-    {
-        return JudolDetection::query()
-            ->selectRaw('website_id, COUNT(*) as total')
-            ->whereBetween('detected_at', [$start, $end])
-            ->groupBy('website_id')
-            ->pluck('total', 'website_id')
-            ->map(fn ($n) => (int) $n)
-            ->all();
-    }
-
-    /**
      * The same rows as a CSV.
      *
      * Semicolon-separated with a UTF-8 BOM: Indonesian Windows installs default
@@ -195,7 +177,7 @@ class MonthlyReport
         $header = [
             'Nama Situs', 'URL', 'Uptime (%)', 'Total Cek', 'Rata-rata Respons (ms)',
             'Insiden Total', 'Down Time', 'Serangan', 'SSL', 'DNS', 'Domain',
-            'Temuan Judol', 'Nilai Keamanan', 'Skor Keamanan', 'Domain Kedaluwarsa',
+            'Nilai Keamanan', 'Skor Keamanan', 'Domain Kedaluwarsa',
         ];
 
         $lines = collect([$this->csvLine($header)]);
@@ -213,7 +195,6 @@ class MonthlyReport
                 $row['insiden_ssl'],
                 $row['insiden_dns'],
                 $row['insiden_domain'],
-                $row['temuan_judol'],
                 $row['nilai_keamanan'] ?? '-',
                 $row['skor_keamanan'] ?? '-',
                 $row['domain_kedaluwarsa']?->format('Y-m-d') ?? '-',

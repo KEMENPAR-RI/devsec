@@ -99,19 +99,6 @@ class DashboardStatusSyncTest extends TestCase
         $this->assertSame(['heavy' => 1], $this->dashboard()->loadCounts);
     }
 
-    public function test_a_judol_incident_links_to_the_judol_page(): void
-    {
-        $website = Website::factory()->create();
-        Incident::create([
-            'website_id' => $website->id, 'type' => 'judol', 'severity' => 'critical',
-            'title' => 'Konten judi terdeteksi', 'status' => 'open', 'detected_at' => now(),
-        ]);
-
-        Livewire::actingAs(User::factory()->create())
-            ->test(Dashboard::class)
-            ->assertSee(route('deteksi-judol'), escape: false);
-    }
-
     public function test_a_downtime_incident_still_links_to_the_incidents_page(): void
     {
         $website = Website::factory()->create();

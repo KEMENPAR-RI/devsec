@@ -2,14 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Http\Controllers\JudolEvidenceController;
 use App\Models\Incident;
 use App\Models\User;
 use App\Models\Website;
 use App\Rules\PublicUrl;
 use App\Services\Monitoring\CertificateInspector;
-use App\Services\Monitoring\DefacementScanner;
-use App\Services\Monitoring\JudolScanner;
 use App\Services\Monitoring\SecurityGrader;
 use App\Services\Monitoring\UptimeHistory;
 use App\Services\Monitoring\WebsiteChecker;
@@ -528,47 +525,6 @@ class DnsPinningTest extends TestCase
                 return ['connected' => true, 'cert' => null, 'protocol' => 'TLSv1.3', 'error' => null];
             }
         };
-    }
-
-    public function test_the_judol_crawler_connects_only_to_vetted_addresses(): void
-    {
-        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
-        OutboundUrlGuard::fakeDns(['judol.test' => ['93.184.216.34']]);
-        OutboundUrlGuard::fakeTransport($this->transport());
-
-        $client = (new ReflectionMethod(JudolScanner::class, 'httpClient'))->invoke(app(JudolScanner::class));
-        $client->get('https://judol.test/');
-
-        $this->assertSame(['judol.test:443:93.184.216.34'], $this->sent[0]['options']['curl'][CURLOPT_RESOLVE]);
-        $this->assertSame('', $this->sent[0]['options']['proxy']);
-    }
-
-    public function test_the_defacement_scanner_connects_only_to_vetted_addresses(): void
-    {
-        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
-        OutboundUrlGuard::fakeDns(['deface.test' => ['93.184.216.34']]);
-        OutboundUrlGuard::fakeTransport($this->transport());
-        $fetch = new ReflectionMethod(DefacementScanner::class, 'fetch');
-
-        $this->assertSame('ok', $fetch->invoke(app(DefacementScanner::class), 'https://deface.test/'));
-        $this->assertSame(['deface.test:443:93.184.216.34'], $this->sent[0]['options']['curl'][CURLOPT_RESOLVE]);
-
-        // Nothing vetted for the host: the request never reaches the transport.
-        $this->assertNull($fetch->invoke(app(DefacementScanner::class), 'https://unvetted.test/'));
-        $this->assertCount(1, $this->sent);
-    }
-
-    public function test_the_judol_evidence_fetch_connects_only_to_vetted_addresses(): void
-    {
-        Http::allowStrayRequests(); // transport is pinned/faked below, never a real socket
-        OutboundUrlGuard::fakeDns(['img.test' => ['93.184.216.34']]);
-        OutboundUrlGuard::fakeTransport($this->transport());
-
-        $client = (new ReflectionMethod(JudolEvidenceController::class, 'client'))->invoke(app(JudolEvidenceController::class));
-        $client->get('https://img.test/banner.png');
-
-        $this->assertSame(['img.test:443:93.184.216.34'], $this->sent[0]['options']['curl'][CURLOPT_RESOLVE]);
-        $this->assertSame('', $this->sent[0]['options']['proxy']);
     }
 
     /** A transport for OutboundUrlGuard::fakeTransport() that records what reached it. */

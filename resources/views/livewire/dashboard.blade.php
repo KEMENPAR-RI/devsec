@@ -11,7 +11,6 @@
     $canManage = $this->canManage;
     $canViewSites = $this->canViewSites;
     $canViewIncidents = $this->canViewIncidents;
-    $canViewJudol = $this->canViewJudol;
 
     $ranges = ['1h' => 'Jam', '24h' => 'Hari', '7d' => 'Minggu', '30d' => 'Bulan'];
     $rangeSpan = ['1h' => '1 jam', '24h' => '24 jam', '7d' => '7 hari', '30d' => '30 hari'][$this->range] ?? '24 jam';
@@ -112,7 +111,7 @@
     </section>
 
     {{-- Range KPI: follow the selected range --}}
-    <section aria-label="Ringkasan performa" class="-mt-2 grid grid-cols-2 gap-4 lg:grid-cols-4">
+    <section aria-label="Ringkasan performa" @class(['-mt-2 grid grid-cols-2 gap-4', 'lg:grid-cols-3' => $canViewIncidents])>
         <x-kpi-card
             size="sm" label="Uptime {{ $rangeSpan }}" icon="pulse"
             :value="$metrics['uptime'] !== null ? number_format($metrics['uptime'], $metrics['uptime'] >= 99.95 ? 0 : 1).'%' : '-'"
@@ -125,19 +124,12 @@
         @if ($canViewIncidents)
             <x-kpi-card
                 size="sm" label="Insiden terbuka" icon="bell-ringing"
+                class="col-span-2 lg:col-span-1"
                 :value="$metrics['open_incidents'] ?? 0"
                 :tone="($metrics['open_incidents'] ?? 0) > 0 ? 'down' : 'muted'"
                 :href="route('insiden', ['status' => 'open'])"
             />
         @endif
-        {{-- Widens to fill the slot left by the hidden incident card, keeping the 4-col rhythm --}}
-        <x-kpi-card
-            size="sm" label="Judol baru" icon="shield-warning"
-            :class="$canViewIncidents ? '' : 'col-span-2'"
-            :value="$metrics['new_judol'] ?? 0"
-            :tone="($metrics['new_judol'] ?? 0) > 0 ? 'down' : 'muted'"
-            :href="$canViewJudol ? route('deteksi-judol') : null"
-        />
     </section>
 
     {{-- Real-time comes first in the DOM so it sits above the chart on mobile --}}
@@ -396,12 +388,7 @@
                 @else
                     <ul class="p-2">
                         @foreach ($panel['items'] as $incident)
-                            @php
-                                // Judol detail lives on Deteksi Judol, not the incidents page.
-                                $incidentHref = $incident->type === 'judol'
-                                    ? ($canViewJudol ? route('deteksi-judol') : null)
-                                    : ($canViewIncidents ? route('insiden') : null);
-                            @endphp
+                            @php $incidentHref = $canViewIncidents ? route('insiden') : null; @endphp
                             <li wire:key="incident-{{ $loop->parent->index }}-{{ $incident->id }}">
                                 <a
                                     @if ($incidentHref) href="{{ $incidentHref }}" wire:navigate @endif
@@ -415,8 +402,6 @@
                                     ])>
                                         @if ($incident->type === 'downtime')
                                             <x-phosphor-wifi-x class="h-4 w-4" />
-                                        @elseif ($incident->type === 'judol')
-                                            <x-phosphor-shield-warning class="h-4 w-4" />
                                         @elseif ($incident->type === 'ssl')
                                             <x-phosphor-lock-key class="h-4 w-4" />
                                         @else

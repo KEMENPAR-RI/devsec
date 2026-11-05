@@ -139,12 +139,6 @@
         </div>
         <div class="flex shrink-0 flex-wrap items-center gap-2">
             @can('situs.update')
-                <button type="button" wire:click="scanJudolNow" wire:loading.attr="disabled" wire:target="scanJudolNow" class="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
-                    <x-loading-label target="scanJudolNow" loading="Memindai...">
-                        <x-phosphor-shield-warning class="h-4 w-4 shrink-0" />
-                        <span>Cek Judol</span>
-                    </x-loading-label>
-                </button>
                 <button type="button" wire:click="checkNow" wire:loading.attr="disabled" wire:target="checkNow" class="inline-flex items-center gap-2 whitespace-nowrap rounded-lg bg-accent-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70">
                     <x-loading-label target="checkNow" loading="Mengecek...">
                         <x-phosphor-arrows-clockwise class="h-4 w-4 shrink-0" />
@@ -335,7 +329,7 @@
     {{-- min-w-0 on both cards: a grid item defaults to min-width:auto, so without it
     a card refuses to shrink below its widest line - one long incident URL or keyword
     list then widens the card past the screen instead of being clipped inside it. --}}
-    <div class="grid gap-6 lg:grid-cols-2">
+    <div class="grid gap-6">
         {{-- Incidents --}}
         <div class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
             <div class="px-5 py-4">
@@ -366,88 +360,14 @@
                             @if ($incident->description)
                                 <p class="mt-1.5 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ $incident->displayDescription() }}</p>
                             @endif
-                            {{-- e() on both halves, not a raw echo of the joined string: a judol
-                            incident's "URL Halaman" is a URL the crawler read off the monitored
-                            site itself (JudolScanner::resolveUrl returns an absolute href
-                            verbatim), so a compromised site - the very thing being watched for
-                            here - can put markup in it. Only the <br> separators are HTML. --}}
+                            {{-- e() on both halves, not a raw echo of the joined string: detail
+                            lines can carry text read off the monitored site, which may hold
+                            markup. Only the <br> separators are HTML. --}}
                             @if ($lines = $incident->detailLines())
                                 <p class="mt-1 break-words font-mono text-[11px] text-zinc-400">
                                     {!! collect($lines)->map(fn ($v, $k) => e($k).': '.e($v))->implode('<br>') !!}
                                 </p>
                             @endif
-                        </div>
-                    @endforeach
-                </div>
-            @endif
-        </div>
-
-        {{-- Judol detections --}}
-        <div class="enter min-w-0 rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-            <div class="px-5 py-4">
-                <h2 class="text-sm font-semibold text-zinc-900 dark:text-white">Deteksi Judol</h2>
-            </div>
-
-            @can('situs.update')
-                {{-- Manual URL check: verify one specific page right now (e.g. a stray slot.html) --}}
-                <form wire:submit="scanSpecificUrl" class="flex flex-col gap-2 px-5 pb-4 sm:flex-row sm:items-start">
-                    <div class="flex-1">
-                        <input
-                            type="text" wire:model="manualScanUrl" placeholder="{{ parse_url($website->url, PHP_URL_HOST) }}/slot.html"
-                            class="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/30 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                        >
-                        @error('manualScanUrl') <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ $message }}</p> @enderror
-                    </div>
-                    <button
-                        type="submit"
-                        wire:loading.attr="disabled"
-                        wire:target="scanSpecificUrl"
-                        class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-zinc-200 px-3.5 py-2 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                    >
-                        <span wire:loading.remove wire:target="scanSpecificUrl">Cek URL Ini</span>
-                        <span wire:loading wire:target="scanSpecificUrl">Memindai...</span>
-                    </button>
-                </form>
-            @endcan
-
-            @if ($manualScanResult)
-                <div class="mx-5 mb-4 rounded-lg px-4 py-3 text-sm {{ $manualScanResult['matched'] ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' }}">
-                    @if ($manualScanResult['matched'])
-                        <p class="font-medium">Terdeteksi konten judi online di halaman ini.</p>
-                        <p class="mt-1 break-words text-xs">Kata kunci: {{ implode(', ', $manualScanResult['matched']) }}</p>
-                        @if ($ai = $manualScanResult['ai'] ?? null)
-                            <div class="mt-2 flex items-start gap-2 rounded-lg bg-white/60 px-3 py-2 dark:bg-zinc-900/40">
-                                <x-phosphor-sparkle class="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-500" />
-                                <p class="min-w-0 flex-1 break-words text-xs text-zinc-700 dark:text-zinc-300">
-                                    <span class="font-medium">{{ $ai['label'] }}</span>
-                                    @if ($ai['confidence'] !== null)
-                                        <span class="text-zinc-400">&middot; keyakinan {{ number_format((float) $ai['confidence'] * 100) }}%</span>
-                                    @endif
-                                    @if ($ai['reasoning'])
-                                        {{-- The findings arrive as one bullet per line, so they have to
-                                        keep their line breaks here the same way the detections list does. --}}
-                                        <span class="mt-1 block whitespace-pre-line">{{ $ai['reasoning'] }}</span>
-                                    @endif
-                                </p>
-                            </div>
-                        @endif
-                    @else
-                        <p class="font-medium">Aman, tidak ada kata kunci judi online yang cocok di halaman ini.</p>
-                    @endif
-                </div>
-            @endif
-
-            @if ($judolDetections->isEmpty())
-                <p class="px-5 pb-5 text-sm text-zinc-500 dark:text-zinc-400">Belum ada konten judi online terdeteksi.</p>
-            @else
-                <div class="space-y-1 px-3 pb-3 max-h-[300px] overflow-y-auto">
-                    @foreach ($judolDetections as $detection)
-                        <div class="min-w-0 rounded-xl px-2.5 py-2.5">
-                            {{-- `block`, because truncate cannot clip an inline element. --}}
-                            <a href="{{ $detection->url }}" target="_blank" rel="noopener" title="{{ $detection->url }}" class="block truncate text-sm font-medium text-zinc-900 hover:text-accent-600 dark:text-white dark:hover:text-accent-400">
-                                {{ $detection->url }}
-                            </a>
-                            <p class="mt-1 break-words text-xs text-zinc-500 dark:text-zinc-400">{{ implode(', ', $detection->matched_keywords ?? []) }}</p>
                         </div>
                     @endforeach
                 </div>

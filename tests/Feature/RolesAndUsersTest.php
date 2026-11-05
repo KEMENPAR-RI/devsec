@@ -55,17 +55,12 @@ class RolesAndUsersTest extends TestCase
         }
     }
 
-    public function test_the_incident_and_judol_pages_have_no_create_ability_at_all(): void
+    public function test_the_incident_page_has_no_create_ability_at_all(): void
     {
-        // Nothing on either page is created by hand - the monitor raises incidents,
-        // the scanner raises findings - so offering a "Tambah" checkbox would be a
-        // permission nobody could ever exercise.
-        foreach (['insiden', 'deteksi-judol'] as $page) {
-            $this->assertNotContains('create', Permissions::pages()[$page]['abilities']);
-        }
-
+        // Incidents are raised by the monitor, never by hand, so offering a "Tambah"
+        // checkbox would be a permission nobody could ever exercise.
+        $this->assertNotContains('create', Permissions::pages()['insiden']['abilities']);
         $this->assertNotContains('insiden.create', Permissions::all());
-        $this->assertNotContains('deteksi-judol.create', Permissions::all());
     }
 
     public function test_running_the_seeder_twice_updates_in_place_instead_of_duplicating(): void

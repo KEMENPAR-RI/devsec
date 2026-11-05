@@ -3,7 +3,6 @@
 namespace App\Services\Monitoring;
 
 use App\Models\Incident;
-use App\Models\JudolDetection;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Support\Dates;
@@ -251,10 +250,5 @@ class DashboardOverview
     public function recentIncidents(int $limit = 6): Collection
     {
         return Incident::with('website:id,uuid,name')->latest('detected_at')->limit($limit)->get();
-    }
-
-    public function newJudolCount(): int
-    {
-        return JudolDetection::where('status', 'new')->count();
     }
 }

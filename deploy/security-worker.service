@@ -1,16 +1,14 @@
-# Queue worker A - checks (systemd): checks-high, checks, default.
-# Worker B (judol scans) is deploy/security-worker-scans.service; install both.
+# Queue worker (systemd): checks-high, checks, default.
 #
-# Every automatic website check and judol crawl is dispatched as a queued job, so
-# without this running the jobs table just fills up and the automatic monitoring
-# silently never happens - while "Cek Judol" and "Cek URL Tertentu" keep working,
-# because those run inside the web request. See App\Support\QueueHealth.
+# Every automatic website check is dispatched as a queued job, so without this
+# running the jobs table just fills up and the automatic monitoring silently
+# never happens. See App\Support\QueueHealth.
 #
 # Install:
-#   sudo cp deploy/security-worker.service deploy/security-worker-scans.service /etc/systemd/system/
+#   sudo cp deploy/security-worker.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now security-worker security-worker-scans
-#   sudo systemctl status security-worker security-worker-scans
+#   sudo systemctl enable --now security-worker
+#   sudo systemctl status security-worker
 #
 # Adjust User, Group, WorkingDirectory and the PHP path (ls /www/server/php/) to match the server. WorkingDirectory
 # must be the directory that actually holds artisan - systemd fails the unit with

@@ -115,11 +115,6 @@ class AppSettings
         return (int) (Setting::get('default_check_interval_minutes') ?: 5);
     }
 
-    public function defaultJudolScanIntervalMinutes(): int
-    {
-        return (int) (Setting::get('default_judol_scan_interval_minutes') ?: 360);
-    }
-
     public function defaultDownThresholdFailures(): int
     {
         return (int) (Setting::get('default_down_threshold_failures') ?: 3);
@@ -137,34 +132,15 @@ class AppSettings
     }
 
     /**
-     * Legacy name for the judol threshold; now the weighted score threshold, so
-     * older callers keep working.
-     */
-    public function judolThreshold(): int
-    {
-        return $this->judolScoreThreshold();
-    }
-
-    /**
-     * Minimum weighted score (sum of keyword weights + hidden/SEO bonus) before a
-     * page counts as a judol finding - see JudolMatcher.
-     */
-    public function judolScoreThreshold(): int
-    {
-        return max(1, (int) (Setting::get('judol_score_threshold') ?? config('judol.score_threshold', 3)));
-    }
-
-    /**
      * The defaults a new website is created with, shaped like Website's columns so
      * it can be spread straight into create()/fill().
      *
-     * @return array{check_interval_minutes: int, judol_scan_interval_minutes: int, down_threshold_failures: int, response_time_threshold_ms: int}
+     * @return array{check_interval_minutes: int, down_threshold_failures: int, response_time_threshold_ms: int}
      */
     public function websiteDefaults(): array
     {
         return [
             'check_interval_minutes' => $this->defaultCheckIntervalMinutes(),
-            'judol_scan_interval_minutes' => $this->defaultJudolScanIntervalMinutes(),
             'down_threshold_failures' => $this->defaultDownThresholdFailures(),
             'response_time_threshold_ms' => $this->defaultResponseTimeThresholdMs(),
         ];

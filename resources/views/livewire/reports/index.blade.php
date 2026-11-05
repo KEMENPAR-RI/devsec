@@ -55,12 +55,11 @@
 
     {{-- Summary --}}
     @php $totals = $report['totals']; @endphp
-    <div class="enter grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div class="enter grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         @foreach ([
             ['Situs Dipantau', $totals['situs']],
             ['Rata-rata Uptime', $totals['uptime_rata'] !== null ? $totals['uptime_rata'].'%' : 'Belum ada data'],
             ['Total Insiden', $totals['insiden_total']],
-            ['Temuan Judol', $totals['temuan_judol']],
             ['Situs Tanpa Insiden', $totals['situs_tanpa_insiden']],
         ] as [$label, $value])
             <div class="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
@@ -80,7 +79,6 @@
                     <th scope="col" class="px-4 py-3 text-right font-medium">Uptime</th>
                     <th scope="col" class="px-4 py-3 text-right font-medium">Rata Respons</th>
                     <th scope="col" class="px-4 py-3 text-right font-medium">Insiden</th>
-                    <th scope="col" class="px-4 py-3 text-right font-medium">Judol</th>
                     <th scope="col" class="px-4 py-3 text-center font-medium">Keamanan</th>
                     <th scope="col" class="px-4 py-3 font-medium">Domain s/d</th>
                 </tr>
@@ -121,7 +119,6 @@
                                 </span>
                             @endif
                         </td>
-                        <td class="px-4 py-3 text-right tabular-nums text-zinc-600 dark:text-zinc-300">{{ $row['temuan_judol'] }}</td>
                         <td class="px-4 py-3 text-center">
                             @if ($row['nilai_keamanan'])
                                 <span class="font-semibold text-zinc-900 dark:text-white">{{ $row['nilai_keamanan'] }}</span>
@@ -136,7 +133,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="7" class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                        <td colspan="6" class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
                             Belum ada situs untuk dilaporkan.
                         </td>
                     </tr>

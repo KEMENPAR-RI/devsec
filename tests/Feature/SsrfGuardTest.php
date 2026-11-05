@@ -2,10 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Livewire\Settings\Index as SettingsIndex;
 use App\Livewire\Websites\Index;
-use App\Livewire\Websites\Show;
 use App\Models\User;
-use App\Models\Website;
 use App\Services\Security\OutboundUrlGuard;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -56,7 +55,7 @@ class SsrfGuardTest extends TestCase
     {
         // Unresolvable is not internal - the fetch fails on its own, and a site
         // whose DNS is briefly broken must still be addable.
-        $this->assertNull(OutboundUrlGuard::reason('https://judol-test.example'));
+        $this->assertNull(OutboundUrlGuard::reason('https://portal-test.example'));
     }
 
     public function test_guard_allows_a_host_resolving_into_an_allowed_private_range(): void
@@ -127,21 +126,21 @@ class SsrfGuardTest extends TestCase
     {
         Livewire::actingAs(User::factory()->create())
             ->test(Index::class)
-            ->set('bulkInput', "Publik, https://judol-test.example\nMetadata, http://169.254.169.254")
+            ->set('bulkInput', "Publik, https://portal-test.example\nMetadata, http://169.254.169.254")
             ->call('bulkImport');
 
         $this->assertDatabaseCount('websites', 1);
-        $this->assertDatabaseHas('websites', ['url' => 'https://judol-test.example']);
+        $this->assertDatabaseHas('websites', ['url' => 'https://portal-test.example']);
     }
 
-    public function test_manual_scan_rejects_an_internal_url(): void
+    public function test_the_ai_provider_url_rejects_an_internal_address(): void
     {
-        $website = Website::factory()->create();
-
         Livewire::actingAs(User::factory()->create())
-            ->test(Show::class, ['website' => $website])
-            ->set('manualScanUrl', 'http://127.0.0.1:8080/admin')
-            ->call('scanSpecificUrl')
-            ->assertHasErrors('manualScanUrl');
+            ->test(SettingsIndex::class)
+            ->set('aiProvider', 'openai')
+            ->set('aiBaseUrl', 'http://127.0.0.1:11434/v1')
+            ->set('aiModel', 'llama3')
+            ->call('save')
+            ->assertHasErrors('aiBaseUrl');
     }
 }

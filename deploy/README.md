@@ -52,8 +52,8 @@ Kalau server masih memakai worker systemd/supervisor (opsional, lihat bawah),
 worker itu berumur panjang dan **wajib** di-restart setiap deploy:
 
 ```bash
-sudo systemctl restart security-worker security-worker-scans          # systemd
-sudo supervisorctl restart security-worker:* security-worker-scans:* # supervisor
+sudo systemctl restart security-worker          # systemd
+sudo supervisorctl restart security-worker:*    # supervisor
 ```
 
 ## Kalau pembaruan menambah migrasi
@@ -71,11 +71,27 @@ Backup dulu kalau migrasinya mengubah atau menghapus kolom:
 php artisan backup:database
 ```
 
+### Rilis penghapusan modul Offensive (Judol, Defacement, Perubahan Konten)
+
+Migrasi `2026_11_05_100001_remove_offensive_module` **menghapus permanen** tabel
+`judol_*`, `defacement_findings`, `page_snapshots`, `page_changes`,
+`page_change_forensics`, kolom `judol_*` di `websites`, insiden bertipe judol /
+defacement, antrean `scans`, serta berkas `judol-evidence/` dan `page-bodies/`.
+Data uptime, insiden lain, pengguna, role, dan pengaturan tidak disentuh.
+API key AI dipindah otomatis ke nama baru (`ai_api_key`), jadi fitur "Selidiki"
+insiden tetap jalan.
+
+Urutan aman:
+
+1. `php artisan backup:database` (data modul tidak bisa dipulihkan tanpa backup).
+2. Deploy kode, lalu `php artisan migrate --force`.
+3. Matikan worker lama `security-worker-scans` bila dipakai (lihat bagian worker di bawah).
+
 ## Memastikan deploy berhasil
 
 ```bash
-sudo systemctl status security-worker security-worker-scans --no-pager  # keduanya active (running)
-$PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:scans  # harus mendekati 0
+sudo systemctl status security-worker --no-pager  # active (running), bila memakai worker systemd
+$PHP artisan queue:monitor database:checks-high,database:checks,database:default  # harus mendekati 0
 tail -20 storage/logs/laravel.log                   # tidak ada error baru
 ```
 
@@ -88,7 +104,7 @@ git log --oneline -5
 git reset --hard <commit-sebelumnya>
 npm ci && npm run build
 $PHP artisan optimize:clear && $PHP artisan config:cache
-sudo systemctl restart security-worker security-worker-scans
+sudo systemctl restart security-worker
 ```
 
 
@@ -96,23 +112,19 @@ sudo systemctl restart security-worker security-worker-scans
 
 ## Kenapa ini perlu
 
-Setiap pengecekan situs dan crawl judol otomatis dikirim sebagai *queued job*.
-Tanpa worker yang mengambilnya, job hanya menumpuk di tabel `jobs` dan
-**pemantauan otomatis tidak pernah jalan** - sementara "Cek Judol" dan "Cek URL
-Tertentu" tetap berfungsi, karena keduanya jalan langsung di dalam request web.
-Itu sebabnya gejalanya terbaca seperti "crawler rusak", padahal worker-nya yang
-tidak ada.
+Setiap pengecekan situs otomatis dikirim sebagai *queued job*. Tanpa worker
+yang mengambilnya, job hanya menumpuk di tabel `jobs` dan **pemantauan otomatis
+tidak pernah jalan**.
 
 ## Cara default: worker dijalankan scheduler (hanya perlu 1 cron)
 
-`routes/console.php` mendaftarkan dua `queue:work --stop-when-empty` yang
+`routes/console.php` mendaftarkan satu `queue:work --stop-when-empty` yang
 dipicu tiap menit oleh scheduler, jadi **tidak perlu systemd/supervisor**:
 
 - antrean `checks-high,checks,default` (uptime + email notifikasi), `--max-time=55`, `--timeout=150`
-- antrean `scans` (crawl judol), `--max-time=240`, `--timeout=300`
 
-Keduanya `withoutOverlapping` (maksimal satu proses per kelompok) dan
-`runInBackground` (scan yang lama tidak menahan tugas terjadwal lain).
+Worker ini `withoutOverlapping` (maksimal satu proses) dan `runInBackground`
+(pengecekan yang lama tidak menahan tugas terjadwal lain).
 Konsekuensinya, job baru diambil paling lambat sekitar 1 menit setelah masuk antrean.
 
 ### 1. Bersihkan antrean yang menumpuk lebih dulu
@@ -125,7 +137,7 @@ berumur berhari-hari terhadap semua situs serentak.
 php artisan queue:flush-stale --failed
 ```
 
-Tidak ada yang hilang: scheduler menjadwalkan ulang kedua job itu pada tick
+Tidak ada yang hilang: scheduler menjadwalkan ulang pengecekan pada tick
 berikutnya dengan data terbaru.
 
 ### 2. Pasang scheduler
@@ -143,36 +155,31 @@ Kalau sebelumnya memasang worker systemd/supervisor, matikan supaya tidak jalan
 bersamaan dengan worker scheduler:
 
 ```bash
-sudo systemctl disable --now security-worker security-worker-scans   # systemd
+sudo systemctl disable --now security-worker security-worker-scans   # systemd (security-worker-scans = worker lama untuk modul offensive, sudah dihapus)
 sudo supervisorctl stop security-worker:* security-worker-scans:*    # supervisor (lalu hapus programnya)
 ```
 
-Hapus juga baris ini dari crontab bila ada, karena setiap situs jadi dipindai
-dua kali - sekali oleh cron, sekali oleh worker:
-
-```
-* * * * * php /var/www/security/artisan websites:scan-judol --sync
-```
+Hapus juga entri cron lama `websites:scan-judol` / `websites:scan-defacement`
+bila ada - perintahnya sudah tidak ada.
 
 ## Alternatif: worker berumur panjang (systemd/supervisor)
 
-Hanya bila butuh latensi nol atau hardening systemd. **Hapus dulu** dua entri
+Hanya bila butuh latensi nol atau hardening systemd. **Hapus dulu** entri
 `queue:work` di `routes/console.php`, lalu pasang **salah satu** (jangan keduanya):
 
-**systemd** (VPS/server sendiri), dua worker wajib dipasang:
+**systemd** (VPS/server sendiri):
 
 - `security-worker` - antrean `checks-high,checks,default`, `--timeout=150`
-- `security-worker-scans` - antrean `scans`, `--timeout=300`
 
 ```bash
-sudo cp deploy/security-worker.service deploy/security-worker-scans.service /etc/systemd/system/
+sudo cp deploy/security-worker.service /etc/systemd/system/
 ls -d /www/wwwroot/deadsec.apiprs.my.id/storage /www/wwwroot/deadsec.apiprs.my.id/bootstrap/cache  # wajib ada (ReadWritePaths)
 sudo systemctl daemon-reload
-sudo systemctl enable --now security-worker security-worker-scans
-sudo systemctl status security-worker security-worker-scans
+sudo systemctl enable --now security-worker
+sudo systemctl status security-worker
 ```
 
-**supervisor** (plugin Supervisor aaPanel, cPanel/Plesk) - satu file berisi dua program:
+**supervisor** (plugin Supervisor aaPanel, cPanel/Plesk):
 
 ```bash
 sudo cp deploy/security-worker.supervisor.conf /etc/supervisor/conf.d/security-worker.conf
@@ -181,9 +188,9 @@ sudo supervisorctl update
 sudo supervisorctl status
 ```
 
-Di plugin Supervisor aaPanel: tambah dua daemon, salin `command`, `directory`,
-dan `user` dari tiap `[program:...]` di file itu. Sesuaikan `User`, `Group`,
-path PHP dan path direktori dengan server. Kedua worker memakai `--memory=128`
+Di plugin Supervisor aaPanel: tambah satu daemon, salin `command`, `directory`,
+dan `user` dari `[program:...]` di file itu. Sesuaikan `User`, `Group`,
+path PHP dan path direktori dengan server. Worker memakai `--memory=128`
 dan `--max-jobs`/`--max-time` supaya proses didaur-ulang sebelum memori
 membengkak (RAM server 1GB). Scheduler tetap wajib (1 baris cron di atas).
 
@@ -191,7 +198,7 @@ membengkak (RAM server 1GB). Scheduler tetap wajib (1 baris cron di atas).
 
 ```bash
 # Harus mendekati 0 dan tidak terus bertambah.
-$PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:scans
+$PHP artisan queue:monitor database:checks-high,database:checks,database:default
 
 # Pastikan worker terdaftar di scheduler.
 $PHP artisan schedule:list | grep queue:work
@@ -201,55 +208,24 @@ $PHP artisan queue:failed
 tail -20 storage/logs/laravel.log
 
 # Hanya bila memakai worker berumur panjang:
-sudo journalctl -u security-worker -u security-worker-scans -f   # systemd
-tail -f storage/logs/worker.log storage/logs/worker-scans.log    # supervisor
+sudo journalctl -u security-worker -f   # systemd
+tail -f storage/logs/worker.log         # supervisor
 ```
-
-Di halaman Deteksi Judol, peringatan "pekerjaan menunggu di antrean" akan hilang
-sendiri begitu antrean mulai dikonsumsi.
 
 ## Catatan konfigurasi
 
-`DB_QUEUE_RETRY_AFTER` di `.env` **harus lebih besar** dari `$timeout` job
-terlama (`ScanWebsiteForJudolJob` = 300 detik). Saat ini 320, dan itu benar.
+`DB_QUEUE_RETRY_AFTER` di `.env` **harus lebih besar** dari `--timeout` worker
+(150 detik) dan `$timeout` job terlama. Saat ini 320, dan itu benar.
 
-Kalau nilainya lebih kecil, crawl yang berjalan lebih lama dari itu akan
-dilepas dan dijalankan ulang **sementara yang pertama masih berjalan**, berulang
-sampai kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
+Kalau nilainya lebih kecil, job yang berjalan lebih lama dari itu akan dilepas
+dan dijalankan ulang **sementara yang pertama masih berjalan**, berulang sampai
+kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
 
 Env terkait antrean (lihat `.env.example`, default sudah aman):
 
-- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS`, `MONITORING_QUEUE_SCANS` - nama antrean; worker scheduler otomatis mengikuti. Hanya file systemd/supervisor yang `--queue=`-nya harus diubah manual
-- `JUDOL_MAX_QUEUE` - batas job scan yang boleh menunggu di antrean `scans`
-- `JUDOL_MAX_DISPATCH_PER_TICK` - jumlah scan yang di-dispatch per tick scheduler
+- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS` - nama antrean; worker scheduler otomatis mengikuti. Hanya file systemd/supervisor yang `--queue=`-nya harus diubah manual
+- `AI_TIMEOUT`, `AI_MAX_RETRIES`, `AI_MAX_RETRY_DELAY` - batas waktu/retry panggilan AI (analisis insiden)
 - `MAIL_TIMEOUT` - timeout SMTP (detik) agar email lambat tidak menahan worker checks
-
-## Website yang sedang mati tidak dipindai
-
-Crawl judol hanya dijalankan untuk website yang statusnya `up` menurut
-pengecekan uptime terakhir. Website berstatus `down` atau `unknown` dilewati,
-dan `websites:scan-judol` menyebutkannya di output.
-
-Ini disengaja. Pada host yang mati, setiap satu dari maksimal `judol.max_pages`
-URL akan gagal dengan cara yang sama seperti yang baru saja dilaporkan oleh
-pengecekan uptime - jadi job menghabiskan seluruh jatah 300 detiknya untuk
-mengonfirmasi hal yang sudah diketahui, lalu gagal, lalu dijadwalkan ulang.
-Gejalanya di systemd: `status=9/KILL` dan `restart counter` yang terus naik.
-
-`--now` mengabaikan interval pemindaian, **bukan** status ini: website yang
-tidak dapat diakses tetap tidak punya apa pun untuk di-crawl.
-
-Kalau sebuah situs tampak tidak pernah dipindai, periksa statusnya lebih dulu:
-
-```bash
-php artisan websites:scan-judol
-```
-
-Output-nya menyebut nama setiap website yang dilewati beserta alasannya.
-
-Situs internal (`is_internal_only`) memang selalu terbaca `down` dari luar, jadi
-situs seperti itu tidak akan pernah masuk crawl otomatis. Tombol "Cek Judol" di
-halaman detail tetap bisa dipakai untuk memindainya secara manual.
 
 ## Kalau worker systemd/supervisor gagal jalan
 

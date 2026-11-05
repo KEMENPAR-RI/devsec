@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 
 class Incident extends Model
@@ -62,11 +61,6 @@ class Incident extends Model
     public function website(): BelongsTo
     {
         return $this->belongsTo(Website::class);
-    }
-
-    public function judolDetection(): HasOne
-    {
-        return $this->hasOne(JudolDetection::class);
     }
 
     public function scopeOpen(Builder $query): Builder
@@ -165,21 +159,8 @@ class Incident extends Model
                 'Indikasi' => match ($meta['reason'] ?? null) {
                     'response_time_spike' => 'Lonjakan response time',
                     'content_changed' => 'Perubahan konten drastis',
-                    'foreign_script' => 'Kode asing di halaman situs',
-                    'defacement' => 'Defacement konten',
                     default => null,
                 },
-                'URL Halaman' => isset($meta['urls']) ? implode(', ', (array) $meta['urls']) : null,
-                'Alasan' => isset($meta['reasons']) ? implode('; ', (array) $meta['reasons']) : null,
-                'Cuplikan Sebelum' => $meta['before'] ?? null,
-                'Cuplikan Sesudah' => $meta['after'] ?? null,
-                // One line per thing found, so an operator can tell a forgotten
-                // analytics tag from a loader nobody has ever seen before.
-                ...collect($meta['temuan'] ?? [])
-                    ->mapWithKeys(fn (array $finding, int $index) => [
-                        ($finding['jenis'] ?? 'Temuan').' #'.($index + 1) => $finding['detail'] ?? '',
-                    ])
-                    ->all(),
                 'Response Time' => isset($meta['response_time_ms']) ? number_format($meta['response_time_ms']).' ms' : null,
                 'Baseline Normal' => isset($meta['baseline_ms']) ? number_format($meta['baseline_ms']).' ms' : null,
                 'Ukuran Sebelumnya' => isset($meta['previous_length']) ? number_format($meta['previous_length']).' byte' : null,
@@ -217,11 +198,6 @@ class Incident extends Model
                 'Sisa Waktu' => isset($meta['expires_at'])
                     ? (int) now()->startOfDay()->diffInDays(Carbon::parse($meta['expires_at'])->startOfDay(), false).' hari'
                     : null,
-            ],
-            'judol' => [
-                'URL Halaman' => $meta['url'] ?? null,
-                'Kata Kunci Cocok' => isset($meta['matched_keywords']) ? implode(', ', $meta['matched_keywords']) : null,
-                'Halaman Terakhir Diubah' => $this->judolDetection?->page_last_modified_at?->translatedFormat('d F Y, H:i'),
             ],
             default => [],
         };
