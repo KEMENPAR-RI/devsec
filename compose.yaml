@@ -1,0 +1,150 @@
+# Production stack. All configuration comes from .env (see "# Docker" in .env.example).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-db-env: &db-env
+  DB_HOST: db
+  DB_PORT: 3306
+
+# Shared by every service that runs the Laravel image
+x-php: &php
+  image: ${IMAGE_NAME:-security-app}:${IMAGE_TAG:-latest}
+  pull_policy: never
+  # tini reaps background workers spawned by the scheduler
+  init: true
+  env_file: .env
+  environment: *db-env
+  volumes:
+    - storage:/var/www/html/storage
+  # backend reaches db; frontend gives outbound internet and talks to web
+  networks: [backend, frontend]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  app:
+    <<: *php
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: app
+    environment:
+      <<: *db-env
+      CONTAINER_ROLE: app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 120s
+
+  web:
+    image: ${IMAGE_NAME:-security-app}-web:${IMAGE_TAG:-latest}
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: web
+    environment:
+      REAL_IP_FROM: ${DOCKER_FRONTEND_GATEWAY:-172.28.0.1}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:80"
+    volumes:
+      - storage:/var/www/html/storage:ro
+    networks: [frontend]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  # Mirrors deploy/security-worker.service (checks-high,checks,default)
+  queue:
+    <<: *php
+    command: >-
+      php artisan queue:work database
+      --queue=${MONITORING_QUEUE_CHECKS_HIGH:-checks-high},${MONITORING_QUEUE_CHECKS:-checks},default
+      --sleep=3 --tries=1 --timeout=150 --max-time=3600 --memory=128 --max-jobs=500
+    stop_grace_period: 180s
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # Mirrors deploy/security-worker-scans.service (scans)
+  queue-scans:
+    <<: *php
+    command: >-
+      php artisan queue:work database
+      --queue=${MONITORING_QUEUE_SCANS:-scans}
+      --sleep=5 --tries=1 --timeout=300 --max-time=3600 --memory=128 --max-jobs=100
+    stop_grace_period: 330s
+    depends_on:
+      app:
+        condition: service_healthy
+
+  scheduler:
+    <<: *php
+    command: ["php", "artisan", "schedule:work"]
+    stop_grace_period: 60s
+    depends_on:
+      app:
+        condition: service_healthy
+
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: ${DB_DATABASE:?set DB_DATABASE in .env}
+      MARIADB_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      # The app never uses root: random password, localhost only
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+      MARIADB_ROOT_HOST: localhost
+    # Tuned for a ~1GB VPS shared with PHP
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=${DB_INNODB_BUFFER_POOL_SIZE:-128M}
+      - --innodb-log-file-size=32M
+      - --max-connections=${DB_MAX_CONNECTIONS:-40}
+      - --performance-schema=OFF
+      - --skip-name-resolve
+      - --table-open-cache=400
+      - --tmp-table-size=16M
+      - --max-heap-table-size=16M
+      - --key-buffer-size=8M
+    volumes:
+      - db-data:/var/lib/mysql
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  # No external route: only PHP services and db
+  backend:
+    internal: true
+  frontend:
+    ipam:
+      config:
+        - subnet: ${DOCKER_FRONTEND_SUBNET:-172.28.0.0/24}
+          gateway: ${DOCKER_FRONTEND_GATEWAY:-172.28.0.1}
+
+volumes:
+  storage:
+  db-data:
