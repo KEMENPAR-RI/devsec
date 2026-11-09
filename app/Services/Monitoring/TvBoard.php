@@ -6,6 +6,7 @@ use App\Models\Incident;
 use App\Models\Website;
 use App\Models\WebsiteCheck;
 use App\Services\AppSettings;
+use App\Support\Dates;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -88,6 +89,8 @@ class TvBoard
                 'up_since_ts' => $upSince?->timestamp ?? 0,
                 'up_for' => $upSince ? $this->upFor(max(0, now()->timestamp - $upSince->timestamp)) : '',
                 'last_down_at' => $lastDown?->translatedFormat('d M Y, H:i') ?? 'Belum pernah',
+                // Letters and a day count only; findings, TLS details and registrar data stay admin-only.
+                ...$this->posture($site),
                 'priority' => (bool) $site->is_priority,
                 // Sort-only keys, stripped below: newest-added first, like the admin list.
                 'sort_created' => [$site->created_at?->timestamp ?? 0, $site->id],
@@ -166,6 +169,42 @@ class TvBoard
         }
 
         return $downtimes;
+    }
+
+    /**
+     * Header and TLS letters split from the stored findings with the grader's own weights and
+     * thresholds, plus days to domain expiry. Internal-only sites expose nothing.
+     *
+     * @return array{header_grade: ?string, tls_grade: ?string, domain_days: ?int}
+     */
+    protected function posture(Website $site): array
+    {
+        if ($site->is_internal_only) {
+            return ['header_grade' => null, 'tls_grade' => null, 'domain_days' => null];
+        }
+
+        $earned = ['header' => 0, 'tls' => 0];
+        $total = ['header' => 0, 'tls' => 0];
+        foreach ((array) $site->security_findings as $finding) {
+            $weight = SecurityGrader::CHECKS[$finding['key'] ?? '']['weight'] ?? null;
+            if ($weight === null) {
+                continue;
+            }
+            $part = in_array($finding['key'], ['https', 'tls_version'], true) ? 'tls' : 'header';
+            $total[$part] += $weight;
+            $earned[$part] += ! empty($finding['ok']) ? $weight : 0;
+        }
+
+        $grader = app(SecurityGrader::class);
+        $letter = fn (string $part) => $total[$part] > 0
+            ? $grader->letter((int) round($earned[$part] / $total[$part] * 100))
+            : null;
+
+        return [
+            'header_grade' => $letter('header'),
+            'tls_grade' => $letter('tls'),
+            'domain_days' => Dates::daysUntil($site->domain_expires_at),
+        ];
     }
 
     /** Mirrors Alpine duration(): two largest units from the first non-zero one, e.g. '3 hari 4 jam'. */

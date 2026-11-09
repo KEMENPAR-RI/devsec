@@ -255,6 +255,12 @@
     {{-- Pill tone per public status; literal classes so Tailwind picks them up. --}}
     @php($pillTones = ['up' => 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/40', 'warning' => 'bg-yellow-400 text-yellow-950 ring-yellow-200/60', 'down' => 'bg-red-500 text-white ring-red-300/60', 'attack' => 'bg-red-500 text-white ring-red-300/60', 'maintenance' => 'bg-sky-500/15 text-sky-300 ring-sky-400/40', 'internal' => 'bg-amber-500/15 text-amber-300 ring-amber-400/40', 'offline' => 'bg-zinc-500/20 text-zinc-200 ring-zinc-400/40', 'unknown' => 'bg-zinc-500/20 text-zinc-200 ring-zinc-400/40'])
 
+    {{-- Grade colours follow the admin site-health badge; domain uses the same config thresholds. --}}
+    @php($gradeTones = ['A' => 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30', 'B' => 'bg-lime-500/15 text-lime-300 ring-lime-400/30', 'C' => 'bg-amber-500/15 text-amber-300 ring-amber-400/30', 'D' => 'bg-orange-500/15 text-orange-300 ring-orange-400/30', 'F' => 'bg-red-500/20 text-red-200 ring-red-400/40', '—' => 'bg-accent-900/50 text-accent-300 ring-accent-500/30'])
+    @php($expiryTones = ['red' => 'bg-red-500 text-white ring-red-300/60', 'amber' => 'bg-amber-500/20 text-amber-200 ring-amber-400/40', 'calm' => 'bg-accent-900/50 text-accent-100 ring-accent-500/30', 'muted' => 'bg-accent-900/50 text-accent-300 ring-accent-500/30'])
+    @php($domainCritical = (int) config('monitoring.domain.critical_days', 3))
+    @php($domainWarning = (int) config('monitoring.domain.warning_days'))
+
     {{-- ignore.self: morph keeps Alpine's display state on slide wrappers but still updates their cards. --}}
     <main class="min-h-0 flex-1 px-8 pb-6 pt-4">
         @foreach ($slides as $index => $slide)
@@ -297,7 +303,27 @@
                         <div class="min-w-0">
                             <p class="truncate text-lg font-bold leading-tight text-white 2xl:text-2xl">{{ $site['name'] }}</p>
                             @if ($site['host'])
-                                <p class="truncate text-xs text-accent-200 2xl:text-sm">{{ $site['host'] }}</p>
+                                {{-- Posture chips share the host line so the card gains no height; host truncates first. --}}
+                                <div class="flex min-w-0 items-center justify-between gap-2">
+                                    <p class="min-w-0 truncate text-xs text-accent-200 2xl:text-sm">{{ $site['host'] }}</p>
+                                    @php($domainDays = $site['domain_days'] ?? null)
+                                    @php($domainTone = match (true) {
+                                        $domainDays === null => 'muted',
+                                        $domainDays <= $domainCritical => 'red',
+                                        $domainDays <= $domainWarning => 'amber',
+                                        default => 'calm',
+                                    })
+                                    <ul class="flex shrink-0 items-center gap-1" aria-label="Keamanan situs">
+                                        @foreach ([['Header', 'HDR', $site['header_grade'] ?? null], ['TLS', 'TLS', $site['tls_grade'] ?? null]] as [$label, $short, $grade])
+                                            <li class="inline-flex items-center gap-1 rounded px-1.5 py-px font-mono text-[10px] font-semibold leading-4 ring-1 2xl:text-xs {{ $gradeTones[$grade ?? '—'] ?? $gradeTones['F'] }}">
+                                                <span class="sr-only">{{ $label }} {{ $grade ?? 'belum dinilai' }}</span><span aria-hidden="true" class="opacity-70">{{ $short }}</span><span aria-hidden="true" class="font-black">{{ $grade ?? '—' }}</span>
+                                            </li>
+                                        @endforeach
+                                        <li class="inline-flex items-center gap-1 rounded px-1.5 py-px font-mono text-[10px] font-semibold leading-4 tabular-nums ring-1 2xl:text-xs {{ $expiryTones[$domainTone] }}">
+                                            <span class="sr-only">Domain {{ match (true) { $domainDays === null => 'belum diketahui', $domainDays < 0 => 'kedaluwarsa', $domainDays === 0 => 'berakhir hari ini', default => $domainDays.' hari lagi' } }}</span><span aria-hidden="true" class="opacity-70">DOM</span><span aria-hidden="true" class="font-black">{{ match (true) { $domainDays === null => '—', $domainDays < 0 => 'Habis', default => $domainDays.'h' } }}</span>
+                                        </li>
+                                    </ul>
+                                </div>
                             @else
                                 <p class="truncate text-xs italic text-accent-200 2xl:text-sm">Jaringan internal</p>
                             @endif
