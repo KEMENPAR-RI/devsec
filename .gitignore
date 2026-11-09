@@ -29,6 +29,7 @@ skills-lock.json
 # tenfold
 /.tenfold/
 /.claude/tenfold.json
+/.claude/tenfold/
 /.claude/agents/security.md
 /.claude/agents/devops.md
 /.claude/agents/architect.md

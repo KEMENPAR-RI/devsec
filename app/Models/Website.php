@@ -123,7 +123,8 @@ class Website extends Model
     }
 
     /**
-     * Shared list order: down (not under maintenance), then priority, then the rest.
+     * Shared list order: down (not under maintenance), then warning (Gangguan, not under
+     * maintenance), then priority, then the rest.
      * Down group: most recently down first (open downtime incident, else last check, like TvBoard);
      * other groups newest-added first; id as the pagination tie-breaker.
      */
@@ -141,11 +142,12 @@ class Website extends Model
             ->where('incidents.status', 'open')
             ->toBase();
         $isDown = "{$this->qualifyColumn('last_status')} = 'down' AND NOT EXISTS ({$maintenance->toSql()})";
+        $isWarning = "{$this->qualifyColumn('last_status')} = 'warning' AND NOT EXISTS ({$maintenance->toSql()})";
 
         return $query
             ->orderByRaw(
-                "CASE WHEN {$isDown} THEN 0 WHEN {$this->qualifyColumn('is_priority')} = 1 THEN 1 ELSE 2 END",
-                $maintenance->getBindings(),
+                "CASE WHEN {$isDown} THEN 0 WHEN {$isWarning} THEN 1 WHEN {$this->qualifyColumn('is_priority')} = 1 THEN 2 ELSE 3 END",
+                [...$maintenance->getBindings(), ...$maintenance->getBindings()],
             )
             ->orderByRaw(
                 "CASE WHEN {$isDown} THEN COALESCE(({$downSince->toSql()}), {$this->qualifyColumn('last_checked_at')}) END DESC",
@@ -167,6 +169,16 @@ class Website extends Model
     {
         if ($this->last_checked_at === null) {
             return true;
+        }
+
+        // Slow site: re-checked within seconds so it reaches Down (or recovers) quickly.
+        if ($this->last_status === 'warning') {
+            $seconds = filter_var(config('monitoring.warning_recheck_seconds'), FILTER_VALIDATE_INT, [
+                'options' => ['default' => 20, 'min_range' => 15, 'max_range' => 30],
+            ]);
+
+            // 5s early so the 15s scheduler tick does not stretch it by a tick.
+            return $this->last_checked_at->addSeconds($seconds - 5)->isPast();
         }
 
         // An unconfirmed failure is re-checked every minute instead of waiting a full interval.
@@ -399,6 +411,14 @@ class Website extends Model
             'badge' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/30',
             'card' => 'bg-accent-600 bg-linear-to-r from-emerald-500/15 to-transparent to-60% border-emerald-400/50 text-emerald-300',
             'description' => 'Situs merespons normal.',
+        ],
+        'warning' => [
+            'label' => 'Gangguan',
+            'dot' => 'bg-yellow-500',
+            'text' => 'text-yellow-700 dark:text-yellow-400',
+            'badge' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20 dark:bg-yellow-400/10 dark:text-yellow-400 dark:ring-yellow-400/30',
+            'card' => 'bg-accent-600 bg-linear-to-r from-yellow-400/15 to-transparent to-60% border-yellow-400/50 text-yellow-300',
+            'description' => 'Situs masih merespons tetapi lambat, melebihi ambang waktu respons. Dicek ulang setiap beberapa detik dan menjadi Down bila tetap lambat.',
         ],
         'attack' => [
             'label' => 'Down - Dugaan DDoS',
@@ -700,12 +720,11 @@ class Website extends Model
      *   into its outage is a different problem from one that simply stopped
      *   answering, and the dot is where that distinction is cheapest to make.
      *
-     * A site that is still serving has exactly one status here: 'up'. Response-time
-     * degradation is deliberately NOT a status - it is still online, and a separate
-     * colour for it drowned the two states an operator can actually act on. How
-     * hard the server is working belongs in the load column (see LOAD_LEVELS), and
-     * the slow-down itself is still recorded as an incident, where it goes on to
-     * corroborate the DDoS diagnosis in OutageCause.
+     * - 'warning' (reverses an earlier decision, see ADR 0001): the site still
+     *   answers, but slower than response_time_threshold_ms, and becomes 'down'
+     *   once the slow streak reaches down_threshold_failures. It is the only
+     *   degradation shown as a status; how hard the server is working otherwise
+     *   still belongs in the load column (see LOAD_LEVELS). Maintenance outranks it.
      *
      * @param  bool  $isOffline  pass Website::offlineIds() membership for list views
      *                           (avoids an isOffline() query per row) or $this->isOffline() for a single record
@@ -718,6 +737,7 @@ class Website extends Model
     {
         return match (true) {
             $underMaintenance => 'maintenance',
+            $this->last_status === 'warning' => 'warning',
             $this->last_status === 'up' => 'up',
             $this->last_status === 'down' && $this->is_internal_only => 'internal',
             $this->last_status === 'down' && $isOffline => 'offline',
@@ -735,7 +755,7 @@ class Website extends Model
         $row = $this->checks()
             ->where('checked_at', '>=', now()->subDays($days))
             ->toBase()
-            ->selectRaw('COUNT(*) AS total, SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count')
+            ->selectRaw('COUNT(*) AS total, SUM(CASE WHEN '.WebsiteCheck::UP_SQL.' THEN 1 ELSE 0 END) AS up_count')
             ->first();
 
         if (! $row || (int) $row->total === 0) {

@@ -75,7 +75,7 @@ class PruneWebsiteChecks extends Command
 
             // Aggregated in SQL, one day at a time: a handful of rows per day reach PHP.
             $rows = WebsiteCheck::query()
-                ->selectRaw('website_id, COUNT(*) as total_checks, SUM(is_up) as up_checks, AVG(response_time_ms) as avg_ms, COUNT(response_time_ms) as timed, SUM(response_time_ms) as ms_sum')
+                ->selectRaw('website_id, COUNT(*) as total_checks, SUM(CASE WHEN '.WebsiteCheck::UP_SQL.' THEN 1 ELSE 0 END) as up_checks, AVG(response_time_ms) as avg_ms, COUNT(response_time_ms) as timed, SUM(response_time_ms) as ms_sum')
                 ->where('checked_at', '>=', $day)
                 ->where('checked_at', '<', $day->copy()->addDay())
                 ->groupBy('website_id')

@@ -94,7 +94,7 @@ class DashboardOverview
      */
     public function summary(array $statuses): array
     {
-        $breakdown = array_fill_keys(['up', 'maintenance', 'down', 'attack', 'offline', 'internal', 'unknown'], 0);
+        $breakdown = array_fill_keys(['up', 'warning', 'maintenance', 'down', 'attack', 'offline', 'internal', 'unknown'], 0);
         foreach ($statuses as $key) {
             // Unknown keys fall back like statusConfig() does, so the partition always sums to total.
             $breakdown[isset($breakdown[$key]) ? $key : 'unknown']++;
@@ -102,7 +102,8 @@ class DashboardOverview
 
         return [
             'total' => count($statuses),
-            'online' => $breakdown['up'] + $breakdown['maintenance'],
+            // Warning still answers (slowly), so it stays in the online partition.
+            'online' => $breakdown['up'] + $breakdown['warning'] + $breakdown['maintenance'],
             'problem' => $breakdown['down'] + $breakdown['attack'],
             'offline' => $breakdown['offline'] + $breakdown['internal'] + $breakdown['unknown'],
             'breakdown' => $breakdown,
@@ -173,7 +174,7 @@ class DashboardOverview
 
         $rows = WebsiteCheck::query()
             ->selectRaw($this->bucketSql($shift, $size).' AS bucket')
-            ->selectRaw('SUM(is_up) AS up_count')
+            ->selectRaw('SUM(CASE WHEN '.WebsiteCheck::UP_SQL.' THEN 1 ELSE 0 END) AS up_count')
             ->selectRaw('COUNT(*) AS total')
             ->selectRaw('SUM(response_time_ms) AS ms_sum')
             ->selectRaw('COUNT(response_time_ms) AS ms_count')

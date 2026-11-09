@@ -27,7 +27,7 @@ class UptimeHistory
         foreach (self::PERIODS as $days) {
             $since = $now->copy()->subDays($days);
             $query->selectRaw("SUM(CASE WHEN checked_at >= ? THEN 1 ELSE 0 END) AS total_{$days}", [$since])
-                ->selectRaw("SUM(CASE WHEN checked_at >= ? AND is_up = 1 THEN 1 ELSE 0 END) AS up_{$days}", [$since]);
+                ->selectRaw('SUM(CASE WHEN checked_at >= ? AND '.WebsiteCheck::UP_SQL." THEN 1 ELSE 0 END) AS up_{$days}", [$since]);
         }
 
         $row = $query->first();

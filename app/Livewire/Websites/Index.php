@@ -562,7 +562,7 @@ class Index extends Component
             ->where('checked_at', '>=', now()->subDays($days))
             ->groupBy('website_id')
             ->toBase()
-            ->selectRaw('website_id, COUNT(*) AS total, SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_count')
+            ->selectRaw('website_id, COUNT(*) AS total, SUM(CASE WHEN '.WebsiteCheck::UP_SQL.' THEN 1 ELSE 0 END) AS up_count')
             ->get()
             ->keyBy('website_id');
 

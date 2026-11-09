@@ -4,6 +4,7 @@ namespace App\Livewire;
 
 use App\Models\Website;
 use App\Services\Monitoring\DashboardOverview;
+use App\Services\Monitoring\MonitorConnectivity;
 use App\Support\Dates;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -144,6 +145,28 @@ class Dashboard extends Component
     public function loadCounts(): array
     {
         return $this->snapshot()['load_counts'];
+    }
+
+    /**
+     * The monitor's own offline episode, read outside the realtime cache so the banner is not delayed.
+     *
+     * @return array{since: ?Carbon, last_seen: Carbon}|null
+     */
+    #[Computed]
+    public function monitorOffline(): ?array
+    {
+        $status = app(MonitorConnectivity::class)->offlineStatus();
+
+        if (! $status) {
+            return null;
+        }
+
+        $timezone = Dates::timezone();
+
+        return [
+            'since' => isset($status['since']) ? Carbon::parse($status['since'])->timezone($timezone) : null,
+            'last_seen' => Carbon::parse($status['last_seen'] ?? 'now')->timezone($timezone),
+        ];
     }
 
     #[Computed]

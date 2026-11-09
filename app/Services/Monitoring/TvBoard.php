@@ -35,7 +35,8 @@ class TvBoard
         $attackedIds = Website::attackedIds($websites);
         $maintenanceIds = Website::maintenanceIds($websites);
         $downtimes = $this->downtimes($websites->modelKeys());
-        $upSites = $websites->filter(fn ($site) => $site->last_status === 'up');
+        // Warning still answers, so it keeps its up-since like an up site.
+        $upSites = $websites->filter(fn ($site) => in_array($site->last_status, ['up', 'warning'], true));
         // First check is only the up-since fallback for up sites that never had a downtime.
         $firstChecks = $this->firstChecks($upSites
             ->filter(fn ($site) => ! isset($downtimes[$site->id]))
@@ -46,6 +47,7 @@ class TvBoard
             ->values()->modelKeys());
 
         $masalah = [];
+        $gangguan = [];
         $online = [];
         $internal = [];
         $mati = [];
@@ -67,7 +69,7 @@ class TvBoard
             $config = Website::statusConfig($publicKey);
             $lastDown = $downtimes[$site->id]['detected'] ?? null;
             $upSince = null;
-            if ($key === 'up') {
+            if (in_array($key, ['up', 'warning'], true)) {
                 $upSince = isset($downtimes[$site->id])
                     ? ($this->recoveredAfterDetection($downtimes[$site->id])
                         ? $downtimes[$site->id]['resolved']
@@ -93,6 +95,8 @@ class TvBoard
 
             if ($key === 'up') {
                 $online[] = $row;
+            } elseif ($key === 'warning') {
+                $gangguan[] = $row;
             } elseif (in_array($key, ['down', 'attack'], true)) {
                 $masalah[] = $row;
                 // Only an open incident is an event; the check-time fallback moves every check and would re-fire the toast.
@@ -109,12 +113,14 @@ class TvBoard
         }
 
         usort($masalah, fn ($a, $b) => $b['occurred_at_ts'] <=> $a['occurred_at_ts']);
+        usort($gangguan, fn ($a, $b) => $b['sort_created'] <=> $a['sort_created']);
         usort($online, fn ($a, $b) => $b['sort_created'] <=> $a['sort_created']);
         usort($internal, fn ($a, $b) => $b['sort_created'] <=> $a['sort_created']);
         usort($mati, fn ($a, $b) => $b['occurred_at_ts'] <=> $a['occurred_at_ts']);
 
-        // Down sites first (newest problem first, priority ignored), then priority, then the rest.
+        // Down sites first (newest problem first, priority ignored), then Gangguan, then priority, then the rest.
         $kartu = collect($masalah)
+            ->concat($gangguan)
             ->concat(collect(array_merge($online, $internal, $mati))->partition('priority')->flatten(1))
             // The flag only drives ordering and is not exposed on the public board.
             ->map(fn ($row) => Arr::except($row, ['priority', 'sort_created']))->values()->all();

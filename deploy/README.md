@@ -91,7 +91,7 @@ Urutan aman:
 
 ```bash
 sudo systemctl status security-worker --no-pager  # active (running), bila memakai worker systemd
-$PHP artisan queue:monitor database:checks-high,database:checks,database:default  # harus mendekati 0
+$PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:checks-low  # harus mendekati 0
 tail -20 storage/logs/laravel.log                   # tidak ada error baru
 ```
 
@@ -118,14 +118,14 @@ tidak pernah jalan**.
 
 ## Cara default: worker dijalankan scheduler (hanya perlu 1 cron)
 
-`routes/console.php` mendaftarkan satu `queue:work --stop-when-empty` yang
+`routes/console.php` mendaftarkan satu `queue:work --sleep=3` (tanpa `--stop-when-empty`) yang
 dipicu tiap menit oleh scheduler, jadi **tidak perlu systemd/supervisor**:
 
-- antrean `checks-high,checks,default` (uptime + email notifikasi), `--max-time=55`, `--timeout=150`
+- antrean `checks-high,checks,default,checks-low` (uptime + email notifikasi; `checks-low` = re-cek situs Warning), `--max-time=55`, `--sleep=3`, `--timeout=150`
 
 Worker ini `withoutOverlapping` (maksimal satu proses) dan `runInBackground`
 (pengecekan yang lama tidak menahan tugas terjadwal lain).
-Konsekuensinya, job baru diambil paling lambat sekitar 1 menit setelah masuk antrean.
+Worker tetap hidup ~55 detik per tick dan polling tiap 3 detik, jadi job (termasuk retry tertunda) diambil dalam hitungan detik. Ada juga `websites:check --warning` tiap 15 detik, sehingga `schedule:run` tetap hidup ~60 detik tiap menit (normal).
 
 ### 1. Bersihkan antrean yang menumpuk lebih dulu
 
@@ -169,7 +169,7 @@ Hanya bila butuh latensi nol atau hardening systemd. **Hapus dulu** entri
 
 **systemd** (VPS/server sendiri):
 
-- `security-worker` - antrean `checks-high,checks,default`, `--timeout=150`
+- `security-worker` - antrean `checks-high,checks,default,checks-low`, `--timeout=150`
 
 ```bash
 sudo cp deploy/security-worker.service /etc/systemd/system/
@@ -198,7 +198,7 @@ membengkak (RAM server 1GB). Scheduler tetap wajib (1 baris cron di atas).
 
 ```bash
 # Harus mendekati 0 dan tidak terus bertambah.
-$PHP artisan queue:monitor database:checks-high,database:checks,database:default
+$PHP artisan queue:monitor database:checks-high,database:checks,database:default,database:checks-low
 
 # Pastikan worker terdaftar di scheduler.
 $PHP artisan schedule:list | grep queue:work
@@ -223,7 +223,7 @@ kena batas percobaan dan gagal dengan `MaxAttemptsExceededException`.
 
 Env terkait antrean (lihat `.env.example`, default sudah aman):
 
-- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS` - nama antrean; worker scheduler otomatis mengikuti. Hanya file systemd/supervisor yang `--queue=`-nya harus diubah manual
+- `MONITORING_QUEUE_CHECKS_HIGH`, `MONITORING_QUEUE_CHECKS`, `MONITORING_QUEUE_CHECKS_LOW` - nama antrean; worker scheduler otomatis mengikuti. Hanya file systemd/supervisor yang `--queue=`-nya harus diubah manual
 - `AI_TIMEOUT`, `AI_MAX_RETRIES`, `AI_MAX_RETRY_DELAY` - batas waktu/retry panggilan AI (analisis insiden)
 - `MAIL_TIMEOUT` - timeout SMTP (detik) agar email lambat tidak menahan worker checks
 

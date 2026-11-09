@@ -6,6 +6,9 @@
     $liveSites = collect($this->liveSites);
     $loadCounts = $this->loadCounts;
     $breakdown = $summary['breakdown'] ?? [];
+    // ?array{since: ?Carbon, last_seen: Carbon}; set while the monitor itself has no internet.
+    $monitorOffline = $this->monitorOffline;
+    $monitorSince = $monitorOffline['since'] ?? null;
 
     $user = auth()->user();
     $canManage = $this->canManage;
@@ -72,6 +75,26 @@
         @endif
     </div>
 
+    @if ($monitorOffline)
+        {{-- Neutral, not red: the sites are not down, the monitor just cannot see them. --}}
+        <div role="status" class="enter flex items-start gap-3 rounded-2xl border border-zinc-300 bg-zinc-50 px-4 py-3.5 dark:border-zinc-700 dark:bg-zinc-800/60">
+            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                <x-phosphor-wifi-slash class="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div class="min-w-0 text-sm">
+                <p class="font-semibold text-zinc-900 dark:text-white">
+                    Server pemantau kehilangan koneksi internet
+                    @if ($monitorSince)
+                        <span class="font-normal text-zinc-500 dark:text-zinc-400">&middot; sejak <span class="font-mono tabular-nums">{{ $monitorSince->format('H:i') }}</span></span>
+                    @endif
+                </p>
+                <p class="mt-0.5 text-zinc-600 dark:text-zinc-300">
+                    Pengecekan dijeda dan status situs dibekukan pada kondisi terakhir &mdash; hasil cek tidak dicatat dan situs tidak ditandai Down sampai koneksi pulih.
+                </p>
+            </div>
+        </div>
+    @endif
+
     {{-- Status KPI: a full partition, Online + Bermasalah + Offline = Total --}}
     <section aria-label="Ringkasan status situs" class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <x-kpi-card label="Total Situs" :value="$total" icon="globe" :href="$canViewSites ? route('situs') : null">
@@ -81,6 +104,9 @@
         </x-kpi-card>
 
         <x-kpi-card label="Online" :value="$summary['online'] ?? 0" icon="check-circle" tone="up" style="animation-delay: 40ms">
+            @if (($breakdown['warning'] ?? 0) > 0)
+                <span class="{{ $chip }}"><x-phosphor-warning class="h-3 w-3 text-yellow-600 dark:text-yellow-400" aria-hidden="true" />{{ $breakdown['warning'] }} Gangguan</span>
+            @endif
             @if (($breakdown['maintenance'] ?? 0) > 0)
                 <span class="{{ $chip }}"><span class="h-1.5 w-1.5 rounded-full bg-sky-500"></span>{{ $breakdown['maintenance'] }} Pemeliharaan</span>
             @endif
@@ -214,10 +240,16 @@
                                     </div>
                                     @if ($site['status_key'] !== 'up')
                                         <span @class([
-                                            'shrink-0 text-[11px] font-medium',
+                                            'inline-flex shrink-0 items-center gap-1 text-[11px] font-medium',
                                             'text-red-600 dark:text-red-400' => $problem,
-                                            'text-zinc-500 dark:text-zinc-400' => ! $problem,
-                                        ])>{{ $site['status_label'] }}</span>
+                                            'text-yellow-700 dark:text-yellow-400' => $site['status_key'] === 'warning',
+                                            'text-zinc-500 dark:text-zinc-400' => ! $problem && $site['status_key'] !== 'warning',
+                                        ])>
+                                            @if ($site['status_key'] === 'warning')
+                                                <x-phosphor-warning class="h-3 w-3" aria-hidden="true" />
+                                            @endif
+                                            {{ $site['status_label'] }}
+                                        </span>
                                     @endif
                                 </div>
                             </{{ $siteTag }}>

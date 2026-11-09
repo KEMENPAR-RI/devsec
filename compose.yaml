@@ -68,12 +68,12 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # Mirrors deploy/security-worker.service (checks-high,checks,default)
+  # Mirrors deploy/security-worker.service (checks-high,checks,default,checks-low)
   queue:
     <<: *php
     command: >-
       php artisan queue:work database
-      --queue=${MONITORING_QUEUE_CHECKS_HIGH:-checks-high},${MONITORING_QUEUE_CHECKS:-checks},default
+      --queue=${MONITORING_QUEUE_CHECKS_HIGH:-checks-high},${MONITORING_QUEUE_CHECKS:-checks},default,${MONITORING_QUEUE_CHECKS_LOW:-checks-low}
       --sleep=3 --tries=1 --timeout=150 --max-time=3600 --memory=128 --max-jobs=500
     stop_grace_period: 180s
     depends_on:

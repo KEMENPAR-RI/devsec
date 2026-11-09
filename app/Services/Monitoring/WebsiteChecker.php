@@ -12,6 +12,7 @@ use App\Notifications\DomainExpiringNotification;
 use App\Notifications\SslExpiringNotification;
 use App\Notifications\WebsiteDownNotification;
 use App\Notifications\WebsiteRecoveredNotification;
+use App\Notifications\WebsiteSlowNotification;
 use App\Services\Notifications\MailSettings;
 use App\Services\Notifications\WebhookNotifier;
 use App\Services\Security\OutboundUrlGuard;
@@ -25,6 +26,7 @@ use GuzzleHttp\Utils as GuzzleUtils;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Notifications\Notification as NotificationClass;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
@@ -53,6 +55,15 @@ class WebsiteChecker
     // cURL errnos for TLS/certificate failures: 35, 51, 58, 60, 77, 83.
     public const TLS_ERRNOS = [35, 51, 58, 60, 77, 83];
 
+    // Nothing answered at all: retried by CheckWebsiteJob, then down after one confirmed failure.
+    public const NO_RESPONSE_TYPES = ['timeout', 'connect', 'dns'];
+
+    // Answered (or connected) too slowly: Warning until down_threshold_failures.
+    public const SLOW_TYPES = ['slow', 'read_timeout'];
+
+    // One Warning notification per site per this window, however often it flaps.
+    public const SLOW_NOTIFY_COOLDOWN_MINUTES = 30;
+
     // Transfer time of the current attempt (summed over its redirect hops), from handler stats.
     protected ?float $transferSeconds = null;
 
@@ -62,7 +73,12 @@ class WebsiteChecker
     // Shared across one run so RDAP lookups are deduped per apex.
     protected ?DomainExpiry $domainExpiry = null;
 
-    public function check(Website $website): WebsiteCheck
+    /**
+     * Null when nothing was recorded: a non-final no-response attempt (the job
+     * retries it), or a final one while this monitor itself is offline.
+     * $retried: earlier attempts already failed to get a response, so one confirmed failure is down.
+     */
+    public function check(Website $website, bool $final = true, bool $retried = false): ?WebsiteCheck
     {
         $startedAt = now();
         $start = microtime(true);
@@ -96,14 +112,25 @@ class WebsiteChecker
         // Final attempt only; wall clock is the fallback when no stats exist (faked client).
         $responseTimeMs = (int) round(($this->transferSeconds ?? (microtime(true) - $start)) * 1000);
 
-        // A response that arrives past the site's own acceptable-latency threshold is
-        // treated the same as no response at all: for practical purposes the site is
-        // "down" for whoever is waiting on it, so it counts toward down_threshold_failures
-        // and the downtime incident flow the same way an HTTP failure does.
+        // A response past the site's own latency threshold is a failed check (is_up
+        // stays false), but handleUpDown() shows it as 'warning' until the slow streak
+        // reaches down_threshold_failures. Uptime still counts it up (WebsiteCheck::UP_SQL).
         if ($isUp && $responseTimeMs > $website->response_time_threshold_ms) {
             $isUp = false;
             $errorMessage = "Response time {$responseTimeMs}ms melebihi ambang batas {$website->response_time_threshold_ms}ms";
             $errorType = 'slow';
+        }
+
+        if (in_array($errorType, self::NO_RESPONSE_TYPES, true)) {
+            // Not stored: the job retries shortly, so one dropped attempt never counts.
+            if (! $final) {
+                return null;
+            }
+
+            // Our own uplink is down, not the site: record nothing rather than a false outage.
+            if (! app(MonitorConnectivity::class)->isOnline()) {
+                return null;
+            }
         }
 
         // Recorded either way: the uptime history has to stay honest through a
@@ -124,7 +151,7 @@ class WebsiteChecker
 
         // last_status still tracks reality during a window, so the moment it ends
         // the site is already in the right state rather than one check behind.
-        $this->handleUpDown($website, $check, $underMaintenance);
+        $this->handleUpDown($website, $check, $underMaintenance, $retried);
 
         if ($isUp && ! $underMaintenance) {
             $this->detectResponseTimeAnomaly($website, $check);
@@ -147,7 +174,9 @@ class WebsiteChecker
         }
 
         // Start time, not end time, so the check interval does not drift by the probe's duration.
-        $website->update(['last_checked_at' => $startedAt]);
+        // Warning is the exception: its short re-check gap counts from the end, or a slow
+        // probe (up to ~35s) would be re-queued back-to-back and monopolise the worker.
+        $website->update(['last_checked_at' => $website->last_status === 'warning' ? now() : $startedAt]);
 
         return $check;
     }
@@ -226,7 +255,7 @@ class WebsiteChecker
             // it produces - no response means no response_time_ms, so the check
             // reads as "down" with a latency well under the threshold, which is
             // exactly the confusing shape this caused in production.
-            ->connectTimeout(10)
+            ->connectTimeout($this->connectTimeout())
             // Two attempts with backoff. This is deliberately NOT the tight probe
             // it looks like it should be: one dropped handshake here becomes a red
             // dot on the dashboard and, past down_threshold_failures, a downtime
@@ -280,6 +309,32 @@ class WebsiteChecker
         }
 
         return null;
+    }
+
+    /** monitoring.connect_timeout_seconds, clamped to 5-10s (see httpClient()). */
+    protected function connectTimeout(): int
+    {
+        return filter_var(config('monitoring.connect_timeout_seconds'), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 10, 'min_range' => 5, 'max_range' => 10],
+        ]);
+    }
+
+    /**
+     * Whether a timed-out request had already connected (TLS done for https), i.e.
+     * the site accepted the request but did not finish answering in time.
+     */
+    protected function connectedBeforeTimeout(Throwable $e): bool
+    {
+        for ($current = $e; $current; $current = $current->getPrevious()) {
+            if ($current instanceof ConnectException || $current instanceof RequestException) {
+                $context = $current->getHandlerContext();
+                $https = str_starts_with((string) ($context['url'] ?? ''), 'https://');
+
+                return (float) ($context[$https ? 'appconnect_time' : 'connect_time'] ?? 0) > 0;
+            }
+        }
+
+        return false;
     }
 
     /** clamp(threshold + 5s, 10s, 30s): long enough to measure "slow", short enough for the worker. */
@@ -337,7 +392,8 @@ class WebsiteChecker
 
         if ($errno = $this->curlErrno($e)) {
             return match (true) {
-                $errno === 28 => 'timeout',
+                // Connected but no full response in time: slow, not unreachable.
+                $errno === 28 => $this->connectedBeforeTimeout($e) ? 'read_timeout' : 'timeout',
                 $errno === 6 => 'dns',
                 in_array($errno, self::TLS_ERRNOS, true) => 'ssl',
                 default => 'connect',
@@ -354,13 +410,19 @@ class WebsiteChecker
         };
     }
 
-    protected function handleUpDown(Website $website, WebsiteCheck $check, bool $underMaintenance = false): void
+    protected function handleUpDown(Website $website, WebsiteCheck $check, bool $underMaintenance = false, bool $retried = false): void
     {
         if (! $check->is_up) {
             $website->increment('consecutive_failures');
             $website->refresh();
 
-            if ($website->consecutive_failures >= $website->down_threshold_failures) {
+            // No response survived the job's retries and the monitor's self-check: one is enough.
+            // Without retries (sync driver, retries=0) the normal streak still applies.
+            $threshold = $retried && in_array($check->error_type, self::NO_RESPONSE_TYPES, true)
+                ? 1
+                : $website->down_threshold_failures;
+
+            if ($website->consecutive_failures >= $threshold) {
                 $wasDown = $website->last_status === 'down';
 
                 if (! $wasDown) {
@@ -421,6 +483,8 @@ class WebsiteChecker
                 ]);
 
                 $this->notifyAdmins(new WebsiteDownNotification($website, $incident));
+            } else {
+                $this->enterWarning($website, $check, $underMaintenance);
             }
 
             return;
@@ -440,10 +504,35 @@ class WebsiteChecker
                     $this->notifyAdmins(new WebsiteRecoveredNotification($website, $incident));
                 }
             }
-        } elseif ($website->consecutive_failures > 0) {
+        } elseif ($website->consecutive_failures > 0 || $website->last_status === 'warning') {
+            // Warning -> up is silent: the Warning alert already said "may go down", and it did not.
             $website->update(['consecutive_failures' => 0, 'last_status' => 'up']);
         } elseif ($website->last_status === 'unknown') {
             $website->update(['last_status' => 'up']);
+        }
+    }
+
+    /**
+     * A slow check below the down threshold: the site turns 'warning' and admins
+     * hear about it once per episode (cooldown via cache). Other failures keep the
+     * hidden verification flow, and a site already down or warning stays as it is.
+     */
+    protected function enterWarning(Website $website, WebsiteCheck $check, bool $underMaintenance): void
+    {
+        if (! in_array($check->error_type, self::SLOW_TYPES, true)
+            || $website->is_internal_only
+            || in_array($website->last_status, ['warning', 'down'], true)) {
+            return;
+        }
+
+        $website->update(['last_status' => 'warning']);
+
+        if ($underMaintenance) {
+            return;
+        }
+
+        if (Cache::add("website:{$website->id}:slow-notified", true, now()->addMinutes(self::SLOW_NOTIFY_COOLDOWN_MINUTES))) {
+            $this->notifyAdmins(new WebsiteSlowNotification($website, $check));
         }
     }
 
@@ -462,8 +551,8 @@ class WebsiteChecker
     /**
      * Flags a sudden spike vs. this site's own recent baseline as a possible attack
      * signal - even while still under response_time_threshold_ms (once a check
-     * breaches that threshold it's already handled as "down" upstream in check(),
-     * so this only ever sees checks that passed).
+     * breaches that threshold it is a failed 'slow' check, handled as Warning/down
+     * upstream in check(), so this only ever sees checks that passed).
      */
     protected function detectResponseTimeAnomaly(Website $website, WebsiteCheck $check): void
     {

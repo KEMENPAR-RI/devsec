@@ -48,6 +48,12 @@ class WebsiteCheck extends Model
         return $this->belongsTo(Website::class);
     }
 
+    /**
+     * Uptime counts a slow-but-answered check as up; is_up itself keeps meaning
+     * "passed the check" (see ADR 0001). Shared by every uptime aggregate.
+     */
+    public const UP_SQL = "(is_up = 1 OR error_type = 'slow')";
+
     /** Lookback bound for the per-site ROW_NUMBER() queries (index-covered). */
     public const RANKED_WINDOW_DAYS = 7;
 

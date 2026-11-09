@@ -181,11 +181,11 @@ class WebsiteMonitoringTest extends TestCase
     {
         $source = file_get_contents(app_path('Services/Monitoring/WebsiteChecker.php'));
 
-        preg_match('/->connectTimeout\((\d+)\)/', $source, $connect);
-        $this->assertNotEmpty($connect, 'the probe must set an explicit connect timeout');
+        // Now config-driven (monitoring.connect_timeout_seconds, clamped 5-10s): the default must stay 10s.
+        $this->assertStringContainsString('->connectTimeout($this->connectTimeout())', $source, 'the probe must set an explicit connect timeout');
         $this->assertGreaterThanOrEqual(
             10,
-            (int) $connect[1],
+            (new ReflectionMethod(WebsiteChecker::class, 'connectTimeout'))->invoke(new WebsiteChecker),
             'shared-hosting TLS handshakes need room; below 10s these sites read as down'
         );
 

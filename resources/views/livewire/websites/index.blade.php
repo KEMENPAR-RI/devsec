@@ -197,7 +197,7 @@
                         </div>
 
                         <div class="hidden shrink-0 items-center gap-3 text-xs text-zinc-500 sm:flex dark:text-zinc-400">
-                            <span class="flex w-48 justify-center">
+                            <span class="flex w-52 justify-center">
                                 <x-status-badge :status="$statusKey" />
                             </span>
                             

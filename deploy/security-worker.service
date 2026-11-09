@@ -1,4 +1,4 @@
-# Queue worker (systemd): checks-high, checks, default.
+# Queue worker (systemd): checks-high, checks, default, checks-low.
 #
 # Every automatic website check is dispatched as a queued job, so without this
 # running the jobs table just fills up and the automatic monitoring silently
@@ -49,7 +49,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 
 ExecStart=/www/server/php/84/bin/php artisan queue:work database \
-    --queue=checks-high,checks,default \
+    --queue=checks-high,checks,default,checks-low \
     --sleep=3 \
     --tries=1 \
     --timeout=150 \

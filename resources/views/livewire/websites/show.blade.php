@@ -25,8 +25,11 @@
             'ssl' => 'SSL/TLS bermasalah',
             'http' => 'Error HTTP',
             'slow' => 'Respons lambat',
+            'read_timeout' => 'Respons tidak selesai',
             'blocked' => 'Alamat diblokir',
         ];
+        $lastCheck = $checks->last();
+        $isWarning = $statusKey === 'warning';
 
         // 100 / 99.9 / 99.95 - null stays "-", never a fake 100%.
         $fmtUptime = fn (?float $u) => $u === null ? '-' : rtrim(rtrim(number_format($u, 2), '0'), '.').'%';
@@ -105,7 +108,12 @@
                 by their names. --}}
                 <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                     <x-status-badge :status="$statusKey" />
-                    @if ($verification)
+                    @if ($verification && $statusKey === 'warning')
+                        <span title="Respons melebihi ambang, sedang dicek ulang sebelum dianggap Down." class="inline-flex items-center gap-1.5 rounded-full bg-yellow-50 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-yellow-800 ring-1 ring-inset ring-yellow-600/30 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-400/30">
+                            <x-phosphor-warning class="h-3 w-3 shrink-0" aria-hidden="true" />
+                            Gangguan {{ $verification['failures'] }}/{{ $verification['threshold'] }}
+                        </span>
+                    @elseif ($verification)
                         <span title="Pengecekan gagal, sedang diulang tiap menit sebelum insiden dibuka." class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-amber-700 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/30">
                             <x-phosphor-circle-notch class="h-3 w-3 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
                             Memverifikasi {{ $verification['failures'] }}/{{ $verification['threshold'] }}
@@ -158,14 +166,20 @@
         </div>
         <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
             <p class="text-sm text-zinc-500 dark:text-zinc-400">Response Time Terakhir</p>
-            {{-- Red when the last check breached response_time_threshold_ms (counts as "down",
-            see WebsiteChecker::check()) - gray once that's been true for a full day (isOffline()). --}}
+            {{-- Yellow while the site is in Gangguan, red when the last check failed otherwise,
+            gray once the site has been down for a full day (isOffline()). --}}
             <p @class([
                 'mt-2 font-mono text-2xl font-semibold',
-                'text-red-600 dark:text-red-400' => $checks->last() && ! $checks->last()->is_up && ! $isOffline,
+                'text-yellow-600 dark:text-yellow-400' => $isWarning,
+                'text-red-600 dark:text-red-400' => $lastCheck && ! $lastCheck->is_up && ! $isWarning && ! $isOffline,
                 'text-zinc-400 dark:text-zinc-500' => $isOffline,
-                'text-zinc-900 dark:text-white' => ! $isOffline && (! $checks->last() || $checks->last()->is_up),
-            ])>{{ $checks->last()?->response_time_ms ?? '-' }}<span class="text-sm font-normal text-zinc-400">ms</span></p>
+                'text-zinc-900 dark:text-white' => ! $isOffline && ! $isWarning && (! $lastCheck || $lastCheck->is_up),
+            ])>{{ $lastCheck?->response_time_ms ?? '-' }}<span class="text-sm font-normal text-zinc-400">ms</span></p>
+            @if ($isWarning)
+                <p class="mt-1 inline-flex items-center gap-1 text-xs font-medium text-yellow-700 dark:text-yellow-400">
+                    <x-phosphor-timer class="h-3 w-3" aria-hidden="true" />Melebihi ambang
+                </p>
+            @endif
         </div>
         <div class="enter rounded-2xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
             <p class="text-sm text-zinc-500 dark:text-zinc-400">Pengecekan Terakhir</p>
@@ -295,18 +309,27 @@
                 clips them - otherwise they escape the scroll box and add blank space under the footer. --}}
                 <ul class="relative max-h-[340px] divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800">
                     @foreach ($checks->reverse() as $check)
-                        @php $errorType = $check->error_type; @endphp
+                        @php
+                            $errorType = $check->error_type;
+                            // Only 'slow' is a Gangguan check; read_timeout counts as down.
+                            $isSlow = $errorType === 'slow';
+                        @endphp
                         <li wire:key="check-{{ $check->id }}" class="flex items-center gap-3 px-5 py-2.5">
-                            <span @class(['h-2 w-2 shrink-0 rounded-full', 'bg-emerald-500' => $check->is_up, 'bg-red-500' => ! $check->is_up])>
-                                <span class="sr-only">{{ $check->is_up ? 'Up' : 'Down' }}</span>
+                            <span @class([
+                                'h-2 w-2 shrink-0 rounded-full',
+                                'bg-emerald-500' => $check->is_up && ! $isSlow,
+                                'bg-yellow-500' => $isSlow,
+                                'bg-red-500' => ! $check->is_up && ! $isSlow,
+                            ])>
+                                <span class="sr-only">{{ $isSlow ? 'Gangguan' : ($check->is_up ? 'Up' : 'Down') }}</span>
                             </span>
                             <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
                                 <span class="font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-300">{{ \App\Support\Dates::plain($check->checked_at) }}</span>
                                 @if ($errorType)
                                     <span @class([
                                         'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                                        'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' => $errorType === 'slow',
-                                        'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => $errorType !== 'slow',
+                                        'bg-yellow-50 text-yellow-800 dark:bg-yellow-500/10 dark:text-yellow-300' => $isSlow,
+                                        'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' => ! $isSlow,
                                     ])>{{ $errorLabels[$errorType] ?? $errorType }}</span>
                                 @elseif (! $check->is_up)
                                     <span class="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">Gagal</span>

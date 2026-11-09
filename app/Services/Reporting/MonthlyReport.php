@@ -140,7 +140,7 @@ class MonthlyReport
     protected function rawUptime(Carbon $start, Carbon $end): array
     {
         return WebsiteCheck::query()
-            ->selectRaw('website_id, COUNT(*) as total, SUM(is_up) as up, AVG(response_time_ms) as avg_ms, COUNT(response_time_ms) as ms_count, SUM(response_time_ms) as ms_sum')
+            ->selectRaw('website_id, COUNT(*) as total, SUM(CASE WHEN '.WebsiteCheck::UP_SQL.' THEN 1 ELSE 0 END) as up, AVG(response_time_ms) as avg_ms, COUNT(response_time_ms) as ms_count, SUM(response_time_ms) as ms_sum')
             ->whereBetween('checked_at', [$start, $end])
             ->groupBy('website_id')
             ->get()

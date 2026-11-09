@@ -34,6 +34,8 @@
              the settings-driven behaviour, not the kill switch. -->
         <env name="RECAPTCHA_ENABLED" value="true"/>
         <env name="SESSION_DRIVER" value="array"/>
+        <!-- No real TCP probe from the suite; tests opt in by faking MonitorConnectivity. -->
+        <env name="MONITORING_CONNECTIVITY_CHECK" value="false"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>

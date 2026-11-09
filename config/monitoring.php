@@ -50,6 +50,75 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Situs Lambat (Warning) dan Situs Tanpa Respons
+    |--------------------------------------------------------------------------
+    |
+    | connect_timeout_seconds: batas waktu membuka koneksi (5-10, default 10;
+    | 5 detik dulu memicu false down di hosting instansi).
+    | warning_recheck_seconds: situs berstatus Warning dicek ulang tiap sekian
+    | detik (15-30, default 20) sampai pulih atau menjadi Down.
+    | no_response: situs yang tidak merespons sama sekali (connect timeout,
+    | gagal konek, DNS) dicoba ulang sebanyak `retries` kali (0-2) dengan jeda
+    | `retry_delay_seconds` (5-10) sebelum dianggap Down. Nilai di luar rentang
+    | jatuh ke default.
+    |
+    */
+    'connect_timeout_seconds' => filter_var(env('MONITORING_CONNECT_TIMEOUT', 10), FILTER_VALIDATE_INT, [
+        'options' => ['default' => 10, 'min_range' => 5, 'max_range' => 10],
+    ]),
+
+    'warning_recheck_seconds' => filter_var(env('MONITORING_WARNING_RECHECK_SECONDS', 20), FILTER_VALIDATE_INT, [
+        'options' => ['default' => 20, 'min_range' => 15, 'max_range' => 30],
+    ]),
+
+    // Re-cek Warning paling banyak sekian situs per putaran 15 detik (1-20, default 5),
+    // yang paling lama belum dicek lebih dulu; masuk antrean prioritas rendah.
+    'warning_recheck_max_per_tick' => filter_var(env('MONITORING_WARNING_RECHECK_MAX', 5), FILTER_VALIDATE_INT, [
+        'options' => ['default' => 5, 'min_range' => 1, 'max_range' => 20],
+    ]),
+
+    'no_response' => [
+        'retries' => filter_var(env('MONITORING_NORESP_RETRIES', 2), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 2, 'min_range' => 0, 'max_range' => 2],
+        ]),
+        'retry_delay_seconds' => filter_var(env('MONITORING_NORESP_RETRY_DELAY', 8), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 8, 'min_range' => 5, 'max_range' => 10],
+        ]),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cek Konektivitas Server Monitor
+    |--------------------------------------------------------------------------
+    |
+    | Sebelum situs tanpa respons ditandai Down, server ini memastikan dirinya
+    | sendiri masih terhubung ke internet lewat koneksi TCP ke salah satu target
+    | (host:port, dipisah koma). Bila semua gagal, hasil cek tidak dicatat dan
+    | dashboard menampilkan "Monitor offline". Hasil probe di-cache sekian detik.
+    | Bila target probe gagal tetapi situs lain tetap merespons (egress ke target
+    | diblokir firewall), monitor tetap dianggap online selama ada respons situs
+    | dalam `recent_response_seconds` terakhir, dan peringatan dicatat di log.
+    |
+    */
+    'connectivity' => [
+        'enabled' => filter_var(env('MONITORING_CONNECTIVITY_CHECK', true), FILTER_VALIDATE_BOOL),
+        'targets' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('MONITORING_CONNECTIVITY_TARGETS', '1.1.1.1:443,8.8.8.8:443')),
+        ))),
+        'timeout_seconds' => filter_var(env('MONITORING_CONNECTIVITY_TIMEOUT', 3), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 3, 'min_range' => 1, 'max_range' => 10],
+        ]),
+        'cache_seconds' => filter_var(env('MONITORING_CONNECTIVITY_CACHE_SECONDS', 30), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 30, 'min_range' => 10, 'max_range' => 300],
+        ]),
+        'recent_response_seconds' => filter_var(env('MONITORING_CONNECTIVITY_RECENT_SECONDS', 120), FILTER_VALIDATE_INT, [
+            'options' => ['default' => 120, 'min_range' => 30, 'max_range' => 600],
+        ]),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Sertifikat SSL
     |--------------------------------------------------------------------------
     |
@@ -87,13 +156,15 @@ return [
     | Nama Antrean
     |--------------------------------------------------------------------------
     |
-    | Worker: checks-high,checks,default. Notifikasi email dari pengecekan ikut
-    | checks-high.
+    | Worker: checks-high,checks,default,checks-low. Notifikasi email dari
+    | pengecekan ikut checks-high. Re-cek situs Warning masuk checks-low agar
+    | situs lambat tidak menahan cek situs lain.
     |
     */
     'queues' => [
         'checks_high' => env('MONITORING_QUEUE_CHECKS_HIGH', 'checks-high'),
         'checks' => env('MONITORING_QUEUE_CHECKS', 'checks'),
+        'checks_low' => env('MONITORING_QUEUE_CHECKS_LOW', 'checks-low'),
     ],
 
     /*

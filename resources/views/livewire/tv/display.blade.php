@@ -109,7 +109,8 @@
 
     {{-- Summary from the already-loaded cards; no extra query. --}}
     @php($counts = $slides->flatten(1)->countBy('status'))
-    @php($online = $counts->get('up', 0))
+    {{-- Slow sites still answer, so they count as online. --}}
+    @php($online = $counts->get('up', 0) + $counts->get('warning', 0))
     @php($problems = $counts->get('down', 0) + $counts->get('attack', 0))
     @php($offline = $counts->get('offline', 0) + $counts->get('unknown', 0))
     @php($totalSites = $counts->sum())
@@ -117,7 +118,9 @@
     @php($monitored = $totalSites - $counts->get('maintenance', 0) - $counts->get('internal', 0))
     @php($onlinePct = $monitored > 0 ? (int) round($online / $monitored * 100) : 0)
     @php($problemPct = $monitored > 0 ? round($problems / $monitored * 100, 2) : 0)
-    @php($heroState = $problems ? 'problem' : ($offline ? 'offline' : ($totalSites ? 'ok' : 'empty')))
+    @php($warnings = $counts->get('warning', 0))
+    {{-- Down > Gangguan > Normal > Offline: offline only leads when nothing is online at all. --}}
+    @php($heroState = $problems ? 'problem' : ($warnings ? 'warning' : ($online ? 'ok' : ($offline ? 'offline' : ($totalSites ? 'ok' : 'empty')))))
 
     <header class="flex items-center justify-between gap-6 px-8 pb-2 pt-3">
         <div class="flex min-w-0 items-center gap-3">
@@ -154,6 +157,7 @@
     <section @class([
         'mx-8 mt-1 flex items-center gap-6 rounded-2xl border px-6 py-3 2xl:py-4',
         'border-emerald-400/40 bg-emerald-500/10 shadow-lg shadow-black/30' => $heroState === 'ok',
+        'border-yellow-400/60 bg-yellow-500/10 shadow-lg shadow-black/30' => $heroState === 'warning',
         'border-amber-400/50 bg-amber-500/10 shadow-lg shadow-black/30' => $heroState === 'offline',
         'border-accent-500/40 bg-accent-900/40 shadow-lg shadow-black/30' => $heroState === 'empty',
         'border-red-400/60 bg-red-500/15 shadow-xl shadow-red-500/20 ring-2 ring-red-500/40' => $heroState === 'problem',
@@ -166,6 +170,11 @@
                         <span class="relative inline-flex h-full w-full rounded-full bg-red-500"></span>
                     </span>
                     <p class="truncate text-2xl font-black uppercase tracking-tight text-red-200 2xl:text-4xl">{{ $problems }} Situs Bermasalah</p>
+                @elseif ($heroState === 'warning')
+                    <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-yellow-500 text-yellow-950 2xl:h-10 2xl:w-10" aria-hidden="true">
+                        <svg class="h-5 w-5 2xl:h-6 2xl:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/></svg>
+                    </span>
+                    <p class="truncate text-2xl font-black uppercase tracking-tight text-yellow-200 2xl:text-4xl">{{ $warnings }} Situs Gangguan</p>
                 @elseif ($heroState === 'offline')
                     <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white 2xl:h-10 2xl:w-10" aria-hidden="true">
                         <svg class="h-5 w-5 2xl:h-6 2xl:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/></svg>
@@ -180,7 +189,12 @@
                     <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white 2xl:h-10 2xl:w-10" aria-hidden="true">
                         <svg class="h-5 w-5 2xl:h-6 2xl:w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                     </span>
-                    <p class="truncate text-2xl font-black uppercase tracking-tight text-emerald-200 2xl:text-4xl">Semua Sistem Normal</p>
+                    <p class="truncate text-2xl font-black uppercase tracking-tight text-emerald-200 2xl:text-4xl">
+                        Semua Sistem Normal
+                        @if ($offline)
+                            <span class="text-base font-semibold normal-case tracking-normal text-accent-200 2xl:text-xl"><span aria-hidden="true">&middot;</span> {{ $offline }} situs offline</span>
+                        @endif
+                    </p>
                 @endif
             </div>
             <p class="text-sm text-accent-200">Diperbarui <span class="tabular-nums">{{ $diperbarui }}</span></p>
@@ -196,8 +210,9 @@
 
         <ul class="flex shrink-0 items-stretch gap-3" aria-label="Ringkasan status">
             @foreach ([
-                ['Online', $online, 'bg-emerald-500', 'text-emerald-300', true],
                 ['Bermasalah', $problems, 'bg-red-500', 'text-red-300', true],
+                ['Gangguan', $warnings, 'bg-yellow-500', 'text-yellow-300', true],
+                ['Online', $online, 'bg-emerald-500', 'text-emerald-300', true],
                 ['Offline', $offline, 'bg-zinc-400', 'text-zinc-300', true],
                 ['Pemeliharaan', $counts->get('maintenance', 0), 'bg-sky-500', 'text-sky-300', $counts->get('maintenance', 0) > 0],
                 ['Internal', $counts->get('internal', 0), 'bg-amber-500', 'text-amber-300', $counts->get('internal', 0) > 0],
@@ -238,7 +253,7 @@
     </div>
 
     {{-- Pill tone per public status; literal classes so Tailwind picks them up. --}}
-    @php($pillTones = ['up' => 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/40', 'down' => 'bg-red-500 text-white ring-red-300/60', 'attack' => 'bg-red-500 text-white ring-red-300/60', 'maintenance' => 'bg-sky-500/15 text-sky-300 ring-sky-400/40', 'internal' => 'bg-amber-500/15 text-amber-300 ring-amber-400/40', 'offline' => 'bg-zinc-500/20 text-zinc-200 ring-zinc-400/40', 'unknown' => 'bg-zinc-500/20 text-zinc-200 ring-zinc-400/40'])
+    @php($pillTones = ['up' => 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/40', 'warning' => 'bg-yellow-400 text-yellow-950 ring-yellow-200/60', 'down' => 'bg-red-500 text-white ring-red-300/60', 'attack' => 'bg-red-500 text-white ring-red-300/60', 'maintenance' => 'bg-sky-500/15 text-sky-300 ring-sky-400/40', 'internal' => 'bg-amber-500/15 text-amber-300 ring-amber-400/40', 'offline' => 'bg-zinc-500/20 text-zinc-200 ring-zinc-400/40', 'unknown' => 'bg-zinc-500/20 text-zinc-200 ring-zinc-400/40'])
 
     {{-- ignore.self: morph keeps Alpine's display state on slide wrappers but still updates their cards. --}}
     <main class="min-h-0 flex-1 px-8 pb-6 pt-4">
@@ -261,6 +276,8 @@
                                         <path d="M20 6 9 17l-5-5"/>
                                     @elseif ($problem)
                                         <path d="M18 6 6 18M6 6l12 12"/>
+                                    @elseif ($site['status'] === 'warning')
+                                        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3ZM12 9v4M12 17h.01"/>
                                     @elseif ($site['status'] === 'maintenance')
                                         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                                     @elseif ($site['status'] === 'internal')
