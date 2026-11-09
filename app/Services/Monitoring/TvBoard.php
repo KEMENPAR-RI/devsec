@@ -175,12 +175,12 @@ class TvBoard
      * Header and TLS letters split from the stored findings with the grader's own weights and
      * thresholds, plus days to domain expiry. Internal-only sites expose nothing.
      *
-     * @return array{header_grade: ?string, tls_grade: ?string, domain_days: ?int}
+     * @return array{header_grade: ?string, tls_grade: ?string, ssl_days: ?int, domain_days: ?int}
      */
     protected function posture(Website $site): array
     {
         if ($site->is_internal_only) {
-            return ['header_grade' => null, 'tls_grade' => null, 'domain_days' => null];
+            return ['header_grade' => null, 'tls_grade' => null, 'ssl_days' => null, 'domain_days' => null];
         }
 
         $earned = ['header' => 0, 'tls' => 0];
@@ -203,6 +203,8 @@ class TvBoard
         return [
             'header_grade' => $letter('header'),
             'tls_grade' => $letter('tls'),
+            // Plain-HTTP sites have no certificate to count down, as on the admin badge.
+            'ssl_days' => str_starts_with(strtolower($site->url), 'https://') ? Dates::daysUntil($site->ssl_expires_at) : null,
             'domain_days' => Dates::daysUntil($site->domain_expires_at),
         ];
     }

@@ -258,6 +258,8 @@
     {{-- Grade colours follow the admin site-health badge; domain uses the same config thresholds. --}}
     @php($gradeTones = ['A' => 'bg-emerald-500/15 text-emerald-300 ring-emerald-400/30', 'B' => 'bg-lime-500/15 text-lime-300 ring-lime-400/30', 'C' => 'bg-amber-500/15 text-amber-300 ring-amber-400/30', 'D' => 'bg-orange-500/15 text-orange-300 ring-orange-400/30', 'F' => 'bg-red-500/20 text-red-200 ring-red-400/40', '—' => 'bg-accent-900/50 text-accent-300 ring-accent-500/30'])
     @php($expiryTones = ['red' => 'bg-red-500 text-white ring-red-300/60', 'amber' => 'bg-amber-500/20 text-amber-200 ring-amber-400/40', 'calm' => 'bg-accent-900/50 text-accent-100 ring-accent-500/30', 'muted' => 'bg-accent-900/50 text-accent-300 ring-accent-500/30'])
+    @php($sslCritical = (int) config('monitoring.ssl.critical_days'))
+    @php($sslWarning = (int) config('monitoring.ssl.warning_days'))
     @php($domainCritical = (int) config('monitoring.domain.critical_days', 3))
     @php($domainWarning = (int) config('monitoring.domain.warning_days'))
 
@@ -306,22 +308,18 @@
                                 {{-- Posture chips share the host line so the card gains no height; host truncates first. --}}
                                 <div class="flex min-w-0 items-center justify-between gap-2">
                                     <p class="min-w-0 truncate text-xs text-accent-200 2xl:text-sm">{{ $site['host'] }}</p>
-                                    @php($domainDays = $site['domain_days'] ?? null)
-                                    @php($domainTone = match (true) {
-                                        $domainDays === null => 'muted',
-                                        $domainDays <= $domainCritical => 'red',
-                                        $domainDays <= $domainWarning => 'amber',
-                                        default => 'calm',
-                                    })
                                     <ul class="flex shrink-0 items-center gap-1" aria-label="Keamanan situs">
                                         @foreach ([['Header', 'HDR', $site['header_grade'] ?? null], ['TLS', 'TLS', $site['tls_grade'] ?? null]] as [$label, $short, $grade])
                                             <li class="inline-flex items-center gap-1 rounded px-1.5 py-px font-mono text-[10px] font-semibold leading-4 ring-1 2xl:text-xs {{ $gradeTones[$grade ?? '—'] ?? $gradeTones['F'] }}">
                                                 <span class="sr-only">{{ $label }} {{ $grade ?? 'belum dinilai' }}</span><span aria-hidden="true" class="opacity-70">{{ $short }}</span><span aria-hidden="true" class="font-black">{{ $grade ?? '—' }}</span>
                                             </li>
                                         @endforeach
-                                        <li class="inline-flex items-center gap-1 rounded px-1.5 py-px font-mono text-[10px] font-semibold leading-4 tabular-nums ring-1 2xl:text-xs {{ $expiryTones[$domainTone] }}">
-                                            <span class="sr-only">Domain {{ match (true) { $domainDays === null => 'belum diketahui', $domainDays < 0 => 'kedaluwarsa', $domainDays === 0 => 'berakhir hari ini', default => $domainDays.' hari lagi' } }}</span><span aria-hidden="true" class="opacity-70">DOM</span><span aria-hidden="true" class="font-black">{{ match (true) { $domainDays === null => '—', $domainDays < 0 => 'Habis', default => $domainDays.'h' } }}</span>
-                                        </li>
+                                        @foreach ([['SSL', 'SSL', $site['ssl_days'] ?? null, $sslCritical, $sslWarning], ['Domain', 'DOM', $site['domain_days'] ?? null, $domainCritical, $domainWarning]] as [$label, $short, $days, $critical, $warning])
+                                            @php($tone = match (true) { $days === null => 'muted', $days <= $critical => 'red', $days <= $warning => 'amber', default => 'calm' })
+                                            <li class="inline-flex items-center gap-1 rounded px-1.5 py-px font-mono text-[10px] font-semibold leading-4 tabular-nums ring-1 2xl:text-xs {{ $expiryTones[$tone] }}">
+                                                <span class="sr-only">{{ $label }} {{ match (true) { $days === null => 'belum diketahui', $days < 0 => 'kedaluwarsa', $days === 0 => 'berakhir hari ini', default => $days.' hari lagi' } }}</span><span aria-hidden="true" class="opacity-70">{{ $short }}</span><span aria-hidden="true" class="font-black">{{ match (true) { $days === null => '—', $days < 0 => 'Habis', default => $days.'h' } }}</span>
+                                            </li>
+                                        @endforeach
                                     </ul>
                                 </div>
                             @else
