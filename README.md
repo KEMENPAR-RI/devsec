@@ -7,6 +7,12 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Rencana Pengembangan SOC
+
+Lihat [Rencana Pengembangan Monitoring dan SOC](docs/SOC_DEVELOPMENT_PLAN.md)
+untuk roadmap belajar, scope keamanan, implementasi Nuclei, OSINT, observability,
+dan proses incident response project ini.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
